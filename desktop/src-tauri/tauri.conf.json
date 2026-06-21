@@ -17,7 +17,6 @@
   },
   "bundle": {
     "active": false,
-    "targets": "app",
-    "externalBin": ["binaries/yts-sidecar"]
+    "targets": "app"
   }
 }
