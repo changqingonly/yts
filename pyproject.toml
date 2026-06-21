@@ -26,5 +26,17 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "respx>=0.21",
-    "ruff>=0.5",
+    "ruff>=0.15",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["desktop/frontend", "**/alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]  # 错误/未用/import 排序/语法升级/常见 bug
+ignore = ["E501"]                     # 行宽交给 formatter;长中文注释不报
+
+[tool.ruff.format]
+quote-style = "double"

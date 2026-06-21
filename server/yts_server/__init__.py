@@ -2,4 +2,5 @@
 
 同一份 app 也被 desktop/sidecar 复用(本地 profile)。
 """
+
 __version__ = "0.1.0"

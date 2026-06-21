@@ -1,4 +1,5 @@
 """业务模型骨架(stub)。真实表 TODO;两端(SQLite/PG)共用。"""
+
 from __future__ import annotations
 
 from datetime import datetime

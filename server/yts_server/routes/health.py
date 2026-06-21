@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-
 from yts_core import __version__ as core_version
 from yts_core.config import get_settings
 

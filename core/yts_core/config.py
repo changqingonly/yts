@@ -3,6 +3,7 @@
 - cloud:服务端,云 LLM + Postgres + 计费 + Phoenix。
 - local:桌面 sidecar,Candle 推理 + SQLite + 自定义 skill + 免计费。
 """
+
 from __future__ import annotations
 
 from enum import Enum
@@ -33,20 +34,22 @@ class Settings(BaseSettings):
 
     # 能力开关(随 profile 默认)
     allow_custom_skills: bool = False  # 仅 local 置 True
-    billing_enabled: bool = True       # 仅 cloud 置 True
+    billing_enabled: bool = True  # 仅 cloud 置 True
 
     # Phoenix 评估/可观测(仅 cloud)
     phoenix_enabled: bool = False
 
-    def for_local(self) -> "Settings":
+    def for_local(self) -> Settings:
         """返回本地档覆盖(桌面 sidecar 用)。"""
-        return self.model_copy(update={
-            "profile": Profile.LOCAL,
-            "database_url": "sqlite+aiosqlite:///./yts_local.db",
-            "allow_custom_skills": True,
-            "billing_enabled": False,
-            "phoenix_enabled": False,
-        })
+        return self.model_copy(
+            update={
+                "profile": Profile.LOCAL,
+                "database_url": "sqlite+aiosqlite:///./yts_local.db",
+                "allow_custom_skills": True,
+                "billing_enabled": False,
+                "phoenix_enabled": False,
+            }
+        )
 
 
 def get_settings() -> Settings:

@@ -6,6 +6,7 @@
 
 本轮为 stub:仅给出调用形状,真实模型加载在 Rust 侧(见 desktop/src-tauri/src/inference)。
 """
+
 from __future__ import annotations
 
 from ..config import get_settings
@@ -21,7 +22,9 @@ class CandleInference:
     async def generate_text(self, messages, *, model=None, fallbacks=None) -> TextResult:
         # TODO: POST {self._base}/candle/text -> Rust(Candle)推理
         last = messages[-1]["content"] if messages else ""
-        return TextResult(text=f"[candle-stub] {last[:64]}", provider="candle", model=model or "qwen3-local")
+        return TextResult(
+            text=f"[candle-stub] {last[:64]}", provider="candle", model=model or "qwen3-local"
+        )
 
     async def generate_image(self, prompt: str) -> bytes:  # TODO: Candle SD
         raise NotImplementedError("candle image (SD): TODO via Rust")

@@ -1,4 +1,5 @@
 """推理后端抽象端口(ports & adapters)。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,8 +23,9 @@ class InferenceBackend(Protocol):
 
     name: str
 
-    async def generate_text(self, messages: list[dict], *, model: str | None = None,
-                            fallbacks: list[str] | None = None) -> TextResult: ...
+    async def generate_text(
+        self, messages: list[dict], *, model: str | None = None, fallbacks: list[str] | None = None
+    ) -> TextResult: ...
 
     async def generate_image(self, prompt: str) -> bytes: ...
 

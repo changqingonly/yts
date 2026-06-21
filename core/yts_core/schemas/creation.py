@@ -1,4 +1,5 @@
 """创作 / 灵感 API 契约。语义参考 yuetools creation-core(6 步 composition)。"""
+
 from __future__ import annotations
 
 from enum import Enum
@@ -18,8 +19,8 @@ class CreationRequest(BaseModel):
     music_dimensions: dict[str, str] = Field(default_factory=dict)  # 12 维约束
     lyrics_mode: LyricsMode = LyricsMode.AUTO
     persist: bool = True
-    llm_override: str | None = None      # 强制 provider/model
-    skill_id: str | None = None          # 自定义 skill(仅本地实现支持)
+    llm_override: str | None = None  # 强制 provider/model
+    skill_id: str | None = None  # 自定义 skill(仅本地实现支持)
 
 
 class CreationResult(BaseModel):

@@ -2,6 +2,7 @@
 
 切换实现(本地 sidecar / 云端)不改这些 schema。
 """
+
 from .common import ExecutionSummary, StageTrace
 from .creation import (
     CreationRequest,

@@ -2,13 +2,13 @@
 
 注:async 引擎下迁移通常用同步 URL 跑;本骨架仅占位,真实迁移 TODO。
 """
+
 from __future__ import annotations
 
+import yts_server.db.models  # noqa: F401  注册模型到 metadata
 from alembic import context
-
 from yts_core.config import get_settings
 from yts_server.db.session import Base
-import yts_server.db.models  # noqa: F401  注册模型到 metadata
 
 target_metadata = Base.metadata
 
@@ -27,6 +27,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     from sqlalchemy import create_engine
+
     engine = create_engine(_sync_url())
     with engine.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)

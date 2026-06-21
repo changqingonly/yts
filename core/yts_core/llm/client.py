@@ -2,6 +2,7 @@
 
 出站调用在桌面端须经 Rust 出口代理(认证/拦截/审计)——把 base_url 指向本地代理即可。
 """
+
 from __future__ import annotations
 
 from ..config import get_settings

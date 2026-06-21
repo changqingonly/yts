@@ -1,4 +1,5 @@
 """云推理适配器:文本走 LiteLLM;图片/语音/音乐 TODO(云端模型)。"""
+
 from __future__ import annotations
 
 from ..llm.client import complete_text

@@ -4,6 +4,7 @@
 本地 SQLite + 开自定义 skill + 关计费 + Candle 推理(经 Rust 出口/IPC)。
 PyInstaller 打包此文件为 `yts-sidecar`;Tauri 作 externalBin 拉起(见 src-tauri/src/sidecar.rs)。
 """
+
 from __future__ import annotations
 
 import os
@@ -15,7 +16,6 @@ os.environ.setdefault("YTS_BILLING_ENABLED", "false")
 os.environ.setdefault("YTS_PHOENIX_ENABLED", "false")
 
 import uvicorn  # noqa: E402
-
 from yts_server.main import app  # noqa: E402
 
 

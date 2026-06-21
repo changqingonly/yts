@@ -1,8 +1,8 @@
 """创作 / 灵感路由。薄入口:计费包裹(云) + 调 core 编排。"""
+
 from __future__ import annotations
 
 from fastapi import APIRouter
-
 from yts_core.config import get_settings
 from yts_core.orchestration import run_creation, run_inspiration
 from yts_core.schemas.creation import (

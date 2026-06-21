@@ -3,6 +3,7 @@
 本轮 stub。真实实现需放进 DB 事务保证 exactly-once(见 wiki Server-Stack-Plan)。
 未来若用 LangGraph 建 reserve/capture/release 三节点 + 条件边(saga),此处改为编排内补偿。
 """
+
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -13,12 +14,10 @@ async def reserve(scene: str) -> str:
     return f"resv-stub-{scene}"
 
 
-async def capture(reservation_id: str) -> None:
-    ...  # TODO: 最终扣费,写 ledger
+async def capture(reservation_id: str) -> None: ...  # TODO: 最终扣费,写 ledger
 
 
-async def release(reservation_id: str) -> None:
-    ...  # TODO: 解冻回滚
+async def release(reservation_id: str) -> None: ...  # TODO: 解冻回滚
 
 
 @asynccontextmanager

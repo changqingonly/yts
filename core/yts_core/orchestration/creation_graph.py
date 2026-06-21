@@ -7,6 +7,7 @@ self_check 不满意时条件回边到 lyrics(Agent 化入口,有环图)。
 真实实现处调 `backend.generate_text(...)`。checkpointer 由调用方注入
 (本地 SqliteSaver / 云 PostgresSaver),保留断点续跑能力。
 """
+
 from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
@@ -21,13 +22,16 @@ def _stub(name: str, **patch):
         stages = list(state.get("stages", []))
         # 轨迹仅记名;真实实现在此调 backend 推理
         from ..schemas.common import StageTrace
+
         stages.append(StageTrace(name=name, ok=True, note="stub"))
         return {**patch, "stages": stages}
+
     return node
 
 
 def _self_check(state: CreationState) -> dict:
     from ..schemas.common import StageTrace
+
     stages = list(state.get("stages", []))
     stages.append(StageTrace(name="self_check", ok=True, note="stub-pass"))
     # TODO: 真实质量门(参考 creation-core quality.rs:150-300 可见字符等)
@@ -46,7 +50,10 @@ def build_creation_graph(*, checkpointer=None):
     g.add_node("structure", _stub("make_structure", structure="[stub] verse/chorus"))
     g.add_node("lyrics", _stub("write_lyrics", lyrics="[stub] lyrics"))
     g.add_node("build_style", _stub("build_style", style="[stub] pop 120bpm"))
-    g.add_node("final_draft", _stub("generate_final_draft", final_draft="[stub] draft", title="[stub] title"))
+    g.add_node(
+        "final_draft",
+        _stub("generate_final_draft", final_draft="[stub] draft", title="[stub] title"),
+    )
     g.add_node("self_check", _self_check)
 
     g.add_edge(START, "analyze")
