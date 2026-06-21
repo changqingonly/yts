@@ -40,6 +40,15 @@ bash scripts/dev_desktop.sh         # tauri dev(需 npm install)
 bash scripts/build_sidecar_macos.sh
 ```
 
+## 推理后端切换(YTS_INFERENCE_BACKEND)
+- `echo`(默认):确定性、无依赖,用于验证编排链路。
+- `cloud`:LiteLLM 云模型(需 provider 凭据,如 `YTS_DEFAULT_TEXT_MODEL` + key)。
+- `candle`:本地 Rust Candle。需先起 candle-server:
+```bash
+bash scripts/dev_candle.sh           # Rust candle-server(:8799),首次下载 TinyLlama GGUF
+YTS_INFERENCE_BACKEND=candle bash scripts/dev_server.sh   # write_lyrics 等节点改走本地 Candle
+```
+
 ## 现状(本轮脚手架)
 - ✅ 目录结构 / 依赖 / 配置 / 关键连线就位;服务端可启动(`/health` + creation stub);Tauri 可编译(Candle 依赖就绪,四模态为 stub)。
 - 🚧 stub / TODO:Candle 真实模型推理、creation 6 步完整业务、TCC 真实落账、Alembic 真实表、Phoenix 评估集、离线↔云同步、**Windows in-process(DIY Tauri+PyO3)**。
