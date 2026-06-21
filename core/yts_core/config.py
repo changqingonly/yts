@@ -28,9 +28,11 @@ class Settings(BaseSettings):
     # 推理后端:cloud 用 LiteLLM 云模型;local 用 Candle(经 Rust)
     default_text_model: str = "deepseek/deepseek-chat"
     model_fallbacks: list[str] = Field(default_factory=lambda: ["openai/qwen-max"])
+    # 推理后端:echo(默认·无需凭据·确定性)| cloud(LiteLLM)| candle(本地 Rust)
+    inference_backend: str = "echo"
 
-    # 本地推理桥(Mac sidecar → Tauri 进程的 Candle endpoint)
-    candle_base_url: str = "http://127.0.0.1:8765"
+    # 本地推理桥(Mac sidecar → Tauri 进程的 Candle HTTP endpoint)
+    candle_base_url: str = "http://127.0.0.1:8799"
 
     # 能力开关(随 profile 默认)
     allow_custom_skills: bool = False  # 仅 local 置 True
