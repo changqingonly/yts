@@ -1,0 +1,30 @@
+# yts — monorepo root (uv workspace)
+# 架构 v3.1：推理=Candle(Rust) / 编排=Python(LangGraph) / 服务端=FastAPI+LangGraph+LiteLLM+Phoenix
+# 设计源:../yuetools/docs/tech.html 与 ../yuetools/docs/wiki/(Arch-V3-1 系列)
+[project]
+name = "yts-workspace"
+version = "0.1.0"
+description = "yts: transport-agnostic core + FastAPI cloud + Tauri/Candle desktop (v3.1)"
+requires-python = ">=3.10"
+dependencies = [
+    "yts-core",
+    "yts-server",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["core", "server"]
+
+[tool.uv.sources]
+yts-core = { workspace = true }
+yts-server = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "ruff>=0.5",
+]

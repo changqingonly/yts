@@ -1,0 +1,33 @@
+[project]
+name = "yts-server"
+version = "0.1.0"
+description = "yts cloud implementation: FastAPI + LangGraph(core) + LiteLLM + Phoenix + Postgres"
+requires-python = ">=3.10"
+dependencies = [
+    "yts-core",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "aiosqlite>=0.20",
+    "alembic>=1.13",
+    "pyjwt>=2.8",
+    "argon2-cffi>=23.1",
+]
+
+[project.optional-dependencies]
+# 评估/可观测栈较重(pandas/scipy/sklearn/pyarrow)。按需安装:`uv sync --extra eval`
+eval = [
+    "arize-phoenix>=4.0",
+    "openinference-instrumentation-langchain>=0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["yts_server"]
+
+[tool.uv.sources]
+yts-core = { workspace = true }

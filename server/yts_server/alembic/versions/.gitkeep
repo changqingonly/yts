@@ -1,0 +1,1 @@
+# 迁移脚本目录(空)。首个迁移 TODO:`uv run alembic revision --autogenerate -m init`

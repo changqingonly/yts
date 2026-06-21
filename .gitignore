@@ -11,3 +11,29 @@ data/zvec/
 data/*.csv
 data/famous_song.jsonl
 
+
+# --- Rust / Tauri ---
+target/
+**/target/
+Cargo.lock
+desktop/src-tauri/gen/
+
+# --- Node / Vite ---
+node_modules/
+dist/
+dist-tauri/
+*.local
+
+# --- uv / Python build ---
+uv.lock
+build/
+*.spec.bak
+
+# --- PyInstaller sidecar output ---
+desktop/sidecar/build/
+desktop/sidecar/dist/
+
+# --- models / weights (never commit) ---
+*.gguf
+*.safetensors
+models/
