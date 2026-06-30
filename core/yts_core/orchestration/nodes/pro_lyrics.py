@@ -131,14 +131,16 @@ def _generation_context(state: CreationState) -> dict[str, Any]:
 def _review_context(state: CreationState) -> dict[str, Any]:
     generation_context = _generation_context(state)
     structure = _require_mapping(generation_context["structure"], "generation_context.structure")
-    constraints = _require_mapping(generation_context["constraints"], "generation_context.constraints")
+    constraints = _require_mapping(
+        generation_context["constraints"], "generation_context.constraints"
+    )
     return {
         "user_prompt": generation_context["user_prompt"],
         "generation": _require_mapping(state["generation"], "generation"),
         "expected": {
-            "selected_hook": _require_mapping(generation_context["hook"], "generation_context.hook")[
-                "selected_hook"
-            ],
+            "selected_hook": _require_mapping(
+                generation_context["hook"], "generation_context.hook"
+            )["selected_hook"],
             "structure": {
                 "mode": structure["mode"],
                 "sections": structure["sections"],
@@ -147,12 +149,12 @@ def _review_context(state: CreationState) -> dict[str, Any]:
                 "hook_placement": structure["hook_placement"],
             },
             "constraints": constraints,
-            "emotion_arc": _require_mapping(generation_context["story"], "generation_context.story")[
-                "emotion_arc"
-            ],
-            "style_prompt": _require_mapping(generation_context["style"], "generation_context.style")[
-                "style_prompt"
-            ],
+            "emotion_arc": _require_mapping(
+                generation_context["story"], "generation_context.story"
+            )["emotion_arc"],
+            "style_prompt": _require_mapping(
+                generation_context["style"], "generation_context.style"
+            )["style_prompt"],
         },
     }
 
@@ -253,9 +255,7 @@ class ProLyricsNodes:
                 "user_prompt": state["user_prompt"],
                 "intent": _require_mapping(state["intent"], "intent"),
                 "song_brief": _require_mapping(state["song_brief"], "song_brief"),
-                "music_style_plan": _require_mapping(
-                    state["music_style_plan"], "music_style_plan"
-                ),
+                "music_style_plan": _require_mapping(state["music_style_plan"], "music_style_plan"),
             },
             _hook_lab_prompt,
             prompt_pack=_prompt_pack(state),
@@ -275,9 +275,7 @@ class ProLyricsNodes:
                 "user_prompt": state["user_prompt"],
                 "intent": _require_mapping(state["intent"], "intent"),
                 "song_brief": _require_mapping(state["song_brief"], "song_brief"),
-                "music_style_plan": _require_mapping(
-                    state["music_style_plan"], "music_style_plan"
-                ),
+                "music_style_plan": _require_mapping(state["music_style_plan"], "music_style_plan"),
                 "hook_lab": _require_mapping(state["hook_lab"], "hook_lab"),
                 "structure_contract": structure_contract(),
             },
@@ -300,9 +298,7 @@ class ProLyricsNodes:
             {
                 "user_prompt": state["user_prompt"],
                 "song_brief": _require_mapping(state["song_brief"], "song_brief"),
-                "music_style_plan": _require_mapping(
-                    state["music_style_plan"], "music_style_plan"
-                ),
+                "music_style_plan": _require_mapping(state["music_style_plan"], "music_style_plan"),
                 "hook_lab": _require_mapping(state["hook_lab"], "hook_lab"),
                 "structure_blueprints": _require_mapping(
                     state["structure_blueprints"], "structure_blueprints"
@@ -322,9 +318,7 @@ class ProLyricsNodes:
         structure_plan = _structure_plan_from_blueprint(selected, payload)
         professional_plan = {
             "song_brief": _require_mapping(state["song_brief"], "song_brief"),
-            "music_style_plan": _require_mapping(
-                state["music_style_plan"], "music_style_plan"
-            ),
+            "music_style_plan": _require_mapping(state["music_style_plan"], "music_style_plan"),
             "hook_lab": _require_mapping(state["hook_lab"], "hook_lab"),
             "structure_blueprints": blueprints,
             "structure_critique": payload,
@@ -509,6 +503,7 @@ class ProLyricsNodes:
             "stages": _append_stage(state, "build_response", "assembler"),
         }
 
+
 async def _generate_json_object(
     backend,
     stage: str,
@@ -544,15 +539,19 @@ async def _generate_json_object(
             f"{stage} must return a strict JSON object: got {type(parsed).__name__}; "
             f"response starts with {_response_excerpt(content)!r}"
         )
-    return parsed, response.provider, {
-        "stage": stage,
-        "provider": response.provider,
-        "model": response.model,
-        "duration_ms": duration_ms,
-        "input_messages": messages,
-        "response_text": response.text,
-        "parsed_json": parsed,
-    }
+    return (
+        parsed,
+        response.provider,
+        {
+            "stage": stage,
+            "provider": response.provider,
+            "model": response.model,
+            "duration_ms": duration_ms,
+            "input_messages": messages,
+            "response_text": response.text,
+            "parsed_json": parsed,
+        },
+    )
 
 
 def _json_decode_message(exc: json.JSONDecodeError) -> str:

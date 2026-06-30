@@ -52,7 +52,9 @@ async def sync_playlist(
     for upload in uploads:
         result = await _apply_upload(session, user_uuid, upload)
         upload_results.append(result)
-    changes = await _list_changes(session, user_uuid=user_uuid, since_clock=since_clock, limit=limit)
+    changes = await _list_changes(
+        session, user_uuid=user_uuid, since_clock=since_clock, limit=limit
+    )
     server_clock = max([item.op_clock for item in changes], default=since_clock)
     return {
         "server_clock": server_clock,
@@ -138,7 +140,9 @@ async def _apply_upload(session: AsyncSession, user_uuid: str, upload: PlaylistU
     if current is not None and upload.client_op_clock < current.op_clock:
         return {"status": "rejected"}
     next_clock = max(upload.client_op_clock, (current.op_clock + 1) if current else 1)
-    content_hash = upload.content_hash or (upload.source_ref if upload.source == "local_file" else None)
+    content_hash = upload.content_hash or (
+        upload.source_ref if upload.source == "local_file" else None
+    )
     if current is None:
         current = MusicPlaylistItem(
             id=upload.id,
@@ -233,7 +237,9 @@ def _validate_upload(upload: PlaylistUpload) -> None:
 
 def _validate_hash(value: str | None, field: str) -> None:
     if not value or not SHA256_HEX_RE.fullmatch(value):
-        raise AppError.bad_request("invalid_content_hash", "content_hash must be 64-char lowercase sha256", field)
+        raise AppError.bad_request(
+            "invalid_content_hash", "content_hash must be 64-char lowercase sha256", field
+        )
 
 
 def _validate_required(value: str, field: str) -> None:

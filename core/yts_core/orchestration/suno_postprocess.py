@@ -118,7 +118,9 @@ def _render_section_and_vocal_tags(lyric_prompt: str, structure: list[str]) -> s
                 out.append(_format_section_tag(section, vocal, indent))
                 continue
 
-        prefix_match = re.match(r"^(\s*)(男|男声|女|女声|合|合唱|男女|男女合唱|男女交替)[：:]\s*(.*)$", line)
+        prefix_match = re.match(
+            r"^(\s*)(男|男声|女|女声|合|合唱|男女|男女合唱|男女交替)[：:]\s*(.*)$", line
+        )
         if prefix_match and current_section:
             indent, speaker, body = prefix_match.groups()
             vocal = _vocal_meta_from_text(speaker)
@@ -129,7 +131,9 @@ def _render_section_and_vocal_tags(lyric_prompt: str, structure: list[str]) -> s
                 out.append(f"{indent}{body}")
             continue
 
-        paren_prefix = re.match(r"^(\s*)[（(](男|男声|女|女声|合|合唱|男女|男女合唱|男女交替)[）)]\s*(.*)$", line)
+        paren_prefix = re.match(
+            r"^(\s*)[（(](男|男声|女|女声|合|合唱|男女|男女合唱|男女交替)[）)]\s*(.*)$", line
+        )
         if paren_prefix and current_section:
             indent, speaker, body = paren_prefix.groups()
             vocal = _vocal_meta_from_text(speaker)
@@ -233,7 +237,13 @@ def _vocal_meta_from_text(value: str) -> str:
         return "female vocal"
     if compact in {"合", "合唱", "男女", "男女合唱", "duet", "duetharmony", "harmony"}:
         return "duet harmony"
-    if "对话式对仗" in compact or "男女交替" in compact or "男女对白" in compact or "交替" in compact or "对唱" in compact:
+    if (
+        "对话式对仗" in compact
+        or "男女交替" in compact
+        or "男女对白" in compact
+        or "交替" in compact
+        or "对唱" in compact
+    ):
         return "male and female alternating vocals"
     if "合唱" in compact or compact.startswith("合"):
         return "duet harmony"
@@ -299,13 +309,19 @@ class _Cue:
 
 def _direction_cue(value: str, section: str) -> _Cue:
     if "钢琴" in value and "单音" in value:
-        return _Cue(f"[Instrumental {section or 'Outro'} | minimal piano motif]", "minimal piano motif")
+        return _Cue(
+            f"[Instrumental {section or 'Outro'} | minimal piano motif]", "minimal piano motif"
+        )
     if "吉他" in value or "单音" in value:
         if section == "Intro":
             return _Cue("[Intro | solo acoustic guitar]", "solo acoustic guitar intro")
         if section == "Outro":
-            return _Cue("[Instrumental Outro | solo acoustic guitar ending]", "solo acoustic guitar ending")
-        return _Cue(f"[Instrumental {section or 'Outro'} | solo acoustic guitar]", "solo acoustic guitar")
+            return _Cue(
+                "[Instrumental Outro | solo acoustic guitar ending]", "solo acoustic guitar ending"
+            )
+        return _Cue(
+            f"[Instrumental {section or 'Outro'} | solo acoustic guitar]", "solo acoustic guitar"
+        )
     if "钢琴" in value:
         return _Cue(f"[Instrumental {section or 'Outro'} | piano fades out]", "piano fades out")
     if "弦乐" in value:
@@ -320,12 +336,17 @@ def _direction_cue(value: str, section: str) -> _Cue:
     if "人声" in value and ("淡出" in value or "渐远" in value or "渐弱" in value):
         return _Cue(f"[{section or 'Outro'} | vocal fades out]", "vocal fades out")
     if "和声" in value:
-        return _Cue(f"[{section or 'Outro'} | background harmonies fade out]", "background harmonies fade out")
+        return _Cue(
+            f"[{section or 'Outro'} | background harmonies fade out]",
+            "background harmonies fade out",
+        )
     if "画面" in value or "镜头" in value:
         return _Cue("[Visual Direction | camera pulls away]", "")
     if "重复副歌" in value:
         return _Cue("[Arrangement | repeat chorus]", "")
-    return _Cue(f"[Instrumental {section or 'Outro'} | arrangement direction]", "arrangement direction")
+    return _Cue(
+        f"[Instrumental {section or 'Outro'} | arrangement direction]", "arrangement direction"
+    )
 
 
 def _augment_style_prompt(style_prompt: str, style_cues: list[str]) -> str:
@@ -336,12 +357,28 @@ def _augment_style_prompt(style_prompt: str, style_cues: list[str]) -> str:
 
 
 def _validate_no_unsafe_suno_text(lyric_prompt: str) -> None:
-    if re.search(r"^\s*(男|男声|女|女声|合|合唱|男女|男女合唱|男女交替)[：:]", lyric_prompt, flags=re.MULTILINE):
-        raise ValueError("lyric_prompt contains Chinese vocal speaker prefixes after Suno postprocess")
-    if re.search(r"^\s*[（(](男|男声|女|女声|合|合唱|男女|男女合唱|男女交替)[）)]", lyric_prompt, flags=re.MULTILINE):
-        raise ValueError("lyric_prompt contains parenthesized Chinese vocal speaker prefixes after Suno postprocess")
-    if re.search(r"^\s*[（(][^）)\n]*[\u4e00-\u9fff][^）)\n]*[）)]\s*$", lyric_prompt, flags=re.MULTILINE):
-        raise ValueError("lyric_prompt contains Chinese parenthetical direction after Suno postprocess")
+    if re.search(
+        r"^\s*(男|男声|女|女声|合|合唱|男女|男女合唱|男女交替)[：:]",
+        lyric_prompt,
+        flags=re.MULTILINE,
+    ):
+        raise ValueError(
+            "lyric_prompt contains Chinese vocal speaker prefixes after Suno postprocess"
+        )
+    if re.search(
+        r"^\s*[（(](男|男声|女|女声|合|合唱|男女|男女合唱|男女交替)[）)]",
+        lyric_prompt,
+        flags=re.MULTILINE,
+    ):
+        raise ValueError(
+            "lyric_prompt contains parenthesized Chinese vocal speaker prefixes after Suno postprocess"
+        )
+    if re.search(
+        r"^\s*[（(][^）)\n]*[\u4e00-\u9fff][^）)\n]*[）)]\s*$", lyric_prompt, flags=re.MULTILINE
+    ):
+        raise ValueError(
+            "lyric_prompt contains Chinese parenthetical direction after Suno postprocess"
+        )
     if re.search(r"^\s*\[[^\]\n]*[\u4e00-\u9fff][^\]\n]*\]\s*$", lyric_prompt, flags=re.MULTILINE):
         raise ValueError("lyric_prompt contains Chinese bracket meta tag after Suno postprocess")
 

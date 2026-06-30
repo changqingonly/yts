@@ -13,7 +13,9 @@ class OpenAIInference:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
 
-    async def generate_text(self, messages, *, model=None, fallbacks=None, response_format=None) -> TextResult:
+    async def generate_text(
+        self, messages, *, model=None, fallbacks=None, response_format=None
+    ) -> TextResult:
         if fallbacks:
             raise ValueError("openai backend does not support implicit model fallbacks")
         return await complete_openai_text(

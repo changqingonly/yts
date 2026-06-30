@@ -20,22 +20,27 @@ def make_backend(settings: Settings | None = None) -> InferenceBackend:
     kind = settings.inference_backend
     if kind == "cloud":
         from .cloud_adapter import CloudInference
+
         return CloudInference()
-    
+
     if kind == "openai":
         from .openai_adapter import OpenAIInference
+
         return OpenAIInference(settings)
-    
+
     if kind == "candle":
         from .candle_adapter import CandleInference
+
         return CandleInference()
-    
+
     if kind == "pro-fixture":
         from .pro_fixture_adapter import ProFixtureBackend
+
         return ProFixtureBackend()
-    
+
     if kind == "echo":
         from .echo_adapter import EchoBackend
+
         return EchoBackend()
-    
+
     raise ValueError(f"Unsupported inference backend: {kind}")

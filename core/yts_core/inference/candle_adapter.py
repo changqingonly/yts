@@ -20,7 +20,9 @@ class CandleInference:
     def __init__(self, base_url: str | None = None) -> None:
         self._base = (base_url or get_settings().candle_base_url).rstrip("/")
 
-    async def generate_text(self, messages, *, model=None, fallbacks=None, response_format=None) -> TextResult:
+    async def generate_text(
+        self, messages, *, model=None, fallbacks=None, response_format=None
+    ) -> TextResult:
         prompt = messages[-1]["content"] if messages else ""
         async with httpx.AsyncClient(timeout=120) as c:
             r = await c.post(

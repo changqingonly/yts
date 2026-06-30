@@ -47,7 +47,9 @@ async def run_creation(
     backend = backend or make_backend()
     runtime_thread_id = _runtime_thread_id(thread_id if thread_id is not None else req.thread_id)
     runtime_run_id = _runtime_run_id(run_id)
-    checkpoint_context_requested = checkpointer is not None or checkpoint_ns is not None or checkpoint_id is not None
+    checkpoint_context_requested = (
+        checkpointer is not None or checkpoint_ns is not None or checkpoint_id is not None
+    )
     config = workflow_config(
         checkpointer=checkpointer,
         thread_id=runtime_thread_id or None,

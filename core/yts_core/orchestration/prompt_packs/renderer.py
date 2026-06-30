@@ -23,7 +23,9 @@ def render_prompt(
 ) -> str:
     pack = _coerce_prompt_pack(prompt_pack)
     if stage not in pack.stage_templates:
-        raise ValueError(f"prompt pack {pack.pack_id}@{pack.version} has no stage template: {stage}")
+        raise ValueError(
+            f"prompt pack {pack.pack_id}@{pack.version} has no stage template: {stage}"
+        )
     return (
         f"YTS_PRO_STAGE: {stage}\n"
         f"{pack.stage_templates[stage]}\n\n"

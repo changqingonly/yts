@@ -11,7 +11,18 @@ from yts_core.orchestration.checkpointing import close_langgraph_checkpointer
 from .cors import DiagnosticCORSMiddleware
 from .db.bootstrap import create_all_tables
 from .errors import register_error_handlers
-from .routes import auth, creation, credits, health, music, provider_gated, song, user, workflow
+from .routes import (
+    auth,
+    creation,
+    credits,
+    health,
+    music,
+    music_stream,
+    provider_gated,
+    song,
+    user,
+    workflow,
+)
 
 
 @asynccontextmanager
@@ -47,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(provider_gated.router, prefix="/api")
     app.include_router(creation.router, prefix="/api")
     app.include_router(workflow.router, prefix="/api")
+    app.include_router(music_stream.router)  # WS /music/stream(无 /api 前缀,对齐流式契约)
     app.state.settings = settings
     return app
 

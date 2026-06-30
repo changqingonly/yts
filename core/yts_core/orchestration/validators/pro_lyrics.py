@@ -78,12 +78,24 @@ def _normalize_intent(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "raw_query": _required_string(payload, "raw_query", "intent"),
         "retrieval_query": _required_string(payload, "retrieval_query", "intent"),
-        "positive_terms": _string_list(_required_list(payload, "positive_terms", "intent"), "intent.positive_terms"),
-        "retrieval_tokens": _string_list(_required_list(payload, "retrieval_tokens", "intent"), "intent.retrieval_tokens"),
-        "scene_cues": _string_list(_required_list(payload, "scene_cues", "intent"), "intent.scene_cues"),
-        "emotion_cues": _string_list(_required_list(payload, "emotion_cues", "intent"), "intent.emotion_cues"),
-        "style_cues": _string_list(_required_list(payload, "style_cues", "intent"), "intent.style_cues"),
-        "negative_terms": _string_list(_required_list(payload, "negative_terms", "intent"), "intent.negative_terms"),
+        "positive_terms": _string_list(
+            _required_list(payload, "positive_terms", "intent"), "intent.positive_terms"
+        ),
+        "retrieval_tokens": _string_list(
+            _required_list(payload, "retrieval_tokens", "intent"), "intent.retrieval_tokens"
+        ),
+        "scene_cues": _string_list(
+            _required_list(payload, "scene_cues", "intent"), "intent.scene_cues"
+        ),
+        "emotion_cues": _string_list(
+            _required_list(payload, "emotion_cues", "intent"), "intent.emotion_cues"
+        ),
+        "style_cues": _string_list(
+            _required_list(payload, "style_cues", "intent"), "intent.style_cues"
+        ),
+        "negative_terms": _string_list(
+            _required_list(payload, "negative_terms", "intent"), "intent.negative_terms"
+        ),
         "negative_categories": _string_list(
             _required_list(payload, "negative_categories", "intent"), "intent.negative_categories"
         ),
@@ -93,17 +105,18 @@ def _normalize_intent(payload: dict[str, Any]) -> dict[str, Any]:
 def _normalize_song_brief(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "core_story": _required_string(payload, "core_story", "song_brief"),
-        "narrative_perspective": _required_string(
-            payload, "narrative_perspective", "song_brief"
-        ),
+        "narrative_perspective": _required_string(payload, "narrative_perspective", "song_brief"),
         "target_form": _required_string(payload, "target_form", "song_brief"),
-        "emotion_arc": _string_list(_required_list(payload, "emotion_arc", "song_brief"), "song_brief.emotion_arc"),
+        "emotion_arc": _string_list(
+            _required_list(payload, "emotion_arc", "song_brief"), "song_brief.emotion_arc"
+        ),
         "duet_allowed": _required_bool(payload, "duet_allowed", "song_brief"),
         "required_devices": _string_list(
             _required_list(payload, "required_devices", "song_brief"), "song_brief.required_devices"
         ),
         "forbidden_devices": _string_list(
-            _required_list(payload, "forbidden_devices", "song_brief"), "song_brief.forbidden_devices"
+            _required_list(payload, "forbidden_devices", "song_brief"),
+            "song_brief.forbidden_devices",
         ),
     }
 
@@ -130,7 +143,8 @@ def _normalize_music_style_plan(
         "selected_style": selected_style,
         "selection_reason": _required_string(payload, "selection_reason", "music_style_plan"),
         "negative_tags": _string_list(
-            _required_list(payload, "negative_tags", "music_style_plan"), "music_style_plan.negative_tags"
+            _required_list(payload, "negative_tags", "music_style_plan"),
+            "music_style_plan.negative_tags",
         ),
     }
 
@@ -161,7 +175,8 @@ def _music_style_candidates(value: Any, template_ids: set[str]) -> list[dict[str
             _require_mapping(candidate.get("bpm_range"), "music_style_candidate.bpm_range")
         )
         suno_tags = _string_list(
-            _required_list(candidate, "suno_tags", "music_style_candidate"), "music_style_candidate.suno_tags"
+            _required_list(candidate, "suno_tags", "music_style_candidate"),
+            "music_style_candidate.suno_tags",
         )
         if not suno_tags:
             raise ValueError("music_style_candidate.suno_tags must not be empty")
@@ -191,7 +206,9 @@ def _music_style_candidates(value: Any, template_ids: set[str]) -> list[dict[str
                 "suno_tags": suno_tags,
                 "bpm_range": bpm_range,
                 "groove": _required_string(candidate, "groove", "music_style_candidate"),
-                "vocal_profile": _required_string(candidate, "vocal_profile", "music_style_candidate"),
+                "vocal_profile": _required_string(
+                    candidate, "vocal_profile", "music_style_candidate"
+                ),
                 "instrumentation": instrumentation,
                 "production_notes": production_notes,
                 "fit_score": fit_score,
@@ -241,9 +258,7 @@ def _normalize_style_spec(payload: dict[str, Any]) -> dict[str, Any]:
         "style_family": {
             "id": _required_string(style_family, "id", "style_spec.style_family"),
             "label": _required_string(style_family, "label", "style_spec.style_family"),
-            "template_id": _required_string(
-                style_family, "template_id", "style_spec.style_family"
-            ),
+            "template_id": _required_string(style_family, "template_id", "style_spec.style_family"),
         },
         "style_prompt_draft": style_prompt,
         "style_components": _string_list(
@@ -252,7 +267,9 @@ def _normalize_style_spec(payload: dict[str, Any]) -> dict[str, Any]:
         "lyric_guidance": _require_mapping(
             payload.get("lyric_guidance"), "style_spec.lyric_guidance"
         ),
-        "negative_terms": _string_list(_required_list(payload, "negative_terms", "style_spec"), "style_spec.negative_terms"),
+        "negative_terms": _string_list(
+            _required_list(payload, "negative_terms", "style_spec"), "style_spec.negative_terms"
+        ),
         "source_signals": _string_list(
             _required_list(payload, "source_signals", "style_spec"), "style_spec.source_signals"
         ),
@@ -263,16 +280,16 @@ def _validate_style_spec_matches_music_style(
     style_spec: Mapping[str, Any], music_style_plan: Mapping[str, Any]
 ) -> None:
     style_family = _require_mapping(style_spec.get("style_family"), "style_spec.style_family")
-    selected_style_id = _required_string(
-        music_style_plan, "selected_style_id", "music_style_plan"
-    )
+    selected_style_id = _required_string(music_style_plan, "selected_style_id", "music_style_plan")
     style_family_id = _required_string(style_family, "id", "style_spec.style_family")
     if style_family_id != selected_style_id:
         raise ValueError(
             "style prompt must use selected music style: "
             f"expected {selected_style_id!r}, got {style_family_id!r}"
         )
-    selected_style = _require_mapping(music_style_plan.get("selected_style"), "music_style_plan.selected_style")
+    selected_style = _require_mapping(
+        music_style_plan.get("selected_style"), "music_style_plan.selected_style"
+    )
     selected_template_id = _required_string(
         selected_style, "template_id", "music_style_plan.selected_style"
     )
@@ -413,7 +430,9 @@ def _validate_quality_review_decision(
             raise ValueError("quality_review.block must not include repair_targets")
 
 
-def _normalize_title_refinement(payload: dict[str, Any], generation: Mapping[str, Any]) -> dict[str, Any]:
+def _normalize_title_refinement(
+    payload: dict[str, Any], generation: Mapping[str, Any]
+) -> dict[str, Any]:
     final_title = _required_string(payload, "final_title", "title_refinement")
     original_title = _required_string(payload, "original_title", "title_refinement")
     candidates = payload.get("title_candidates")
@@ -434,7 +453,9 @@ def _skip_title_refinement_for_quality_gate(
 ) -> dict[str, Any]:
     title = str(generation.get("title") or "").strip()
     if not title:
-        raise ValueError("generation.title must not be empty when quality gate skips title refinement")
+        raise ValueError(
+            "generation.title must not be empty when quality gate skips title refinement"
+        )
     issue_summary = "、".join(str(item) for item in review.get("main_issues", [])[:3])
     reason = "质量门禁未通过，跳过歌名精修并保留初版歌名。"
     if issue_summary:
@@ -492,7 +513,10 @@ def _sections_from_blueprint(blueprint: dict[str, Any]) -> list[str]:
 
 
 def _section_label_map_from_blueprint(blueprint: dict[str, Any]) -> dict[str, str]:
-    raw_labels = [str(section).strip() for section in _require_list(blueprint.get("sections"), "pro structure planner sections")]
+    raw_labels = [
+        str(section).strip()
+        for section in _require_list(blueprint.get("sections"), "pro structure planner sections")
+    ]
     normalized_labels = _normalize_blueprint_section_labels(raw_labels)
     label_map: dict[str, str] = {}
     for raw_label, normalized_label in zip(raw_labels, normalized_labels, strict=False):
@@ -618,7 +642,9 @@ def _blueprint_items(value: dict[str, Any]) -> list[dict[str, Any]]:
         section_label_map = _section_label_map_from_blueprint(normalized)
         normalized["sections"] = _sections_from_blueprint(normalized)
         normalized["section_roles"] = _normalize_section_keyed_mapping(
-            _require_mapping(normalized.get("section_roles"), "pro structure planner section_roles"),
+            _require_mapping(
+                normalized.get("section_roles"), "pro structure planner section_roles"
+            ),
             section_label_map,
             normalized["sections"],
             "section_roles",
@@ -631,7 +657,10 @@ def _blueprint_items(value: dict[str, Any]) -> list[dict[str, Any]]:
         )
         normalized["energy_curve"] = _energy_curve_from_blueprint(normalized, section_label_map)
         normalized["hook_placement"] = _normalize_hook_placement(
-            normalized.get("hook_placement"), section_label_map, normalized["sections"], "hook_placement"
+            normalized.get("hook_placement"),
+            section_label_map,
+            normalized["sections"],
+            "hook_placement",
         )
         out.append(normalized)
     return out
@@ -747,7 +776,11 @@ def _normalize_hook_section_list(
     sections: list[str],
     field_name: str,
 ) -> list[str]:
-    items = [value] if isinstance(value, str) else _require_list(value, f"pro structure planner {field_name}")
+    items = (
+        [value]
+        if isinstance(value, str)
+        else _require_list(value, f"pro structure planner {field_name}")
+    )
     normalized: list[str] = []
     for raw_section in items:
         section = _normalize_hook_section_reference(
@@ -790,8 +823,15 @@ def _energy_curve_from_blueprint(
         section = section_label_map.get(raw_label, raw_label)
         if section not in allowed_sections:
             raise ValueError("pro structure planner energy_curve keys must come from sections")
-        if not isinstance(raw_value, int) or isinstance(raw_value, bool) or raw_value < 1 or raw_value > 5:
-            raise ValueError("pro structure planner energy_curve values must be integers from 1 to 5")
+        if (
+            not isinstance(raw_value, int)
+            or isinstance(raw_value, bool)
+            or raw_value < 1
+            or raw_value > 5
+        ):
+            raise ValueError(
+                "pro structure planner energy_curve values must be integers from 1 to 5"
+            )
         if section in normalized:
             raise ValueError("pro structure planner energy_curve keys must map to unique sections")
         normalized[section] = raw_value
@@ -809,7 +849,9 @@ def _selected_blueprint(critique: dict[str, Any], blueprints: list[Any]) -> dict
             if str(item.get("id") or "") == selected_id:
                 return dict(item)
         raise ValueError(f"selected pro blueprint id not found: {selected_id}")
-    raise ValueError("pro structure critique must include selected_blueprint_id or selected_blueprint")
+    raise ValueError(
+        "pro structure critique must include selected_blueprint_id or selected_blueprint"
+    )
 
 
 def _normalize_generation_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -824,8 +866,12 @@ def _normalize_generation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     _required_string(normalized, "style_prompt", "generation")
     _required_string(normalized, "lyric_prompt", "generation")
     _required_string(normalized, "hook", "generation")
-    clip_suggestion = _require_mapping(normalized.get("clip_suggestion"), "generation.clip_suggestion")
-    constraint_check = _require_mapping(normalized.get("constraint_check"), "generation.constraint_check")
+    clip_suggestion = _require_mapping(
+        normalized.get("clip_suggestion"), "generation.clip_suggestion"
+    )
+    constraint_check = _require_mapping(
+        normalized.get("constraint_check"), "generation.constraint_check"
+    )
     used_card_ids = normalized.get("used_card_ids")
     if not isinstance(used_card_ids, list):
         raise ValueError("generation.used_card_ids must be a list")
@@ -868,7 +914,9 @@ def _normalize_lyrics_section_tags(lyric_prompt: str, structure: Any) -> str:
     for match in tag_matches:
         current = _blueprint_section_label(match.group(2))
         target = current
-        if target_index < len(target_tags) and _same_section_family(current, target_tags[target_index]):
+        if target_index < len(target_tags) and _same_section_family(
+            current, target_tags[target_index]
+        ):
             target = target_tags[target_index]
             target_index += 1
         replacements.append(f"{match.group(1)}[{target}]")
@@ -900,10 +948,10 @@ def _validate_generation_against_pro_plan(
         raise ValueError(
             f"pro generated hook must match hook_lab selected_hook: expected {selected_hook!r}, got {generated_hook!r}"
         )
-    style_spec = _require_mapping(professional_plan.get("style_spec"), "professional_plan.style_spec")
-    expected_style_prompt = _required_string(
-        style_spec, "style_prompt_draft", "style_spec"
+    style_spec = _require_mapping(
+        professional_plan.get("style_spec"), "professional_plan.style_spec"
     )
+    expected_style_prompt = _required_string(style_spec, "style_prompt_draft", "style_spec")
     generated_style_prompt = str(generation.get("style_prompt") or "").strip()
     if generated_style_prompt != expected_style_prompt:
         raise ValueError(
@@ -915,7 +963,10 @@ def _validate_generation_against_pro_plan(
     )
     expected_sections = _sections_from_blueprint(dict(selected_blueprint))
     generated_sections = _normalize_blueprint_section_labels(
-        [str(section) for section in _require_list(generation.get("structure"), "generation.structure")]
+        [
+            str(section)
+            for section in _require_list(generation.get("structure"), "generation.structure")
+        ]
     )
     if generated_sections != expected_sections:
         raise ValueError(
@@ -986,14 +1037,13 @@ def _lyric_section_blocks(lyric_prompt: str) -> dict[str, str]:
     return blocks
 
 
-def _validate_forbidden_meta_tags(
-    lyric_prompt: str, selected_blueprint: Mapping[str, Any]
-) -> None:
+def _validate_forbidden_meta_tags(lyric_prompt: str, selected_blueprint: Mapping[str, Any]) -> None:
     vocal_plan = selected_blueprint.get("vocal_plan")
     if not isinstance(vocal_plan, Mapping):
         return
     forbidden = _string_list(
-        vocal_plan.get("forbidden_meta_tags", []), "selected_blueprint.vocal_plan.forbidden_meta_tags"
+        vocal_plan.get("forbidden_meta_tags", []),
+        "selected_blueprint.vocal_plan.forbidden_meta_tags",
     )
     lowered = lyric_prompt.lower()
     for tag in forbidden:

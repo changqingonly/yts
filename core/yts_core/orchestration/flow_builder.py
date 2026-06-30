@@ -39,7 +39,9 @@ def workflow_config(
 ) -> dict[str, Any] | None:
     """Build LangGraph runtime config for checkpoint-aware invocations."""
 
-    needs_thread_id = checkpointer is not None or checkpoint_ns is not None or checkpoint_id is not None
+    needs_thread_id = (
+        checkpointer is not None or checkpoint_ns is not None or checkpoint_id is not None
+    )
     if not needs_thread_id and thread_id is None and run_id is None:
         return None
 

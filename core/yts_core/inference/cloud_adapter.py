@@ -9,7 +9,9 @@ from .port import TextResult
 class CloudInference:
     name = "cloud-litellm"
 
-    async def generate_text(self, messages, *, model=None, fallbacks=None, response_format=None) -> TextResult:
+    async def generate_text(
+        self, messages, *, model=None, fallbacks=None, response_format=None
+    ) -> TextResult:
         return await complete_text(
             messages,
             model=model,

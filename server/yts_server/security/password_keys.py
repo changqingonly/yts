@@ -65,8 +65,13 @@ def take_and_decrypt_passwords(key_id: str, *ciphertexts_b64: str) -> list[str]:
         _purge_expired_locked()
         cached = _cache.pop(key_id, None)
     if cached is None:
-        raise AppError.bad_request("password_key_expired", "password key expired or not found", "key_id")
-    return [_decrypt_with_private_key(cached.private_key, ciphertext_b64) for ciphertext_b64 in ciphertexts_b64]
+        raise AppError.bad_request(
+            "password_key_expired", "password key expired or not found", "key_id"
+        )
+    return [
+        _decrypt_with_private_key(cached.private_key, ciphertext_b64)
+        for ciphertext_b64 in ciphertexts_b64
+    ]
 
 
 def _decrypt_with_private_key(private_key: RSAPrivateKey, ciphertext_b64: str) -> str:
@@ -86,11 +91,15 @@ def _decrypt_with_private_key(private_key: RSAPrivateKey, ciphertext_b64: str) -
             ),
         )
     except Exception as exc:
-        raise AppError.bad_request("password_decrypt_failed", f"decrypt failed: {exc}", "password") from exc
+        raise AppError.bad_request(
+            "password_decrypt_failed", f"decrypt failed: {exc}", "password"
+        ) from exc
     try:
         return plaintext.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise AppError.bad_request("password_utf8_invalid", "decrypted password is invalid utf-8") from exc
+        raise AppError.bad_request(
+            "password_utf8_invalid", "decrypted password is invalid utf-8"
+        ) from exc
 
 
 def _purge_expired_locked() -> None:

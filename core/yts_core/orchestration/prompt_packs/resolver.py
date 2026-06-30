@@ -17,7 +17,9 @@ def resolve_prompt_pack(
 ) -> PromptPack:
     root_path = Path(root) if root is not None else Path(__file__).resolve().parent
     pack_dir = root_path / pack_id
-    resolved_version = _active_version(pack_dir) if version is None else _non_empty(version, "version")
+    resolved_version = (
+        _active_version(pack_dir) if version is None else _non_empty(version, "version")
+    )
     release_dir = pack_dir / "releases" / resolved_version
     manifest = _load_json_object(release_dir / "manifest.json")
 

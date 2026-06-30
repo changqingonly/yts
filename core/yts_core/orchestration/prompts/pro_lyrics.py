@@ -195,7 +195,11 @@ def _generate_lyrics_prompt(
             "style_prompt": "string",
             "lyric_prompt": "[Verse 1]\\n...",
             "hook": "string",
-            "clip_suggestion": {"start_section": "Chorus", "duration_seconds": 15, "reason": "string"},
+            "clip_suggestion": {
+                "start_section": "Chorus",
+                "duration_seconds": 15,
+                "reason": "string",
+            },
             "used_card_ids": ["string"],
             "constraint_check": {
                 "negative_constraints_avoided": True,
@@ -253,7 +257,11 @@ def _repair_lyrics_prompt(
             "style_prompt": "string",
             "lyric_prompt": "[Verse 1]\\n...",
             "hook": "string",
-            "clip_suggestion": {"start_section": "Chorus", "duration_seconds": 15, "reason": "string"},
+            "clip_suggestion": {
+                "start_section": "Chorus",
+                "duration_seconds": 15,
+                "reason": "string",
+            },
             "used_card_ids": ["string"],
             "constraint_check": {"suno_ready": True},
         },

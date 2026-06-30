@@ -180,7 +180,9 @@ def default_workflow_template() -> WorkflowDefinition:
             WorkflowEdgeDefinition(source="brief_approval", target="plan_music_style"),
             WorkflowEdgeDefinition(source="plan_music_style", target="hook_lab"),
             WorkflowEdgeDefinition(source="hook_lab", target="draft_structure_blueprints"),
-            WorkflowEdgeDefinition(source="draft_structure_blueprints", target="critique_structure"),
+            WorkflowEdgeDefinition(
+                source="draft_structure_blueprints", target="critique_structure"
+            ),
             WorkflowEdgeDefinition(source="critique_structure", target="plan_style_prompt"),
             WorkflowEdgeDefinition(source="plan_style_prompt", target="generate_lyrics"),
             WorkflowEdgeDefinition(source="generate_lyrics", target="review_quality"),
@@ -218,8 +220,12 @@ async def run_workflow_thread(
         "node_config": request.node_config,
         "trace_nodes": [],
     }
-    graph = _build_template_graph(default_workflow_template(), backend=backend, checkpointer=checkpointer)
-    config = workflow_config(checkpointer=checkpointer, thread_id=request.thread_id.strip(), run_id=state["run_id"])
+    graph = _build_template_graph(
+        default_workflow_template(), backend=backend, checkpointer=checkpointer
+    )
+    config = workflow_config(
+        checkpointer=checkpointer, thread_id=request.thread_id.strip(), run_id=state["run_id"]
+    )
     result = await asyncio.to_thread(graph.invoke, state, config)
     return _run_result_from_state(result)
 
@@ -234,7 +240,9 @@ async def resume_workflow_thread(
     _require_hitl_checkpointer(checkpointer)
     if not thread_id.strip():
         raise ValueError("thread_id must not be empty")
-    graph = _build_template_graph(default_workflow_template(), backend=backend, checkpointer=checkpointer)
+    graph = _build_template_graph(
+        default_workflow_template(), backend=backend, checkpointer=checkpointer
+    )
     config = workflow_config(checkpointer=checkpointer, thread_id=thread_id.strip())
     result = await asyncio.to_thread(graph.invoke, Command(resume=decision.model_dump()), config)
     return _run_result_from_state(result)
@@ -244,7 +252,9 @@ async def workflow_thread_trace(*, thread_id: str, checkpointer) -> WorkflowTrac
     _require_hitl_checkpointer(checkpointer)
     if not thread_id.strip():
         raise ValueError("thread_id must not be empty")
-    graph = _build_template_graph(default_workflow_template(), backend=None, checkpointer=checkpointer)
+    graph = _build_template_graph(
+        default_workflow_template(), backend=None, checkpointer=checkpointer
+    )
     snapshot = await asyncio.to_thread(
         graph.get_state,
         workflow_config(checkpointer=checkpointer, thread_id=thread_id.strip()),
@@ -437,7 +447,7 @@ def _creation_result_payload(state: dict[str, Any]) -> dict[str, Any]:
             "stages": [
                 stage.model_dump() if hasattr(stage, "model_dump") else stage
                 for stage in state.get("stages", [])
-            ]
+            ],
         },
     }
 
@@ -647,7 +657,13 @@ def _trace_artifact_preview(state: dict[str, Any], node_id: str) -> dict[str, An
         structure_blueprints = _require_trace_mapping(state, node_id, "structure_blueprints")
         blueprints = _preview_list(structure_blueprints.get("blueprints"), limit=3)
         return {
-            "blueprint_count": len(_require_trace_list(structure_blueprints.get("blueprints"), node_id, "structure_blueprints.blueprints")),
+            "blueprint_count": len(
+                _require_trace_list(
+                    structure_blueprints.get("blueprints"),
+                    node_id,
+                    "structure_blueprints.blueprints",
+                )
+            ),
             "blueprints": [
                 {
                     "id": item.get("id", ""),
@@ -661,9 +677,12 @@ def _trace_artifact_preview(state: dict[str, Any], node_id: str) -> dict[str, An
     if node_id == "critique_structure":
         critique = _require_trace_mapping(state, node_id, "structure_critique")
         professional_plan = _require_trace_mapping(state, node_id, "professional_plan")
-        selected = _require_trace_child_mapping(professional_plan, node_id, "professional_plan.selected_blueprint")
+        selected = _require_trace_child_mapping(
+            professional_plan, node_id, "professional_plan.selected_blueprint"
+        )
         return {
-            "selected_blueprint_id": critique.get("selected_blueprint_id") or selected.get("id", ""),
+            "selected_blueprint_id": critique.get("selected_blueprint_id")
+            or selected.get("id", ""),
             "critic_notes": _preview_list(critique.get("critic_notes")),
             "sections": _preview_list(selected.get("sections"), limit=8),
         }
@@ -717,13 +736,17 @@ def _trace_artifact_preview(state: dict[str, Any], node_id: str) -> dict[str, An
 
 def _trace_metrics(state: dict[str, Any], node_id: str) -> dict[str, Any]:
     if node_id == "plan_music_style":
-        candidates = _require_trace_mapping(state, node_id, "music_style_plan").get("style_candidates", [])
+        candidates = _require_trace_mapping(state, node_id, "music_style_plan").get(
+            "style_candidates", []
+        )
         return {"candidate_count": len(candidates) if isinstance(candidates, list) else 0}
     if node_id == "hook_lab":
         candidates = _require_trace_mapping(state, node_id, "hook_lab").get("candidates", [])
         return {"candidate_count": len(candidates) if isinstance(candidates, list) else 0}
     if node_id == "draft_structure_blueprints":
-        blueprints = _require_trace_mapping(state, node_id, "structure_blueprints").get("blueprints", [])
+        blueprints = _require_trace_mapping(state, node_id, "structure_blueprints").get(
+            "blueprints", []
+        )
         return {"candidate_count": len(blueprints) if isinstance(blueprints, list) else 0}
     if node_id == "generate_lyrics":
         lyrics = str(_require_trace_mapping(state, node_id, "generation").get("lyric_prompt", ""))

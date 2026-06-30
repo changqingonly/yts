@@ -43,7 +43,9 @@ async def get_balance(session: AsyncSession, user_uuid: str) -> CreditBalance:
     )
 
 
-async def list_ledger(session: AsyncSession, user_uuid: str, *, limit: int, offset: int) -> list[CreditLedger]:
+async def list_ledger(
+    session: AsyncSession, user_uuid: str, *, limit: int, offset: int
+) -> list[CreditLedger]:
     result = await session.execute(
         select(CreditLedger)
         .where(CreditLedger.user_uuid == user_uuid)
@@ -249,7 +251,9 @@ async def _account(session: AsyncSession, user_uuid: str) -> CreditAccount:
     return account
 
 
-async def _has_grant(session: AsyncSession, user_uuid: str, grant_type: str, grant_date: str) -> bool:
+async def _has_grant(
+    session: AsyncSession, user_uuid: str, grant_type: str, grant_date: str
+) -> bool:
     statement: Select = select(CreditGrantRecord).where(
         CreditGrantRecord.user_uuid == user_uuid,
         CreditGrantRecord.grant_type == grant_type,
@@ -259,7 +263,9 @@ async def _has_grant(session: AsyncSession, user_uuid: str, grant_type: str, gra
 
 
 async def _reservation(session: AsyncSession, reservation_key: str) -> CreditReservation:
-    statement = select(CreditReservation).where(CreditReservation.reservation_key == reservation_key)
+    statement = select(CreditReservation).where(
+        CreditReservation.reservation_key == reservation_key
+    )
     reservation = (await session.execute(statement)).scalar_one_or_none()
     if reservation is None:
         raise AppError.bad_request("reservation_not_found", "reservation not found")

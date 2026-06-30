@@ -122,6 +122,7 @@ async def get_workflow_trace(workflow_id: str, thread_id: str) -> WorkflowTrace:
     checkpointer = build_langgraph_checkpointer(settings)
     return await workflow_thread_trace(thread_id=thread_id, checkpointer=checkpointer)
 
+
 def _require_workflow_template(workflow_id: str) -> WorkflowDefinition:
     template = default_workflow_template()
     if workflow_id != template.workflow_id:

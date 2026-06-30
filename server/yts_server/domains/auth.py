@@ -61,7 +61,9 @@ async def register_user(
         key_id, password_ciphertext_b64, confirm_password_ciphertext_b64
     )
     if password != confirm:
-        raise AppError.bad_request("password_mismatch", "passwords do not match", "confirm_password")
+        raise AppError.bad_request(
+            "password_mismatch", "passwords do not match", "confirm_password"
+        )
     now = datetime.now(timezone.utc)
     user = UserAccount(
         id=_new_i64_id(),
@@ -92,7 +94,9 @@ async def login_user(
     password = take_and_decrypt_password(key_id, password_ciphertext_b64)
     user = await _find_user_by_account(session, account)
     if user is None or not verify_password(password, user.password_hash):
-        raise AppError.bad_request("invalid_account_or_password", "invalid account or password", "account")
+        raise AppError.bad_request(
+            "invalid_account_or_password", "invalid account or password", "account"
+        )
     await grant_daily_login_credit(session, user.uuid, date.today())
     token = await _issue_session_token(session, user, datetime.now(timezone.utc))
     return _auth_response(user, token)

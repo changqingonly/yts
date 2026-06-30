@@ -20,7 +20,9 @@ class ProFixtureBackend:
     def __init__(self) -> None:
         self.payloads = deepcopy(_PAYLOADS)
 
-    async def generate_text(self, messages, *, model=None, fallbacks=None, response_format=None) -> TextResult:
+    async def generate_text(
+        self, messages, *, model=None, fallbacks=None, response_format=None
+    ) -> TextResult:
         content = messages[-1]["content"] if messages else ""
         marker = "YTS_PRO_STAGE:"
         if marker not in content:
@@ -187,7 +189,11 @@ _PAYLOADS: dict[str, dict[str, Any]] = {
         "rejected": [{"id": "classic_pop", "reason": "较普通"}],
     },
     "plan_style_prompt": {
-        "style_family": {"id": "mainstream_pop", "label": "主流流行", "template_id": "mandarin_pop_ballad"},
+        "style_family": {
+            "id": "mainstream_pop",
+            "label": "主流流行",
+            "template_id": "mandarin_pop_ballad",
+        },
         "style_prompt_draft": "Mandopop, 88 BPM, intimate lead vocal, piano, warm strings",
         "style_components": ["Mandopop", "88 BPM", "intimate lead vocal", "piano", "warm strings"],
         "lyric_guidance": {
@@ -209,7 +215,15 @@ _PAYLOADS: dict[str, dict[str, Any]] = {
     },
     "generate_lyrics": {
         "structure_mode": "ballad_slow_build",
-        "structure": ["Verse 1", "Verse 2", "Pre-Chorus", "Chorus", "Bridge", "Final Chorus", "Outro"],
+        "structure": [
+            "Verse 1",
+            "Verse 2",
+            "Pre-Chorus",
+            "Chorus",
+            "Bridge",
+            "Final Chorus",
+            "Outro",
+        ],
         "title": "雨中旧窗",
         "style_prompt": "Mandopop, 88 BPM, intimate lead vocal, piano, warm strings",
         "lyric_prompt": (
@@ -229,7 +243,11 @@ _PAYLOADS: dict[str, dict[str, Any]] = {
             "让这场大雨替我抵达你身边"
         ),
         "hook": "雨落旧窗前",
-        "clip_suggestion": {"start_section": "Chorus", "duration_seconds": 15, "reason": "副歌 Hook 清晰。"},
+        "clip_suggestion": {
+            "start_section": "Chorus",
+            "duration_seconds": 15,
+            "reason": "副歌 Hook 清晰。",
+        },
         "used_card_ids": [],
         "constraint_check": {
             "negative_constraints_avoided": True,
@@ -264,7 +282,12 @@ _PAYLOADS: dict[str, dict[str, Any]] = {
         "original_title": "雨中旧窗",
         "final_title": "雨中故人",
         "title_candidates": [
-            {"title": "雨中故人", "kind": "hook_story", "reason": "贴合雨天与故人线索。", "selected": True}
+            {
+                "title": "雨中故人",
+                "kind": "hook_story",
+                "reason": "贴合雨天与故人线索。",
+                "selected": True,
+            }
         ],
         "selection_reason": "更准确覆盖核心故事。",
     },

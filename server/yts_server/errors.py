@@ -70,7 +70,9 @@ def register_error_handlers(app: FastAPI) -> None:
         return JSONResponse(status_code=error.status_code, content=error_body(error))
 
     @app.exception_handler(RequestValidationError)
-    async def handle_request_validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
+    async def handle_request_validation_error(
+        request: Request, error: RequestValidationError
+    ) -> JSONResponse:
         body = await request.body()
         logger.warning(
             "Request validation failed path=%s method=%s field=%s errors=%s body=%s",

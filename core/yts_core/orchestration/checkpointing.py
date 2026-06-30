@@ -22,7 +22,9 @@ def build_langgraph_checkpointer(settings: Settings) -> Any | None:
         return _memory_checkpointer(backend)
     if backend == "postgres":
         return _postgres_checkpointer(settings, backend)
-    raise ValueError(f"unsupported langgraph checkpoint backend: {settings.langgraph_checkpoint_backend}")
+    raise ValueError(
+        f"unsupported langgraph checkpoint backend: {settings.langgraph_checkpoint_backend}"
+    )
 
 
 def close_langgraph_checkpointer() -> None:
@@ -49,7 +51,9 @@ def _memory_checkpointer(backend: str) -> InMemorySaver:
 
     if _CHECKPOINTER is not None:
         if _CHECKPOINTER_BACKEND != backend:
-            raise ValueError("langgraph checkpointer backend changed while a checkpointer is active")
+            raise ValueError(
+                "langgraph checkpointer backend changed while a checkpointer is active"
+            )
         return _CHECKPOINTER
     _CHECKPOINTER = InMemorySaver()
     _CHECKPOINTER_BACKEND = backend
@@ -60,10 +64,14 @@ def _postgres_checkpointer(settings: Settings, backend: str):
     global _CHECKPOINTER, _CHECKPOINTER_BACKEND, _CHECKPOINTER_CONTEXT
 
     if not settings.langgraph_checkpoint_postgres_dsn.strip():
-        raise ValueError("langgraph checkpoint postgres_dsn must not be empty when backend=postgres")
+        raise ValueError(
+            "langgraph checkpoint postgres_dsn must not be empty when backend=postgres"
+        )
     if _CHECKPOINTER is not None:
         if _CHECKPOINTER_BACKEND != backend:
-            raise ValueError("langgraph checkpointer backend changed while a checkpointer is active")
+            raise ValueError(
+                "langgraph checkpointer backend changed while a checkpointer is active"
+            )
         return _CHECKPOINTER
     try:
         context = _postgres_saver_context(settings)
