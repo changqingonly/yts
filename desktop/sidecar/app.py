@@ -2,7 +2,7 @@
 Mac sidecar 入口 = 复用云端 FastAPI app,覆盖为本地 profile。
 
 通过环境变量驱动 yts_core.config.Settings(env_prefix=YTS_):
-本地 SQLite + 开自定义 skill + 关计费 + Candle 推理(经 Rust 出口/IPC)。
+本地 SQLite + 开自定义 skill + 关计费 + 按 YTS_INFERENCE_BACKEND 选择推理后端。
 PyInstaller 打包此文件为 `yts-sidecar`;Tauri 作 externalBin 拉起(见 src-tauri/src/sidecar.rs)。
 """
 

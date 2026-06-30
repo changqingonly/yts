@@ -43,6 +43,17 @@ bash scripts/build_sidecar_macos.sh
 ## 推理后端切换(YTS_INFERENCE_BACKEND)
 - `echo`(默认):确定性、无依赖,用于验证编排链路。
 - `cloud`:LiteLLM 云模型(需 provider 凭据,如 `YTS_DEFAULT_TEXT_MODEL` + key)。
+- `openai`:OpenAI-compatible 文本模型,服务端和本地 sidecar 都支持。配置写入 `.env` 或环境变量:
+```bash
+cp .env.example .env
+# 编辑 .env:
+# YTS_INFERENCE_BACKEND=openai
+# YTS_OPENAI_API_KEY=sk-...
+# YTS_OPENAI_TEXT_MODEL=gpt-4.1-mini
+# YTS_OPENAI_BASE_URL=        # 可选,兼容代理或私有网关时填写
+# YTS_AUTH_JWT_SECRET=dev-yts-auth-secret-that-is-long-enough-for-hs256
+# YTS_CONFIG_FILE=/absolute/path/to/yts.env  # 可选,显式指定配置文件路径
+```
 - `candle`:本地 Rust Candle。需先起 candle-server:
 ```bash
 bash scripts/dev_candle.sh           # Rust candle-server(:8799),首次下载 TinyLlama GGUF

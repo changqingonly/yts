@@ -64,7 +64,7 @@ onMounted(refreshPlaylist);
   <section class="music-page">
     <header class="page-header">
       <div>
-        <p>音乐 Tab</p>
+        <p>音乐</p>
         <h1>音乐播放器</h1>
       </div>
       <div class="header-actions">

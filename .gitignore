@@ -9,6 +9,7 @@ run/
 docs/
 .DS_Store
 .python-version
+.env
 data/zvec/
 data/*.csv
 data/famous_song.jsonl

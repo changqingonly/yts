@@ -35,8 +35,11 @@
 - **错误**:`{"type":"error","message":"..."}`,client 收到后停止并释放 worklet。
 
 ## Producer 实现点
-- 本地:`desktop/candle-server` `/music/stream` —— 当前用确定性合成器产真实 PCM(验证用);**MusicGen 模型替换点**见 `src/stream.rs` 注释。
-- 云端:`server/yts_server` —— 同消息格式,TODO。
+- 本地:`desktop/candle-server` `/music/stream`,两档(env `YTS_AUDIOGEN_CMD`):
+  - **未设置**:内置确定性合成器(真实 PCM,无依赖验证用)。
+  - **已设置**:spawn 外部 audiogen 二进制(**acestep.cpp / ACE-Step 1.5,GGML/Metal**)。命令含占位 `{prompt}` `{seconds}` `{out}`,producer 把 48kHz WAV 写到 `{out}`;candle-server 读 WAV→mono f32→按帧推流。整段生成→流式喂播(准实时,有首段延迟)。
+  - 搭建:`scripts/build_acestep.sh`(clone+CMake+Metal),再设 `YTS_AUDIOGEN_CMD`。
+- 云端:`server/yts_server` —— 同消息格式,TODO(任务 2)。
 
 ## Consumer 实现点
 - `desktop/frontend/public/audio/pcm-player-worklet.js` —— ring buffer AudioWorklet。

@@ -1,14 +1,18 @@
 <script setup>
 import { onMounted, ref } from "vue";
-import { RouterLink } from "vue-router";
-import { Coins, SlidersHorizontal, UserRound } from "@lucide/vue";
+import { RouterLink, useRouter } from "vue-router";
+import { Coins, LogOut, SlidersHorizontal, UserRound } from "@lucide/vue";
 import { fetchCreditBalance, fetchCreditLedger, fetchDailyUsage } from "../services/credits";
+import { useAuthStore } from "../stores/auth";
 
+const router = useRouter();
+const auth = useAuthStore();
 const balance = ref(null);
 const ledger = ref([]);
 const dailyUsage = ref(null);
 const modelProvider = ref(localStorage.getItem("yts-model-provider") || "local");
 const error = ref("");
+const loggingOut = ref(false);
 
 async function loadSettings() {
   error.value = "";
@@ -25,6 +29,19 @@ function saveModelPreference() {
   localStorage.setItem("yts-model-provider", modelProvider.value);
 }
 
+async function logout() {
+  error.value = "";
+  loggingOut.value = true;
+  try {
+    await auth.logoutAction();
+    router.push({ name: "login" });
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    loggingOut.value = false;
+  }
+}
+
 onMounted(loadSettings);
 </script>
 
@@ -35,7 +52,13 @@ onMounted(loadSettings);
         <p>系统设置</p>
         <h1>设置</h1>
       </div>
-      <RouterLink class="profile-link" to="/profile/setup"><UserRound :size="16" /> 个人设置</RouterLink>
+      <div class="settings-actions">
+        <RouterLink class="profile-link" to="/profile/setup"><UserRound :size="16" /> 个人设置</RouterLink>
+        <button class="logout-button" type="button" :disabled="loggingOut" @click="logout">
+          <LogOut :size="16" />
+          {{ loggingOut ? "退出中" : "退出登录" }}
+        </button>
+      </div>
     </header>
 
     <p v-if="error" class="error-message">{{ error }}</p>
@@ -130,7 +153,14 @@ h2 {
   font-size: 15px;
 }
 
-.profile-link {
+.settings-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.profile-link,
+.logout-button {
   align-items: center;
   background: var(--color-panel);
   border: 1px solid var(--color-border);
@@ -142,6 +172,21 @@ h2 {
   min-height: 36px;
   padding: 0 12px;
   text-decoration: none;
+}
+
+.logout-button {
+  cursor: pointer;
+  font: inherit;
+}
+
+.logout-button:hover {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.logout-button:disabled {
+  cursor: wait;
+  opacity: 0.62;
 }
 
 .settings-layout {

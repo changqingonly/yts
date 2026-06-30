@@ -213,6 +213,18 @@ def test_profile_and_settings_pages_cover_user_and_credit_surfaces() -> None:
     assert "fetchDailyUsage" in settings
 
 
+def test_settings_page_exposes_logout_action_in_header() -> None:
+    settings = read_source("pages/SettingsPage.vue")
+
+    assert "退出登录" in settings
+    assert "LogOut" in settings
+    assert "useAuthStore" in settings
+    assert "auth.logoutAction()" in settings
+    assert 'router.push({ name: "login" })' in settings
+    assert "settings-actions" in settings
+    assert "logout-button" in settings
+
+
 def test_assets_page_exposes_song_inspiration_gallery_and_audio_tabs() -> None:
     assets = read_source("pages/AssetsPage.vue")
 

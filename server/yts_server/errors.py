@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -64,3 +68,31 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(_request: Request, error: AppError) -> JSONResponse:
         return JSONResponse(status_code=error.status_code, content=error_body(error))
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_request_validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
+        body = await request.body()
+        logger.warning(
+            "Request validation failed path=%s method=%s field=%s errors=%s body=%s",
+            request.url.path,
+            request.method,
+            _validation_fields(error.errors()),
+            error.errors(),
+            _decode_body(body),
+        )
+        return JSONResponse(status_code=422, content={"detail": error.errors()})
+
+
+def _validation_fields(errors: list[dict[str, Any]]) -> str:
+    fields: list[str] = []
+    for item in errors:
+        location = item.get("loc")
+        if isinstance(location, tuple | list) and location:
+            fields.append(str(location[-1]))
+    if not fields:
+        raise ValueError("request validation error missing loc")
+    return ",".join(fields)
+
+
+def _decode_body(body: bytes) -> str:
+    return body.decode("utf-8")

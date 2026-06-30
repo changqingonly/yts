@@ -18,7 +18,7 @@ from yts_server.main import create_app
 def isolated_sqlite_db(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[None]:
     db_path = tmp_path / "yts-test.db"
     monkeypatch.setenv("YTS_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
-    monkeypatch.setenv("YTS_AUTH_JWT_SECRET", "test-secret")
+    monkeypatch.setenv("YTS_AUTH_JWT_SECRET", "test-secret-that-is-long-enough-for-hs256-tests")
 
     reset_cached_db_engine()
     yield

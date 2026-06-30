@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +25,7 @@ from .billing_guard import GenerationBillingGuard, billing_user_if_required
 from .dependencies import DbSession
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
+logger = logging.getLogger(__name__)
 
 
 class WorkflowThreadRunBody(BaseModel):
@@ -66,6 +68,12 @@ async def run_workflow(
                 checkpointer=checkpointer,
             )
         except ValueError as exc:
+            logger.warning(
+                "Workflow run failed workflow_id=%s thread_id=%s detail=%s",
+                workflow_id,
+                req.thread_id,
+                str(exc),
+            )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -96,6 +104,14 @@ async def resume_workflow(
                 checkpointer=checkpointer,
             )
         except ValueError as exc:
+            logger.warning(
+                "Workflow resume failed workflow_id=%s thread_id=%s node_id=%s action=%s detail=%s",
+                workflow_id,
+                thread_id,
+                decision.node_id,
+                decision.action,
+                str(exc),
+            )
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 
 import pytest
@@ -79,6 +80,47 @@ def test_workflow_run_route_returns_explicit_model_error(monkeypatch) -> None:
     assert "parse_intent must return a strict JSON object" in detail
     assert "line 1 column 1" in detail
     assert "not json" in detail
+
+
+def test_workflow_run_route_logs_explicit_model_error(
+    monkeypatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="yts_server.routes.workflow")
+    checkpointer = InMemorySaver()
+    monkeypatch.setattr(workflow_route, "build_langgraph_checkpointer", lambda settings: checkpointer)
+    monkeypatch.setattr(workflow_route, "make_backend", lambda: BadJsonBackend())
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/workflows/pro_creation_hitl_v1/threads",
+            json={
+                "thread_id": "bad-json-thread",
+                "user_prompt": "下雨的午后，大雨倾盆，思念远方的故人",
+            },
+        )
+
+    assert response.status_code == 422
+    assert "Workflow run failed" in caplog.text
+    assert "workflow_id=pro_creation_hitl_v1" in caplog.text
+    assert "thread_id=bad-json-thread" in caplog.text
+    assert "parse_intent must return a strict JSON object" in caplog.text
+
+
+def test_workflow_validation_error_logs_request_body(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.WARNING, logger="yts_server.errors")
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/workflows/pro_creation_hitl_v1/threads",
+            json={"thread_id": "missing-user-prompt"},
+        )
+
+    assert response.status_code == 422
+    assert "Request validation failed" in caplog.text
+    assert "path=/api/workflows/pro_creation_hitl_v1/threads" in caplog.text
+    assert "field=user_prompt" in caplog.text
+    assert 'body={"thread_id":"missing-user-prompt"}' in caplog.text
 
 
 def test_workflow_run_resume_trace_routes(monkeypatch) -> None:
