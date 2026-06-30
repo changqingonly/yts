@@ -1,19 +1,22 @@
 // PCM 播放 AudioWorklet —— 方案 B 的唯一播放层(来源无关)。
-// 主线程通过 port 灌入 Float32 PCM 块;此处用 ring buffer 吸收「生成速率 ≠ 播放速率」的抖动,
-// 播放指针按 128 帧/渲染块消费。缓冲不足时输出静音(不爆音),收到 end 且放空后通知主线程。
+// 主线程灌入交错 Float32 PCM(mono 或 LRLR… 立体声);ring buffer 吸收生成≠播放抖动,
+// process() 按声道解交错写各输出通道。欠载输出静音(不爆音),end 且放空后通知主线程。
 //
-// 契约见 desktop/STREAM_PROTOCOL.md:f32 @ 48k mono。
+// 契约见 desktop/STREAM_PROTOCOL.md:f32 @ 48k,channels=1|2(交错)。
 
 class PcmPlayerProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
-    const cap = (options.processorOptions && options.processorOptions.ringCapacity) || 48000 * 10; // 10s
+    const opt = options.processorOptions || {};
+    this.channels = opt.channels || 1;
+    // ring 以「交错采样」为单位存储
+    const cap = (opt.ringCapacity || 48000 * 10) * this.channels;
     this.buffer = new Float32Array(cap);
     this.cap = cap;
     this.readIdx = 0;
     this.writeIdx = 0;
-    this.available = 0;
-    this.ended = false; // 上游已发 end
+    this.available = 0; // 已缓冲的交错采样数
+    this.ended = false;
     this.drainedNotified = false;
 
     this.port.onmessage = (e) => {
@@ -26,13 +29,14 @@ class PcmPlayerProcessor extends AudioWorkletProcessor {
         this.readIdx = this.writeIdx = this.available = 0;
         this.ended = false;
         this.drainedNotified = false;
+        if (msg.channels) this.channels = msg.channels;
       }
     };
   }
 
   push(samples) {
     for (let i = 0; i < samples.length; i++) {
-      if (this.available >= this.cap) break; // 满则丢弃(背压上限;本地准实时极少触发)
+      if (this.available >= this.cap) break; // 满则丢弃(背压上限)
       this.buffer[this.writeIdx] = samples[i];
       this.writeIdx = (this.writeIdx + 1) % this.cap;
       this.available++;
@@ -40,21 +44,26 @@ class PcmPlayerProcessor extends AudioWorkletProcessor {
   }
 
   process(_inputs, outputs) {
-    const out = outputs[0][0];
-    for (let i = 0; i < out.length; i++) {
-      if (this.available > 0) {
-        out[i] = this.buffer[this.readIdx];
-        this.readIdx = (this.readIdx + 1) % this.cap;
-        this.available--;
+    const out = outputs[0]; // out[ch] 是各声道 Float32Array(长度 128)
+    const ch = this.channels;
+    const frames = out[0].length;
+    for (let f = 0; f < frames; f++) {
+      if (this.available >= ch) {
+        for (let c = 0; c < out.length; c++) {
+          // 输入声道数 ch;输出声道数 out.length。mono→多输出时复制 ch0。
+          const srcC = c < ch ? c : 0;
+          out[c][f] = this.buffer[(this.readIdx + srcC) % this.cap];
+        }
+        this.readIdx = (this.readIdx + ch) % this.cap;
+        this.available -= ch;
       } else {
-        out[i] = 0; // 欠载输出静音
+        for (let c = 0; c < out.length; c++) out[c][f] = 0;
       }
     }
-    if (this.ended && this.available === 0 && !this.drainedNotified) {
+    if (this.ended && this.available < ch && !this.drainedNotified) {
       this.drainedNotified = true;
       this.port.postMessage({ type: "drained" });
     }
-    // 回报缓冲水位(节流:每 ~0.5s)
     this._tick = (this._tick || 0) + 1;
     if (this._tick % 350 === 0) {
       this.port.postMessage({ type: "level", available: this.available });

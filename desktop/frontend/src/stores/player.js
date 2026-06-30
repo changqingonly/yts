@@ -17,7 +17,7 @@ export const usePlayerStore = defineStore("player", {
     isStreaming: (state) => state.streamState === "connecting" || state.streamState === "streaming",
   },
   actions: {
-    async streamGenerate({ prompt, seconds = 8, target = "local" }) {
+    async streamGenerate({ prompt, seconds = 8, target = "local", channels = 2 }) {
       const sp = getStreamPlayer();
       sp.onState = (s) => {
         this.streamState = s;
@@ -26,7 +26,7 @@ export const usePlayerStore = defineStore("player", {
         this.streamError = e instanceof Error ? e.message : String(e);
       };
       this.streamError = "";
-      await sp.start({ prompt, seconds, target });
+      await sp.start({ prompt, seconds, target, channels });
     },
     stopStream() {
       getStreamPlayer().stop();

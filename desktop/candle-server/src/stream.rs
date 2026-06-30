@@ -20,8 +20,17 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
 const SAMPLE_RATE: u32 = 48_000;
-const CHANNELS: u16 = 1;
-const CHUNK_SAMPLES: usize = 4_800; // 100ms/块 @ 48k mono
+const CHUNK_FRAMES: usize = 4_800; // 100ms/块 @ 48k(以"每声道采样"计)
+
+#[derive(Deserialize, Default)]
+struct Accept {
+    // client 支持的编码(按优先序)。本 producer 暂只产 f32le;Opus 协商位预留(见 STREAM_PROTOCOL)。
+    #[serde(default)]
+    #[allow(dead_code)]
+    codecs: Vec<String>,
+    #[serde(default)]
+    channels: Option<u16>,
+}
 
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -30,11 +39,21 @@ enum ClientMsg {
         prompt: String,
         #[serde(default = "default_seconds")]
         seconds: f32,
+        #[serde(default)]
+        accept: Accept,
     },
     Stop,
 }
 fn default_seconds() -> f32 {
     8.0
+}
+
+/// 据 client 的 accept 协商声道(支持 1/2;默认 1)。Opus 暂未在本 producer 实现,恒用 f32le。
+fn negotiate_channels(accept: &Accept) -> u16 {
+    match accept.channels {
+        Some(2) => 2,
+        _ => 1,
+    }
 }
 
 #[derive(Serialize)]
@@ -60,13 +79,14 @@ pub async fn music_stream_handler(ws: WebSocketUpgrade) -> Response {
 }
 
 async fn handle_socket(mut socket: WebSocket) {
-    let (prompt, seconds) = match wait_start(&mut socket).await {
+    let (prompt, seconds, accept) = match wait_start(&mut socket).await {
         Some(v) => v,
         None => return,
     };
+    let channels = negotiate_channels(&accept);
 
-    // Producer:整段生成 PCM(外部 audiogen 或内置合成器)。失败回 error。
-    let pcm = match produce_pcm(&prompt, seconds).await {
+    // Producer:整段生成 mono f32 PCM(外部 audiogen 或内置合成器)。失败回 error。
+    let mono = match produce_pcm(&prompt, seconds).await {
         Ok(p) => p,
         Err(e) => {
             let err = serde_json::to_string(&ServerMsg::Error { message: e }).unwrap();
@@ -74,10 +94,13 @@ async fn handle_socket(mut socket: WebSocket) {
             return;
         }
     };
+    // 立体声:复制为 LRLR 交错(真实立体声 producer 可直接产交错)。
+    let pcm = if channels == 2 { mono_to_stereo(&mono) } else { mono };
+    let per_chan = pcm.len() / channels as usize;
 
     let header = serde_json::to_string(&ServerMsg::Header {
         sample_rate: SAMPLE_RATE,
-        channels: CHANNELS,
+        channels,
         format: "f32le",
     })
     .unwrap();
@@ -85,7 +108,8 @@ async fn handle_socket(mut socket: WebSocket) {
         return;
     }
 
-    // 按帧流式喂播(即便整段已生成,也按播放速率推,前端 ring buffer 平滑消费)。
+    // 按帧流式喂播。块大小按声道对齐(CHUNK_FRAMES * channels 个交错采样)。
+    let chunk = CHUNK_FRAMES * channels as usize;
     let mut produced = 0usize;
     let mut frames = 0usize;
     while produced < pcm.len() {
@@ -96,7 +120,7 @@ async fn handle_socket(mut socket: WebSocket) {
                 break;
             }
         }
-        let end = (produced + CHUNK_SAMPLES).min(pcm.len());
+        let end = (produced + chunk).min(pcm.len());
         let bytes = pcm_to_bytes(&pcm[produced..end]);
         produced = end;
         frames += 1;
@@ -106,9 +130,20 @@ async fn handle_socket(mut socket: WebSocket) {
         tokio::time::sleep(Duration::from_millis(80)).await; // ≈实时速率
     }
 
-    let end = serde_json::to_string(&ServerMsg::End { frames, samples: produced }).unwrap();
+    // samples = 每声道采样数(与契约一致)
+    let end = serde_json::to_string(&ServerMsg::End { frames, samples: per_chan }).unwrap();
     let _ = socket.send(Message::Text(end)).await;
     let _ = socket.close().await;
+}
+
+/// mono → LRLR 交错立体声(本轮双声道同源;真实立体声模型可直接输出交错)。
+fn mono_to_stereo(mono: &[f32]) -> Vec<f32> {
+    let mut out = Vec::with_capacity(mono.len() * 2);
+    for &s in mono {
+        out.push(s);
+        out.push(s);
+    }
+    out
 }
 
 /// 生成整段 mono f32 PCM。有 YTS_AUDIOGEN_CMD 走外部,否则内置合成器。
@@ -202,11 +237,13 @@ fn synth_pcm(prompt: &str, seconds: f32) -> Vec<f32> {
     out
 }
 
-async fn wait_start(socket: &mut WebSocket) -> Option<(String, f32)> {
+async fn wait_start(socket: &mut WebSocket) -> Option<(String, f32, Accept)> {
     while let Some(Ok(msg)) = socket.next().await {
         if let Message::Text(t) = msg {
             match serde_json::from_str::<ClientMsg>(&t) {
-                Ok(ClientMsg::Start { prompt, seconds }) => return Some((prompt, seconds)),
+                Ok(ClientMsg::Start { prompt, seconds, accept }) => {
+                    return Some((prompt, seconds, accept))
+                }
                 Ok(ClientMsg::Stop) => return None,
                 Err(e) => {
                     let err = serde_json::to_string(&ServerMsg::Error { message: e.to_string() }).unwrap();

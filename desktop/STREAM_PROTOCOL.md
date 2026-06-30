@@ -8,28 +8,31 @@
 - 云端:`wss://<cloud>/music/stream`(同消息格式,TODO)
 
 ## 消息序列
-1. **client → server**(文本 JSON,开始):
+1. **client → server**(文本 JSON,开始):client 在 `accept` 声明自己能解码的编码与期望声道(协商)。
    ```json
-   {"type":"start","prompt":"夏夜骑行的轻快电子乐","seconds":8}
+   {"type":"start","prompt":"夏夜骑行的轻快电子乐","seconds":8,
+    "accept":{"codecs":["f32le"],"channels":2}}
    ```
-2. **server → client**(文本 JSON,首帧 header):
+   - `accept.codecs`:client 支持的编码,按优先序;省略=只支持 `f32le`。
+   - `accept.channels`:期望声道(1/2);省略=1。
+2. **server → client**(文本 JSON,首帧 header):server 据 `accept` 协商出实际参数。
    ```json
-   {"type":"header","sampleRate":48000,"channels":1,"format":"f32le"}
+   {"type":"header","sampleRate":48000,"channels":2,"format":"f32le"}
    ```
 3. **server → client**(二进制,N 个音频帧):
-   - 每帧 = 连续 little-endian `f32` PCM 采样(单声道)。
+   - `f32le`:连续 little-endian `f32`。**立体声 = LRLRLR… 交错**(每采样点 2 个 f32)。
+   - `opus`:每帧 = 一个 Opus packet(可选,见下;前端用 WebCodecs `AudioDecoder` 解)。
    - 帧长不固定;前端 ring buffer 吸收抖动。
 4. **server → client**(文本 JSON,结束):
    ```json
    {"type":"end","frames":120,"samples":61440}
    ```
-5. **client → server**(可选,任意时刻取消):
-   ```json
-   {"type":"stop"}
-   ```
+   - `samples` = 每声道采样数(与声道数无关)。
+5. **client → server**(可选,任意时刻取消):`{"type":"stop"}`
 
 ## 约定
-- **采样格式**:`f32le`,范围 `[-1.0, 1.0]`,**单声道**(立体声后续扩 `channels:2` 交错)。
+- **采样格式**:默认 `f32le`,范围 `[-1.0, 1.0]`。**单声道**或**立体声交错(LRLR…)**,由 header `channels` 指示。
+- **编码协商**:`format=f32le` 全平台稳;`format=opus` 省带宽(云端),但**仅在 client 经 WebCodecs `AudioDecoder.isConfigSupported({codec:'opus'})` 确认可解时**才会被 server 选中(Safari 26.0+/对应 WKWebView 才有,且历史有可靠性 bug)→ 否则回退 `f32le`。
 - **采样率**:`48000`,与浏览器 `AudioContext` 默认对齐,避免前端重采样。
 - **背压**:前端 ring buffer 满时不阻塞(本地准实时);WS 层不强制流控(本地无带宽压力)。云端如需限速由 producer 控制推送节奏。
 - **错误**:`{"type":"error","message":"..."}`,client 收到后停止并释放 worklet。

@@ -1,10 +1,11 @@
 <script setup>
-import { computed, onMounted } from "vue";
-import { RouterLink, RouterView, useRoute } from "vue-router";
+import { computed, onMounted, onUnmounted } from "vue";
+import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { Boxes, Music2, Settings2, Sparkles, SquarePen } from "@lucide/vue";
 import { useAuthStore } from "../stores/auth";
 
 const route = useRoute();
+const router = useRouter();
 const auth = useAuthStore();
 
 const primaryNavItems = [
@@ -16,7 +17,18 @@ const settingsNavItem = { key: "settings", label: "设置", to: "/settings", ico
 
 const activeNav = computed(() => route.meta.activeNav || "music");
 
-onMounted(auth.hydrate);
+function handleAuthExpired() {
+  auth.clearSession();
+  router.push({ name: "login", query: { redirect: route.fullPath } });
+}
+
+onMounted(() => {
+  window.addEventListener("yts-auth-expired", handleAuthExpired);
+  auth.hydrate();
+});
+onUnmounted(() => {
+  window.removeEventListener("yts-auth-expired", handleAuthExpired);
+});
 </script>
 
 <template>

@@ -66,6 +66,31 @@ def test_frontend_root_removes_browser_default_margin_for_flush_sidebar() -> Non
     assert "margin: 0;" in base
 
 
+def test_frontend_http_unauthorized_clears_session_and_announces_expiry() -> None:
+    http = read_source("services/http.js")
+
+    assert 'response.status === 401' in http
+    assert 'localStorage.removeItem("yts-access-token")' in http
+    assert 'localStorage.removeItem("yts-user")' in http
+    assert 'window.dispatchEvent(new CustomEvent("yts-auth-expired"' in http
+
+
+def test_app_shell_redirects_to_login_when_auth_expires() -> None:
+    shell = read_source("app/AppShell.vue")
+
+    assert 'window.addEventListener("yts-auth-expired", handleAuthExpired)' in shell
+    assert 'window.removeEventListener("yts-auth-expired", handleAuthExpired)' in shell
+    assert 'router.push({ name: "login", query: { redirect: route.fullPath } })' in shell
+
+
+def test_auth_store_only_absorbs_unauthorized_hydration_errors() -> None:
+    auth = read_source("stores/auth.js")
+
+    assert "if (err?.status === 401)" in auth
+    assert "this.clearSession();" in auth
+    assert "throw err;" in auth
+
+
 def test_frontend_deep_sea_theme_tokens_are_defined() -> None:
     base = read_source("styles/base.css")
 

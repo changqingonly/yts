@@ -10,7 +10,7 @@ import asyncio
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from yts_core.audiogen import CHANNELS, FORMAT, SAMPLE_RATE, generate_frames
+from yts_core.audiogen import FORMAT, SAMPLE_RATE, generate_frames, negotiate_channels
 
 router = APIRouter(tags=["music-stream"])
 
@@ -34,6 +34,7 @@ async def music_stream(ws: WebSocket) -> None:
 
     prompt = msg.get("prompt", "")
     seconds = float(msg.get("seconds", 8.0))
+    channels = negotiate_channels(msg.get("accept"))
 
     # 后台监听 stop(与帧推送并行)
     async def watch_stop() -> None:
@@ -50,21 +51,23 @@ async def music_stream(ws: WebSocket) -> None:
 
     await ws.send_text(
         json.dumps(
-            {"type": "header", "sampleRate": SAMPLE_RATE, "channels": CHANNELS, "format": FORMAT}
+            {"type": "header", "sampleRate": SAMPLE_RATE, "channels": channels, "format": FORMAT}
         )
     )
 
     frames = 0
-    samples = 0
+    interleaved = 0
     try:
-        async for chunk in generate_frames(prompt, seconds, stop=stop):
+        async for chunk in generate_frames(prompt, seconds, channels=channels, stop=stop):
             await ws.send_bytes(chunk)
             frames += 1
-            samples += len(chunk) // 4  # f32 = 4 bytes
+            interleaved += len(chunk) // 4  # f32 = 4 bytes
     except WebSocketDisconnect:
         watcher.cancel()
         return
 
+    # samples = 每声道采样数(与契约一致)
+    samples = interleaved // channels
     await ws.send_text(json.dumps({"type": "end", "frames": frames, "samples": samples}))
     watcher.cancel()
     await ws.close()

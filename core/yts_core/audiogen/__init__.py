@@ -7,6 +7,6 @@
 真实云端音乐模型(ACE-Step / Stable Audio,GPU)替换 generate_frames() 即可,契约不变。
 """
 
-from .generator import CHANNELS, FORMAT, SAMPLE_RATE, generate_frames
+from .generator import CHANNELS, FORMAT, SAMPLE_RATE, generate_frames, negotiate_channels
 
-__all__ = ["SAMPLE_RATE", "CHANNELS", "FORMAT", "generate_frames"]
+__all__ = ["SAMPLE_RATE", "CHANNELS", "FORMAT", "generate_frames", "negotiate_channels"]

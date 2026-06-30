@@ -54,6 +54,12 @@ export const useAuthStore = defineStore("auth", {
       try {
         const user = await fetchCurrentUser();
         this.setUser(user);
+      } catch (err) {
+        if (err?.status === 401) {
+          this.clearSession();
+          return;
+        }
+        throw err;
       } finally {
         this.loading = false;
       }

@@ -28,9 +28,10 @@ export class StreamAudioPlayer {
     // 必须在用户手势内调用(autoplay 限制)
     this.ctx = new AudioContext({ sampleRate: 48000 });
     await this.ctx.audioWorklet.addModule("/audio/pcm-player-worklet.js");
+    // 输出最多立体声;实际声道由 header 决定后经 reset 通知 worklet
     this.node = new AudioWorkletNode(this.ctx, "pcm-player", {
-      outputChannelCount: [1],
-      processorOptions: { ringCapacity: 48000 * 15 },
+      outputChannelCount: [2],
+      processorOptions: { ringCapacity: 48000 * 15, channels: 1 },
     });
     this.node.connect(this.ctx.destination);
     this.node.port.onmessage = (e) => {
@@ -38,25 +39,47 @@ export class StreamAudioPlayer {
     };
   }
 
-  /** 开始流式生成播放。target: 'local' | 'cloud' */
-  async start({ prompt, seconds = 8, target = "local" }) {
+  /** 运行时探测 client 能解码哪些编码(按优先序)。f32le 永远支持。 */
+  async _supportedCodecs() {
+    const codecs = [];
+    try {
+      if (typeof AudioDecoder !== "undefined" && AudioDecoder.isConfigSupported) {
+        const r = await AudioDecoder.isConfigSupported({
+          codec: "opus",
+          numberOfChannels: 2,
+          sampleRate: 48000,
+        });
+        if (r && r.supported) codecs.push("opus");
+      }
+    } catch {
+      /* WebCodecs/Opus 不可用,回退 f32le */
+    }
+    codecs.push("f32le");
+    return codecs;
+  }
+
+  /** 开始流式生成播放。target: 'local' | 'cloud';channels: 期望声道(1|2) */
+  async start({ prompt, seconds = 8, target = "local", channels = 2 }) {
     await this._ensureAudio();
     if (this.ctx.state === "suspended") await this.ctx.resume();
-    this.node.port.postMessage({ type: "reset" });
 
     const base = WS_BASES[target] || WS_BASES.local;
+    const accept = { codecs: await this._supportedCodecs(), channels };
     this._set("connecting");
     const ws = new WebSocket(`${base}/music/stream`);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "start", prompt, seconds }));
+      ws.send(JSON.stringify({ type: "start", prompt, seconds, accept }));
     };
     ws.onmessage = (ev) => {
       if (typeof ev.data === "string") {
         const msg = JSON.parse(ev.data);
         if (msg.type === "header") {
+          // 据协商出的声道数重置 worklet(并清空 ring)
+          this.node.port.postMessage({ type: "reset", channels: msg.channels || 1 });
+          this._headerFormat = msg.format || "f32le";
           this._set("streaming");
         } else if (msg.type === "end") {
           // 帧已发完;worklet 放空后会回 drained → done

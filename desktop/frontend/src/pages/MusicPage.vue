@@ -16,7 +16,7 @@ const streamTarget = ref(localStorage.getItem("yts-target") || "local");
 
 async function startStream() {
   try {
-    await player.streamGenerate({ prompt: streamPrompt.value, seconds: 8, target: streamTarget.value });
+    await player.streamGenerate({ prompt: streamPrompt.value, seconds: 8, target: streamTarget.value, channels: 2 });
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
