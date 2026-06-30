@@ -1,0 +1,116 @@
+<h2>Workflow Studio Redesign Directions</h2>
+<p class="subtitle">目标不是把当前 demo 修漂亮，而是重做成接近 Coze / Dify / n8n 这类工具的工作台体验。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="height:330px;background:#f6f8fb;border:1px solid #d7dee8;border-radius:10px;overflow:hidden;font-family:Inter,Arial,sans-serif;color:#17212b">
+        <div style="height:42px;background:#fff;border-bottom:1px solid #dfe5ec;display:flex;align-items:center;justify-content:space-between;padding:0 14px">
+          <div style="display:flex;align-items:center;gap:10px"><b>Pro Lyrics Workflow</b><span style="font-size:12px;color:#6b7785">Draft v1</span></div>
+          <div style="display:flex;gap:8px"><span style="border:1px solid #ccd5df;border-radius:6px;padding:5px 9px;font-size:12px">Trace</span><span style="background:#111827;color:white;border-radius:6px;padding:5px 12px;font-size:12px">Run</span></div>
+        </div>
+        <div style="display:grid;grid-template-columns:154px 1fr 210px;height:288px">
+          <div style="background:#fff;border-right:1px solid #dfe5ec;padding:10px">
+            <div style="font-size:11px;color:#778391;margin-bottom:8px">NODE LIBRARY</div>
+            <div style="display:grid;gap:7px">
+              <div style="border:1px solid #d5dde7;border-radius:7px;padding:8px;background:#fbfcfe">Pro Stage</div>
+              <div style="border:1px solid #d5dde7;border-radius:7px;padding:8px;background:#fbfcfe">Approval</div>
+              <div style="border:1px solid #d5dde7;border-radius:7px;padding:8px;background:#fbfcfe">Edit</div>
+              <div style="border:1px solid #d5dde7;border-radius:7px;padding:8px;background:#fbfcfe">Choose</div>
+            </div>
+          </div>
+          <div style="position:relative;background-image:radial-gradient(#d8dee8 1px,transparent 1px);background-size:18px 18px;overflow:hidden">
+            <div style="position:absolute;left:22px;top:70px;width:126px;border:2px solid #5b8def;border-radius:9px;background:white;padding:10px;box-shadow:0 8px 18px rgba(30,41,59,.08)"><b style="font-size:12px">Parse Intent</b><div style="font-size:11px;color:#6b7785">pro_stage</div></div>
+            <div style="position:absolute;left:190px;top:70px;width:136px;border:2px solid #5b8def;border-radius:9px;background:white;padding:10px;box-shadow:0 8px 18px rgba(30,41,59,.08)"><b style="font-size:12px">Song Brief</b><div style="font-size:11px;color:#6b7785">pro_stage</div></div>
+            <div style="position:absolute;left:360px;top:70px;width:130px;border:2px solid #d99429;border-radius:9px;background:#fffaf1;padding:10px;box-shadow:0 8px 18px rgba(30,41,59,.08)"><b style="font-size:12px">Approval</b><div style="font-size:11px;color:#8a641c">HITL</div></div>
+            <div style="position:absolute;left:190px;top:170px;width:136px;border:2px solid #20a477;border-radius:9px;background:white;padding:10px;box-shadow:0 8px 18px rgba(30,41,59,.08)"><b style="font-size:12px">Hook Lab</b><div style="font-size:11px;color:#6b7785">pro_stage</div></div>
+            <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none">
+              <path d="M148 103 C162 103 174 103 190 103" stroke="#93a4b8" stroke-width="2" fill="none"/>
+              <path d="M326 103 C340 103 346 103 360 103" stroke="#93a4b8" stroke-width="2" fill="none"/>
+              <path d="M428 136 C428 170 350 202 326 202" stroke="#93a4b8" stroke-width="2" fill="none"/>
+            </svg>
+          </div>
+          <div style="background:#fff;border-left:1px solid #dfe5ec;padding:12px">
+            <div style="font-size:11px;color:#778391;margin-bottom:8px">INSPECTOR</div>
+            <div style="font-weight:700;margin-bottom:8px">Approval</div>
+            <div style="display:flex;gap:6px;margin-bottom:12px"><span style="border-bottom:2px solid #111827;padding-bottom:4px;font-size:12px">Config</span><span style="font-size:12px;color:#778391">Inputs</span><span style="font-size:12px;color:#778391">Trace</span></div>
+            <div style="height:28px;background:#f1f5f9;border-radius:6px;margin-bottom:8px"></div>
+            <div style="height:70px;background:#f8fafc;border:1px solid #e1e7ef;border-radius:7px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. Canvas-First Builder</h3>
+      <p>最接近 Coze 的体验。左侧节点库，中间大画布，右侧属性面板，底部/侧边 trace。适合后续拖拽、连线、增删节点。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="height:330px;background:#f7f8fa;border:1px solid #d7dee8;border-radius:10px;overflow:hidden;font-family:Inter,Arial,sans-serif;color:#17212b">
+        <div style="height:42px;background:#fff;border-bottom:1px solid #dfe5ec;display:flex;align-items:center;justify-content:space-between;padding:0 14px">
+          <b>Pro Producer Pipeline</b><span style="background:#111827;color:white;border-radius:6px;padding:5px 12px;font-size:12px">Run</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 270px;height:288px">
+          <div style="padding:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;align-content:start">
+            <div style="background:white;border:1px solid #dfe5ec;border-radius:9px;padding:12px"><b>1 Intent</b><p style="font-size:12px;color:#64748b">Query parsing</p></div>
+            <div style="background:white;border:1px solid #dfe5ec;border-radius:9px;padding:12px"><b>2 Brief</b><p style="font-size:12px;color:#64748b">Song story</p></div>
+            <div style="background:#fff8eb;border:1px solid #dfb464;border-radius:9px;padding:12px"><b>3 Approval</b><p style="font-size:12px;color:#8a641c">Human gate</p></div>
+            <div style="background:white;border:1px solid #dfe5ec;border-radius:9px;padding:12px"><b>4 Hook Lab</b><p style="font-size:12px;color:#64748b">Hook candidates</p></div>
+            <div style="background:white;border:1px solid #dfe5ec;border-radius:9px;padding:12px"><b>5 Structure</b><p style="font-size:12px;color:#64748b">Blueprints</p></div>
+            <div style="background:white;border:1px solid #dfe5ec;border-radius:9px;padding:12px"><b>6 Lyrics</b><p style="font-size:12px;color:#64748b">Generation</p></div>
+          </div>
+          <div style="background:white;border-left:1px solid #dfe5ec;padding:12px">
+            <div style="font-size:11px;color:#778391;margin-bottom:8px">STAGE DETAILS</div>
+            <div style="height:34px;background:#f1f5f9;border-radius:7px;margin-bottom:10px"></div>
+            <div style="height:150px;background:#f8fafc;border:1px solid #e1e7ef;border-radius:7px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. Stage Board</h3>
+      <p>更像编排看板。每一步是清晰阶段卡片，易读、稳定，但不像专业 workflow editor，后续任意连线能力会显得别扭。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="height:330px;background:#f6f8fb;border:1px solid #d7dee8;border-radius:10px;overflow:hidden;font-family:Inter,Arial,sans-serif;color:#17212b">
+        <div style="height:42px;background:#fff;border-bottom:1px solid #dfe5ec;display:flex;align-items:center;justify-content:space-between;padding:0 14px">
+          <b>Workflow Trace Debugger</b><span style="border:1px solid #ccd5df;border-radius:6px;padding:5px 9px;font-size:12px">Replay</span>
+        </div>
+        <div style="display:grid;grid-template-columns:220px 1fr 260px;height:288px">
+          <div style="background:white;border-right:1px solid #dfe5ec;padding:12px">
+            <div style="font-size:11px;color:#778391;margin-bottom:8px">RUN TIMELINE</div>
+            <div style="display:grid;gap:7px">
+              <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:50%;background:#28a879"></span>parse_intent</div>
+              <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:50%;background:#28a879"></span>song_brief</div>
+              <div style="display:flex;gap:8px;align-items:center"><span style="width:8px;height:8px;border-radius:50%;background:#d99429"></span>approval</div>
+              <div style="display:flex;gap:8px;align-items:center;color:#8792a0"><span style="width:8px;height:8px;border-radius:50%;background:#b8c1ce"></span>hook_lab</div>
+            </div>
+          </div>
+          <div style="background-image:radial-gradient(#d8dee8 1px,transparent 1px);background-size:18px 18px;position:relative">
+            <div style="position:absolute;left:60px;top:88px;width:140px;border:2px solid #28a879;border-radius:9px;background:white;padding:10px">completed</div>
+            <div style="position:absolute;left:250px;top:88px;width:140px;border:2px solid #d99429;border-radius:9px;background:#fff8eb;padding:10px">waiting</div>
+            <div style="position:absolute;left:160px;top:178px;width:160px;border:1px solid #cbd5e1;border-radius:9px;background:white;padding:10px;color:#8792a0">next stage</div>
+          </div>
+          <div style="background:white;border-left:1px solid #dfe5ec;padding:12px">
+            <div style="font-size:11px;color:#778391;margin-bottom:8px">STATE SNAPSHOT</div>
+            <div style="height:200px;background:#111827;color:#cbd5e1;border-radius:8px;padding:10px;font-family:monospace;font-size:11px">{ intent: ..., hook: ... }</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Trace-First Debugger</h3>
+      <p>最适合排查 LangGraph 运行状态。左侧时间线、中心图、右侧 state 快照，但日常创建 workflow 的编辑感不如 A。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我的推荐</h3>
+  <p>A 作为主方向，C 的 trace 能力作为底部抽屉或右侧 tab。这样既像成熟 workflow 工具，又不牺牲 LangGraph 节点追踪和 HITL 状态查看。</p>
+</div>

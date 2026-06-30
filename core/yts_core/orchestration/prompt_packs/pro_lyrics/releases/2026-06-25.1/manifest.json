@@ -1,0 +1,56 @@
+{
+  "pack_id": "pro_lyrics",
+  "version": "2026-06-25.1",
+  "contract_version": "pro_lyrics_schema_v1",
+  "status": "published",
+  "system": {
+    "template": "system.md",
+    "sha256": "9b4464e8b0bdf98829d6ff8af93cc3ba4d33ffa0bdab53ff409144648aa47659"
+  },
+  "stages": {
+    "parse_intent": {
+      "template": "parse_intent.md",
+      "sha256": "648b52d98a013f36b5902b14dd67ae26e904e6b18db900e4775eae0aca77d60b"
+    },
+    "build_song_brief": {
+      "template": "build_song_brief.md",
+      "sha256": "2015c239a7016991a1a061d929e684c6e1199484068e7a3f2ee29cb235b72973"
+    },
+    "plan_music_style": {
+      "template": "plan_music_style.md",
+      "sha256": "71d914b41f4d388b903c7667fc671e79ece3ce794fd06d95db389238712ac9ff"
+    },
+    "hook_lab": {
+      "template": "hook_lab.md",
+      "sha256": "b4ecbffae2067cbdc734706adbd74c44a0de86a6a1ce391e80c4d23ef65a7f62"
+    },
+    "draft_structure_blueprints": {
+      "template": "draft_structure_blueprints.md",
+      "sha256": "27d88701a7ce9f78bfbb3817a734b2f4f798149b90b807444be25337717d031c"
+    },
+    "critique_structure": {
+      "template": "critique_structure.md",
+      "sha256": "7e9a9827f9734127ac5704e54b4e3dd3bc05dfc3017686c248ff951e034f33ff"
+    },
+    "plan_style_prompt": {
+      "template": "plan_style_prompt.md",
+      "sha256": "76380f9285a2060ba3ed0d7a927734282a4483da0471e8626d3f983014463565"
+    },
+    "generate_lyrics": {
+      "template": "generate_lyrics.md",
+      "sha256": "110c6e612ee35d1dfe78dfe094e17a4df3f47f22d695c5939523ab5c216a9cf9"
+    },
+    "review_quality": {
+      "template": "review_quality.md",
+      "sha256": "3edd4736af15ac282d5b67a0802e77845a75c812ab533c8d58f54fa3e684ea54"
+    },
+    "repair_lyrics": {
+      "template": "repair_lyrics.md",
+      "sha256": "9ce132e458601c2dc672307f14040c5691f12c58edc13841b02d1e1e8b2df9b6"
+    },
+    "refine_title": {
+      "template": "refine_title.md",
+      "sha256": "b9ea9987eb66c2564fcab43ad64f27d965d0ab7a3072a2e9921a9464bdab870a"
+    }
+  }
+}

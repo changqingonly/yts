@@ -1,5 +1,6 @@
 .venv/
 .pytest_cache/
+.ruff_cache/
 __pycache__/
 *.pyc
 *.egg-info/
@@ -7,6 +8,7 @@ logs/
 run/
 docs/
 .DS_Store
+.python-version
 data/zvec/
 data/*.csv
 data/famous_song.jsonl

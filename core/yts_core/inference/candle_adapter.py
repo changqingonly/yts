@@ -1,4 +1,5 @@
-"""本地推理适配器:经 HTTP 调 Rust 的 candle-server(desktop/candle-server)。
+"""
+本地推理适配器:经 HTTP 调 Rust 的 candle-server(desktop/candle-server)。
 
 架构(v3.1):推理在 Rust(Candle)。Python 编排经此适配器 HTTP 调本地 candle-server。
 Mac 桌面形态:Tauri 壳可 spawn candle-server;sidecar(Python)与之同机通信。
@@ -19,11 +20,16 @@ class CandleInference:
     def __init__(self, base_url: str | None = None) -> None:
         self._base = (base_url or get_settings().candle_base_url).rstrip("/")
 
-    async def generate_text(self, messages, *, model=None, fallbacks=None) -> TextResult:
+    async def generate_text(self, messages, *, model=None, fallbacks=None, response_format=None) -> TextResult:
         prompt = messages[-1]["content"] if messages else ""
         async with httpx.AsyncClient(timeout=120) as c:
             r = await c.post(
-                f"{self._base}/candle/text", json={"prompt": prompt, "max_tokens": 256}
+                f"{self._base}/candle/text",
+                json={
+                    "prompt": prompt,
+                    "max_tokens": 256,
+                    "response_format": response_format,
+                },
             )
             r.raise_for_status()
             data = r.json()

@@ -1,0 +1,76 @@
+html {
+  --color-bg: #071426;
+  --color-bg-elevated: #08182b;
+  --color-sidebar: #04101f;
+  --color-panel: #0c1e33;
+  --color-panel-strong: #10243a;
+  --color-panel-soft: #0a1a2d;
+  --color-border: #1d4265;
+  --color-border-soft: #17334f;
+  --color-text: #d8e7f5;
+  --color-heading: #edf6ff;
+  --color-muted: #8aa4bd;
+  --color-muted-strong: #abc2d6;
+  --color-accent: #0ea5e9;
+  --color-accent-strong: #0284c7;
+  --color-accent-soft: #082f49;
+  --color-success: #34d399;
+  --color-success-soft: #0c3b33;
+  --color-warning: #fbbf24;
+  --color-warning-soft: #3b2b0b;
+  --color-danger: #fb7185;
+  --color-danger-soft: #3f111a;
+  --shadow-panel: 0 18px 48px rgba(0, 8, 20, 0.34);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-color: rgba(138, 164, 189, 0.34) transparent;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(138, 164, 189, 0.34);
+  background-clip: content-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(14, 165, 233, 0.44);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+button,
+input,
+select,
+textarea {
+  color-scheme: dark;
+}

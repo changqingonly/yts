@@ -1,0 +1,103 @@
+<h2>A 方案细化：YTS Creator OS</h2>
+<p class="subtitle">默认进入音乐播放器；创作、资产、个人设置、积分与风控都成为产品壳的一部分。点击你最认可的页面组织重点。</p>
+
+<div class="split">
+  <div class="mockup" data-choice="shell_layout" onclick="toggleSelect(this)">
+    <div class="mockup-header">全局产品壳</div>
+    <div class="mockup-body">
+      <div style="display:grid;grid-template-columns:84px 1fr;min-height:520px;border:1px solid #dce6f4;border-radius:16px;overflow:hidden;background:#f8fafc">
+        <aside style="background:#0f172a;color:#e5edf8;padding:14px 10px;display:grid;grid-template-rows:auto 1fr auto;gap:14px">
+          <div style="display:grid;place-items:center;width:44px;height:44px;border-radius:12px;background:#2563eb;margin:auto">Y</div>
+          <div style="display:grid;gap:10px;align-content:start">
+            <div style="background:#e5efff;color:#1d4ed8;border-radius:12px;padding:9px;text-align:center;font-size:12px">音乐</div>
+            <div style="background:#1f2937;border-radius:12px;padding:9px;text-align:center;font-size:12px">创作</div>
+            <div style="background:#1f2937;border-radius:12px;padding:9px;text-align:center;font-size:12px">资产</div>
+            <div style="background:#1f2937;border-radius:12px;padding:9px;text-align:center;font-size:12px">消息</div>
+          </div>
+          <div style="display:grid;gap:10px">
+            <div style="width:40px;height:40px;border-radius:50%;background:#64748b;margin:auto"></div>
+            <div style="background:#1f2937;border-radius:12px;padding:8px;text-align:center;font-size:12px">设置</div>
+          </div>
+        </aside>
+        <main style="display:grid;grid-template-rows:64px 1fr 72px">
+          <header style="display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid #e5edf7;background:white">
+            <div><strong>音乐</strong><span style="margin-left:10px;color:#64748b;font-size:12px">播放器 / 最近生成 / 本地导入</span></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span style="font-size:12px;border:1px solid #d8e2ef;border-radius:999px;padding:6px 10px">积分 72</span>
+              <span style="font-size:12px;border:1px solid #d8e2ef;border-radius:999px;padding:6px 10px">歌词 12/100</span>
+              <span style="font-size:12px;border:1px solid #d8e2ef;border-radius:999px;padding:6px 10px">图片 0/100</span>
+            </div>
+          </header>
+          <section style="padding:18px;display:grid;grid-template-columns:1.25fr .75fr;gap:16px">
+            <div style="background:white;border:1px solid #dce6f4;border-radius:14px;padding:18px;display:grid;grid-template-rows:auto 1fr auto;gap:14px">
+              <strong>播放器主区域</strong>
+              <div style="border-radius:14px;background:linear-gradient(135deg,#bfdbfe,#f1f5f9);display:grid;place-items:center;color:#475569">封面 / 波形 / 当前歌曲</div>
+              <div style="display:flex;gap:10px">
+                <button class="mock-button">播放</button>
+                <button class="mock-button">导入音频</button>
+                <button class="mock-button">加入播放列表</button>
+              </div>
+            </div>
+            <div style="display:grid;gap:14px">
+              <div style="background:white;border:1px solid #dce6f4;border-radius:14px;padding:16px"><b>最近创作</b><p style="color:#64748b">歌名、style prompt、lyric 可一键打开资产详情</p></div>
+              <div style="background:white;border:1px solid #dce6f4;border-radius:14px;padding:16px"><b>快捷创作</b><p style="color:#64748b">输入灵感后进入创作 Tab</p></div>
+              <div style="background:white;border:1px solid #dce6f4;border-radius:14px;padding:16px"><b>额度状态</b><p style="color:#64748b">日限、积分余额、失败释放</p></div>
+            </div>
+          </section>
+          <footer style="border-top:1px solid #e5edf7;background:white;padding:12px 18px;display:flex;align-items:center;justify-content:space-between">
+            <span>迷你播放器：当前曲目 · 03:12</span>
+            <span style="color:#64748b">全局持续播放</span>
+          </footer>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup" data-choice="tabs_detail" onclick="toggleSelect(this)">
+    <div class="mockup-header">三个核心 Tab 的内容重点</div>
+    <div class="mockup-body">
+      <div style="display:grid;gap:14px">
+        <div style="border:1px solid #dce6f4;border-radius:14px;background:white;padding:16px">
+          <h3 style="margin-top:0">音乐 Tab</h3>
+          <p>默认页。播放器、播放列表、本地导入、远程/本地音频缓存、最近生成歌曲入口。没有云登录时，桌面端可允许本地音乐离线播放。</p>
+        </div>
+        <div style="border:1px solid #dce6f4;border-radius:14px;background:white;padding:16px">
+          <h3 style="margin-top:0">创作 Tab</h3>
+          <p>现有 Pro 歌词创作流。默认展示“创作输入 + 当前结果 + 关键节点状态”；流程图和 LLM trace 放进高级抽屉，不再抢第一屏。</p>
+        </div>
+        <div style="border:1px solid #dce6f4;border-radius:14px;background:white;padding:16px">
+          <h3 style="margin-top:0">资产</h3>
+          <p>歌曲灵感完整落地：线索、歌名、style prompt、lyric。图片大全、音频特效先作为待建设分区，同时显示日限与空态。</p>
+        </div>
+        <div style="border:1px solid #dce6f4;border-radius:14px;background:#f8fafc;padding:16px">
+          <h3 style="margin-top:0">用户 / 鉴权 / 积分</h3>
+          <p>照搬 yuetools：RSA-OAEP-256 传输密码、Argon2id 存储哈希、access token、个人资料、积分余额与流水、生成 reserve/capture/release。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="mvp_vertical" onclick="toggleSelect(this)">
+    <div class="letter">1</div>
+    <div class="content">
+      <h3>推荐 MVP：纵切闭环</h3>
+      <p>第一期实现主壳、账号、个人设置、积分/额度、歌曲灵感资产、音乐播放器空壳与创作页迁移；图片/音效只建入口和额度展示。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="full_copy" onclick="toggleSelect(this)">
+    <div class="letter">2</div>
+    <div class="content">
+      <h3>全量照搬 yuetools</h3>
+      <p>一次性迁移 Auth、Credits、Song、Music、Settings 的大部分能力。完整但风险大，容易和 YTS 现有 Python core/server 边界冲突。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="frontend_first" onclick="toggleSelect(this)">
+    <div class="letter">3</div>
+    <div class="content">
+      <h3>前端壳优先</h3>
+      <p>先做页面和静态状态，后端稍后接入。速度快，但账号、风控、积分无法真实闭环，和你提到的密码/积分要求不匹配。</p>
+    </div>
+  </div>
+</div>

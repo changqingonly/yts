@@ -13,6 +13,8 @@ dependencies = [
     "alembic>=1.13",
     "pyjwt>=2.8",
     "argon2-cffi>=23.1",
+    "cryptography>=42",
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]

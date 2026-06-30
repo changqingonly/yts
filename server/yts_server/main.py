@@ -6,8 +6,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from yts_core.config import get_settings
+from yts_core.orchestration.checkpointing import close_langgraph_checkpointer
 
-from .routes import creation, health
+from .cors import DiagnosticCORSMiddleware
+from .db.bootstrap import create_all_tables
+from .errors import register_error_handlers
+from .routes import auth, creation, credits, health, music, provider_gated, song, user, workflow
 
 
 @asynccontextmanager
@@ -17,15 +21,32 @@ async def lifespan(app: FastAPI):
         from .eval.phoenix import init_phoenix
 
         init_phoenix()
-    # TODO: DB engine 预热 / 迁移检查(见 db/session.py)
-    yield
+    await create_all_tables()
+    try:
+        yield
+    finally:
+        close_langgraph_checkpointer()
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="yts", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(
+        DiagnosticCORSMiddleware,
+        allow_origins=["http://127.0.0.1:1420", "http://localhost:1420"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+    )
+    register_error_handlers(app)
     app.include_router(health.router)
+    app.include_router(auth.router, prefix="/api")
+    app.include_router(user.router, prefix="/api")
+    app.include_router(credits.router, prefix="/api")
+    app.include_router(song.router, prefix="/api")
+    app.include_router(music.router, prefix="/api")
+    app.include_router(provider_gated.router, prefix="/api")
     app.include_router(creation.router, prefix="/api")
+    app.include_router(workflow.router, prefix="/api")
     app.state.settings = settings
     return app
 

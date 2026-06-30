@@ -9,8 +9,13 @@ from .port import TextResult
 class CloudInference:
     name = "cloud-litellm"
 
-    async def generate_text(self, messages, *, model=None, fallbacks=None) -> TextResult:
-        return await complete_text(messages, model=model, fallbacks=fallbacks)
+    async def generate_text(self, messages, *, model=None, fallbacks=None, response_format=None) -> TextResult:
+        return await complete_text(
+            messages,
+            model=model,
+            fallbacks=fallbacks,
+            response_format=response_format,
+        )
 
     async def generate_image(self, prompt: str) -> bytes:  # TODO: 云图像模型
         raise NotImplementedError("cloud image gen: TODO")

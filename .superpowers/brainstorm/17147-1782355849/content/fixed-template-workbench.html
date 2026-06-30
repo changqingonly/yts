@@ -1,0 +1,83 @@
+<h2>Fixed Template Workflow Workbench</h2>
+<p class="subtitle">Scope: fixed DAG template + editable node config + run / resume / trace. No arbitrary edge editing in v1.</p>
+
+<div class="mockup">
+  <div class="mockup-header">MVP Screen: Pro Creation HITL Workflow</div>
+  <div class="mockup-body">
+    <div style="display:grid;grid-template-columns:1.1fr 0.95fr 1fr;gap:14px;align-items:stretch">
+      <div class="placeholder" style="text-align:left;min-height:420px">
+        <strong>Template DAG</strong>
+        <div style="margin-top:14px;display:grid;gap:8px">
+          <div style="padding:10px;border:1px solid #8aa;border-radius:8px;background:#eef">Start: User Prompt</div>
+          <div style="text-align:center">↓</div>
+          <div style="padding:10px;border:1px solid #aa8;border-radius:8px;background:#ffd">HITL: Brief Approval</div>
+          <div style="text-align:center">↓ approve / edit</div>
+          <div style="padding:10px;border:1px solid #8a8;border-radius:8px;background:#efe">LangGraph: Pro Creation</div>
+          <div style="text-align:center">↓</div>
+          <div style="padding:10px;border:1px solid #aa8;border-radius:8px;background:#ffd">HITL: Final Review</div>
+          <div style="text-align:center">↓ accept / edit / rerun</div>
+          <div style="padding:10px;border:1px solid #aaa;border-radius:8px;background:#f7f7f7">Done: Suno Draft</div>
+        </div>
+        <p style="margin-top:14px;color:#666">Edges are fixed in v1. User edits node configuration only.</p>
+      </div>
+
+      <div class="placeholder" style="text-align:left;min-height:420px">
+        <strong>Selected Node Config</strong>
+        <div style="margin-top:14px">
+          <div class="label">Brief Approval</div>
+          <input class="mock-input" value="Require human approval before Pro generation">
+          <div style="height:8px"></div>
+          <div class="label">Editable Fields</div>
+          <div style="padding:8px;border:1px solid #ddd;border-radius:6px;margin-top:6px">song_brief.core_story</div>
+          <div style="padding:8px;border:1px solid #ddd;border-radius:6px;margin-top:6px">hook_lab.selected_hook</div>
+          <div style="padding:8px;border:1px solid #ddd;border-radius:6px;margin-top:6px">style_spec.style_prompt_draft</div>
+          <div style="height:12px"></div>
+          <button class="mock-button">Save Template Config</button>
+        </div>
+      </div>
+
+      <div class="placeholder" style="text-align:left;min-height:420px">
+        <strong>Run + HITL + Trace</strong>
+        <div style="margin-top:14px">
+          <button class="mock-button">Run Thread</button>
+          <button class="mock-button">Resume</button>
+          <div style="height:12px"></div>
+          <div style="padding:10px;border:1px solid #ddc;border-radius:8px;background:#fff9d8">
+            Waiting: Brief Approval<br>
+            Actions: approve / edit / reject
+          </div>
+          <div style="height:12px"></div>
+          <div class="label">Trace Timeline</div>
+          <div style="font-family:monospace;font-size:12px;line-height:1.8">
+            ✓ validate_request<br>
+            ✓ parse_intent<br>
+            ⏸ brief_approval<br>
+            · pro_creation<br>
+            · final_review
+          </div>
+          <div style="height:12px"></div>
+          <div class="label">Phoenix</div>
+          <p style="margin:4px 0;color:#666">Trace link stored with thread_id / run_id.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>Design Confirmation</h3>
+<div class="options">
+  <div class="option" data-choice="approve-design" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Looks right</h3>
+      <p>Proceed to write the design spec and implementation plan for this v1 slice.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="adjust-design" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Adjust first</h3>
+      <p>Revise HITL node semantics, layout, or trace scope before planning.</p>
+    </div>
+  </div>
+</div>

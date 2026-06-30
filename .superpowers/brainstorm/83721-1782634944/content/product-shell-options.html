@@ -1,0 +1,121 @@
+<h2>YTS 产品壳与主导航方向</h2>
+<p class="subtitle">这一步先选信息架构，不定最终视觉。重点看：音乐默认页、创作工作台、资产、用户/积分/额度如何共同存在。</p>
+
+<div class="cards">
+  <div class="card" data-choice="creator_os" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display:grid;grid-template-columns:72px 1fr;min-height:300px;border:1px solid #dce6f4;border-radius:14px;overflow:hidden;background:#f7faff">
+        <div style="background:#111827;color:white;padding:14px 10px;display:grid;gap:14px;align-content:start">
+          <div style="width:34px;height:34px;border-radius:9px;background:#2563eb"></div>
+          <div style="height:34px;border-radius:9px;background:#e5efff"></div>
+          <div style="height:34px;border-radius:9px;background:#374151"></div>
+          <div style="height:34px;border-radius:9px;background:#374151"></div>
+          <div style="height:34px;border-radius:9px;background:#374151"></div>
+          <div style="margin-top:70px;width:38px;height:38px;border-radius:50%;background:#64748b"></div>
+        </div>
+        <div style="display:grid;grid-template-rows:54px 1fr 66px">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid #e5edf7">
+            <strong>音乐播放器</strong>
+            <span style="font-size:12px;border:1px solid #cdd8e8;border-radius:999px;padding:6px 10px">积分 72 · 今日歌词 12/100</span>
+          </div>
+          <div style="padding:18px;display:grid;grid-template-columns:1.2fr .8fr;gap:14px">
+            <div style="border:1px solid #dce6f4;border-radius:12px;background:white;padding:16px">
+              <div style="height:160px;border-radius:10px;background:linear-gradient(135deg,#dbeafe,#f8fafc);margin-bottom:14px"></div>
+              <strong>当前播放</strong>
+              <p style="margin:6px 0 0;color:#64748b">播放列表、导入音频、最近生成作品</p>
+            </div>
+            <div style="display:grid;gap:10px">
+              <div style="border:1px solid #dce6f4;border-radius:12px;background:white;padding:14px">快捷创作</div>
+              <div style="border:1px solid #dce6f4;border-radius:12px;background:white;padding:14px">最近资产</div>
+              <div style="border:1px solid #dce6f4;border-radius:12px;background:white;padding:14px">额度与风控</div>
+            </div>
+          </div>
+          <div style="border-top:1px solid #e5edf7;padding:12px 18px;background:white">迷你播放器条</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 创作者 OS（推荐）</h3>
+      <p>左侧是产品级主导航：音乐、创作、资产、消息、设置；默认进入音乐播放器，创作 Tab 承载现有工作流。适合把 YTS 从调试工作台升级成日常创作工具。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="asset_first" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display:grid;grid-template-columns:210px 1fr;min-height:300px;border:1px solid #dce6f4;border-radius:14px;overflow:hidden;background:#f8fafc">
+        <div style="background:white;border-right:1px solid #e5edf7;padding:16px">
+          <strong>资产</strong>
+          <div style="margin-top:16px;display:grid;gap:8px">
+            <div style="background:#eff6ff;border-radius:9px;padding:10px">歌曲灵感</div>
+            <div style="border-radius:9px;padding:10px">图片大全</div>
+            <div style="border-radius:9px;padding:10px">音频特效</div>
+          </div>
+        </div>
+        <div style="padding:18px;display:grid;grid-template-rows:auto 1fr;gap:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <strong>歌曲灵感库</strong>
+            <span style="font-size:12px;border:1px solid #cdd8e8;border-radius:999px;padding:6px 10px">创建 / 导入 / 复用</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+            <div style="background:white;border:1px solid #dce6f4;border-radius:12px;padding:14px"><b>线索</b><p style="color:#64748b">雨后街道...</p></div>
+            <div style="background:white;border:1px solid #dce6f4;border-radius:12px;padding:14px"><b>Style</b><p style="color:#64748b">Mandarin pop...</p></div>
+            <div style="background:white;border:1px solid #dce6f4;border-radius:12px;padding:14px"><b>Lyric</b><p style="color:#64748b">[Verse]...</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 资产优先</h3>
+      <p>把“资产”作为核心组织方式，音乐和创作都围绕资产复用展开。适合素材管理很重的产品，但会弱化播放器作为默认入口的存在感。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="studio_cockpit" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display:grid;grid-template-columns:260px 1fr;min-height:300px;border:1px solid #dce6f4;border-radius:14px;overflow:hidden;background:#f8fafc">
+        <div style="background:white;border-right:1px solid #e5edf7;padding:16px">
+          <strong>创作链路</strong>
+          <div style="margin-top:14px;display:grid;gap:8px">
+            <div style="background:#eff6ff;border-radius:9px;padding:9px">01 输入校验</div>
+            <div style="border-radius:9px;padding:9px">02 歌曲简报</div>
+            <div style="border-radius:9px;padding:9px">03 风格 Hook</div>
+            <div style="border-radius:9px;padding:9px">04 歌词成稿</div>
+          </div>
+        </div>
+        <div style="padding:18px;display:grid;grid-template-columns:1fr .8fr;gap:14px">
+          <div style="background:white;border:1px solid #dce6f4;border-radius:12px;padding:16px">
+            <strong>当前节点</strong>
+            <div style="margin-top:12px;height:180px;border-radius:10px;background:#f1f5f9"></div>
+          </div>
+          <div style="display:grid;gap:10px">
+            <div style="background:white;border:1px solid #dce6f4;border-radius:12px;padding:14px">LLM 输入</div>
+            <div style="background:white;border:1px solid #dce6f4;border-radius:12px;padding:14px">LLM 输出</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. Studio 驾驶舱</h3>
+      <p>继续以创作流程为第一屏，把用户、资产、音乐做成辅助入口。适合内部调试和专业工作流，但不太符合你提出的“音乐 Tab 默认播放器”。</p>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>我的建议</h4>
+    <ul>
+      <li>采用 A：产品级左侧主导航，默认音乐播放器。</li>
+      <li>创作 保留现有工作流能力，但从调试台收敛成“创作工作台”。</li>
+      <li>资产 先落歌曲灵感完整闭环，图片/音效作为二级占位并接入额度模型。</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>需要确认</h4>
+    <ul>
+      <li>第一期是否只做账号、积分、歌曲资产和歌词生成额度。</li>
+      <li>图片大全、音频特效是否先做“待建设页面 + 每日额度展示”。</li>
+      <li>现有流程图编辑器是否只在创作 Tab 的高级模式展示。</li>
+    </ul>
+  </div>
+</div>

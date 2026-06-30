@@ -1,4 +1,5 @@
-"""TCC 三段式预约:reserve → (成功)capture / (失败)release。
+"""
+TCC 三段式预约:reserve → (成功)capture / (失败)release。
 
 本轮 stub。真实实现需放进 DB 事务保证 exactly-once(见 wiki Server-Stack-Plan)。
 未来若用 LangGraph 建 reserve/capture/release 三节点 + 条件边(saga),此处改为编排内补偿。

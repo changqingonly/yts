@@ -8,6 +8,8 @@
 //!
 //! 图片/语音/音乐(SD / Whisper+TTS / MusicGen)为 TODO。
 
+mod stream;
+
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -92,7 +94,7 @@ impl Engine {
     }
 }
 
-type SharedEngine = Arc<Mutex<Engine>>;
+type SharedEngine = Arc<Mutex<Option<Engine>>>;
 
 #[derive(Deserialize)]
 struct TextReq {
@@ -118,7 +120,14 @@ async fn gen_text(
     State(engine): State<SharedEngine>,
     Json(req): Json<TextReq>,
 ) -> Result<Json<TextResp>, (axum::http::StatusCode, String)> {
-    let mut eng = engine.lock().await;
+    let mut guard = engine.lock().await;
+    // 懒加载:首次调用文本接口时才加载/下载模型,使服务启动即可用、/music/stream 无需模型
+    if guard.is_none() {
+        tracing::info!("loading candle model on first text request (hf-hub download on cold cache)...");
+        let eng = Engine::load().map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        *guard = Some(eng);
+    }
+    let eng = guard.as_mut().unwrap();
     let text = eng
         .generate(&req.prompt, req.max_tokens)
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -129,13 +138,14 @@ async fn gen_text(
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let addr = env_or("YTS_CANDLE_ADDR", "127.0.0.1:8799");
-    tracing::info!("loading candle model (first run downloads weights via hf-hub)...");
-    let engine: SharedEngine = Arc::new(Mutex::new(Engine::load()?));
-    tracing::info!("candle engine ready, serving on {addr}");
+    // 文本引擎懒加载:启动不阻塞,/health 与 /music/stream(流式音频)立即可用
+    let engine: SharedEngine = Arc::new(Mutex::new(None));
+    tracing::info!("candle-server up on {addr} (text model loads on first /candle/text)");
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/candle/text", post(gen_text))
+        .route("/music/stream", get(stream::music_stream_handler))
         .with_state(engine);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;

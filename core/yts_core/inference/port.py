@@ -24,7 +24,12 @@ class InferenceBackend(Protocol):
     name: str
 
     async def generate_text(
-        self, messages: list[dict], *, model: str | None = None, fallbacks: list[str] | None = None
+        self,
+        messages: list[dict],
+        *,
+        model: str | None = None,
+        fallbacks: list[str] | None = None,
+        response_format: dict | None = None,
     ) -> TextResult: ...
 
     async def generate_image(self, prompt: str) -> bytes: ...

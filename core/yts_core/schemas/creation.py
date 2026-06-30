@@ -1,4 +1,4 @@
-"""创作 / 灵感 API 契约。语义参考 yuetools creation-core(6 步 composition)。"""
+"""创作 / 灵感 API 契约。CreationResult 保持 Pro 流程对外兼容形状。"""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ class CreationRequest(BaseModel):
     persist: bool = True
     llm_override: str | None = None  # 强制 provider/model
     skill_id: str | None = None  # 自定义 skill(仅本地实现支持)
+    thread_id: str | None = None  # LangGraph checkpoint/resume 线程
 
 
 class CreationResult(BaseModel):

@@ -1,0 +1,66 @@
+{
+  "pack_id": "pro_lyrics",
+  "version": "2026-06-27.7",
+  "contract_version": "pro_lyrics_schema_v11_prompt_contract_dedup",
+  "status": "published",
+  "system": {
+    "template": "system.md",
+    "sha256": "c45fb8316dfae91eb9dc04183def118667dba9b2a1da7b43737bdcb6b01c29e6"
+  },
+  "stages": {
+    "parse_intent": {
+      "template": "parse_intent.md",
+      "sha256": "b920ba6bf813797a73ef15efff245b93a581fa8f756c7c512645cf4ac50f6645",
+      "system_template": "parse_intent_system.md",
+      "system_sha256": "0d9f63b79c943b743b35e6246de801282b77572ff283b812fc6315c4543d1173"
+    },
+    "build_song_brief": {
+      "template": "build_song_brief.md",
+      "sha256": "bc1d4e1afc999df805d246235ccdbf792649e58a0397a7d95218a399d483a974"
+    },
+    "plan_music_style": {
+      "template": "plan_music_style.md",
+      "sha256": "b08bcb7c4aaef4221c461cefc1d35038a64bfa773c185efbeccadddb84fe0b1f"
+    },
+    "hook_lab": {
+      "template": "hook_lab.md",
+      "sha256": "e73e02dcd96963a6e8b8eba93bf53dd3eb7b447730d225e80cf2b33f277be14d"
+    },
+    "draft_structure_blueprints": {
+      "template": "draft_structure_blueprints.md",
+      "sha256": "7a7d9d96a066aaa5e138a12304f597b1bfe3ae7112b91da414e7541ef69f78fd"
+    },
+    "critique_structure": {
+      "template": "critique_structure.md",
+      "sha256": "41e5c2fa0c2f43de4ecde95a1aece73e7b34483a01a1c7b883b8cbf63ac2c7a3"
+    },
+    "plan_style_prompt": {
+      "template": "plan_style_prompt.md",
+      "sha256": "b04c2a97a9eca1270969c9bcd1e837da80f9fea3632bf8c63c58ea6081ce0d4a"
+    },
+    "generate_lyrics": {
+      "template": "generate_lyrics.md",
+      "sha256": "0ebbdd69e41d31ef4aa5f304f388c112b67750a2946c388da6a78dc38f0e17d6",
+      "system_template": "generate_lyrics_system.md",
+      "system_sha256": "5c2e0a105fa43bf0acdfd0d6ef8a7b9c663b677e19a00da69fc1e68874a1e62a"
+    },
+    "review_quality": {
+      "template": "review_quality.md",
+      "sha256": "f832e26dba5464a9bca3a18fe871fc937275e57b92d3e6f72033495e206eabfa",
+      "system_template": "review_quality_system.md",
+      "system_sha256": "d23d7a4280965f4681b63414930402f71910bb5c19ed4d831f8dc01c095063da"
+    },
+    "repair_lyrics": {
+      "template": "repair_lyrics.md",
+      "sha256": "5cc6a2192cc426e29fe577366a4dcb090cf6603644946fb349dc791bc41be306",
+      "system_template": "repair_lyrics_system.md",
+      "system_sha256": "25b2679767451beb52859744dd0a7bb1ee28efc0ef11b9198bd89d7b2da66867"
+    },
+    "refine_title": {
+      "template": "refine_title.md",
+      "sha256": "9cdc57f9fd69d4acf2f9dcd7f350e95dcdd68f39757867c3656f75b4ab375fc4",
+      "system_template": "refine_title_system.md",
+      "system_sha256": "66e8a50b75659791d1f1687fdbeaab4d29be2fce6e9922bbc3b09586bfb0075b"
+    }
+  }
+}

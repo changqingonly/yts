@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from uuid import uuid4
+
+from fastapi import APIRouter, Header
 from yts_core.config import get_settings
 from yts_core.orchestration import run_creation, run_inspiration
+from yts_core.orchestration.checkpointing import build_langgraph_checkpointer
 from yts_core.schemas.creation import (
     CreationRequest,
     CreationResult,
@@ -12,21 +15,43 @@ from yts_core.schemas.creation import (
     InspirationResult,
 )
 
-from ..billing import tcc
+from .billing_guard import GenerationBillingGuard, billing_user_if_required
+from .dependencies import DbSession
 
 router = APIRouter(prefix="/creation", tags=["creation"])
 
 
 @router.post("", response_model=CreationResult)
-async def create(req: CreationRequest) -> CreationResult:
+async def create(
+    req: CreationRequest,
+    session: DbSession,
+    authorization: str | None = Header(default=None),
+) -> CreationResult:
     settings = get_settings()
-    # 云端:三段式计费包裹(本地 profile billing_enabled=False 时直通)
-    async with tcc.reservation(scene="creation", enabled=settings.billing_enabled):
-        return await run_creation(req)
+    user = await billing_user_if_required(session, authorization)
+    async with GenerationBillingGuard(
+        session=session,
+        user=user,
+        request_id=f"creation:{req.thread_id or 'sync'}:{uuid4().hex}",
+        credit_scene="lyrics",
+        usage_scene="lyrics",
+    ):
+        checkpointer = build_langgraph_checkpointer(settings)
+        return await run_creation(req, checkpointer=checkpointer)
 
 
 @router.post("/inspiration/fill", response_model=InspirationResult)
-async def fill_inspiration(req: InspirationRequest) -> InspirationResult:
-    settings = get_settings()
-    async with tcc.reservation(scene="inspiration", enabled=settings.billing_enabled):
+async def fill_inspiration(
+    req: InspirationRequest,
+    session: DbSession,
+    authorization: str | None = Header(default=None),
+) -> InspirationResult:
+    user = await billing_user_if_required(session, authorization)
+    async with GenerationBillingGuard(
+        session=session,
+        user=user,
+        request_id=f"inspiration:{uuid4().hex}",
+        credit_scene="inspiration",
+        usage_scene=None,
+    ):
         return await run_inspiration(req)

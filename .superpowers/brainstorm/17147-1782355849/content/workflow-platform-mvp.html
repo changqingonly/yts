@@ -1,0 +1,72 @@
+<h2>YTS LangGraph Workflow Platform: MVP Scope</h2>
+<p class="subtitle">目标是把可视化编辑、运行线程、HITL、trace 放到同一条 LangGraph 底座上。先选一期切片，避免一次铺太大。</p>
+
+<div class="section">
+  <div class="mockup">
+    <div class="mockup-header">Proposed Runtime Architecture</div>
+    <div class="mockup-body">
+      <div style="display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:14px;align-items:stretch">
+        <div class="placeholder" style="min-height:190px;text-align:left">
+          <strong>Workflow Editor</strong><br>
+          React Flow / xyflow<br><br>
+          Nodes: LLM, Judge, Formatter, HITL<br>
+          HITL: approval / edit / choose / resume<br><br>
+          Output: YTS workflow JSON DSL
+        </div>
+        <div class="placeholder" style="min-height:190px;text-align:left">
+          <strong>LangGraph Runtime</strong><br>
+          FlowSpec compiler<br>
+          Thread API<br>
+          Stream API<br>
+          Interrupt / resume<br><br>
+          Store: PostgreSQL checkpoint
+        </div>
+        <div class="placeholder" style="min-height:190px;text-align:left">
+          <strong>Observability</strong><br>
+          Phoenix spans<br>
+          StageTrace<br>
+          Checkpoint state snapshots<br><br>
+          Debug UI: DAG + trace timeline
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>Pick the first implementation slice</h3>
+<p class="subtitle">Click one option if you want. You can also answer in the terminal.</p>
+
+<div class="cards">
+  <div class="card" data-choice="a-runtime-first" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>A. Runtime First</h3>
+      <p>Build thread API, streaming events, interrupt/resume contracts, and checkpoint-backed trace read APIs before changing the editor.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Grounds everything in LangGraph behavior</li><li>Good tests and backend contracts first</li><li>Front-end has real APIs to consume</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>No visual editor in the first visible milestone</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b-editor-first" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>B. Editor First</h3>
+      <p>Add React Flow / xyflow canvas, node palette, DAG preview, and JSON DSL export/import while runtime remains mostly static.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Fast visual progress</li><li>Clarifies workflow authoring UX early</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Risk of designing UI around APIs that do not exist yet</li><li>HITL semantics may change later</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c-thin-vertical" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>C. Thin Vertical Slice</h3>
+      <p>One tiny editable workflow: start → approval → Pro creation → final review. Include minimal editor, thread API, resume, and trace timeline.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Shows the full product loop</li><li>Tests HITL end-to-end</li><li>Best demo value</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Touches more files</li><li>Needs very strict scope control</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>

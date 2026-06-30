@@ -1,0 +1,95 @@
+<h2>暗色 UI 方向选择</h2>
+<p class="subtitle">目标是长时间创作时降低亮面刺激，同时保持歌词、JSON、节点状态和按钮足够可读。点选一个更接近你想要的方向。</p>
+
+<div class="cards">
+  <div class="card" data-choice="soft-graphite" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#10151d;border-color:#253142;color:#d9e2ee;padding:14px">
+      <div style="display:grid;grid-template-columns:44px 1fr;min-height:220px;border:1px solid #243246;border-radius:8px;overflow:hidden">
+        <div style="background:#0b1020;padding:10px 5px;display:grid;gap:8px;align-content:start">
+          <div style="height:28px;width:28px;border-radius:7px;background:#1b2740;margin:auto"></div>
+          <div style="height:42px;border-radius:7px;background:#2563eb"></div>
+          <div style="height:42px;border-radius:7px;background:#111827;border:1px solid #243246"></div>
+          <div style="height:42px;border-radius:7px;background:#111827;border:1px solid #243246"></div>
+        </div>
+        <div style="background:#10151d;padding:14px;display:grid;gap:12px">
+          <div style="height:18px;width:160px;background:#d9e2ee;border-radius:4px"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div style="height:145px;background:#151d2a;border:1px solid #28364a;border-radius:8px"></div>
+            <div style="height:145px;background:#151d2a;border:1px solid #28364a;border-radius:8px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A. 柔和石墨黑</h3>
+      <p>推荐。不是纯黑，使用深灰蓝底、低亮度卡片、克制蓝色强调，长时间看屏更稳。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="studio-navy" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#071426;border-color:#1d3557;color:#e2edf8;padding:14px">
+      <div style="display:grid;grid-template-columns:44px 1fr;min-height:220px;border:1px solid #1d3557;border-radius:8px;overflow:hidden">
+        <div style="background:#05101f;padding:10px 5px;display:grid;gap:8px;align-content:start">
+          <div style="height:28px;width:28px;border-radius:7px;background:#123056;margin:auto"></div>
+          <div style="height:42px;border-radius:7px;background:#0ea5e9"></div>
+          <div style="height:42px;border-radius:7px;background:#0a1c31;border:1px solid #1b3a5c"></div>
+          <div style="height:42px;border-radius:7px;background:#0a1c31;border:1px solid #1b3a5c"></div>
+        </div>
+        <div style="background:#071426;padding:14px;display:grid;gap:12px">
+          <div style="height:18px;width:160px;background:#e2edf8;border-radius:4px"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div style="height:145px;background:#0c1e33;border:1px solid #1d4265;border-radius:8px"></div>
+            <div style="height:145px;background:#0c1e33;border:1px solid #1d4265;border-radius:8px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B. 深海工作室</h3>
+      <p>更有音乐制作软件的感觉，蓝色氛围更强；缺点是容易变成单一蓝色主题。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="oled-black" onclick="toggleSelect(this)">
+    <div class="card-image" style="background:#050607;border-color:#202327;color:#f1f5f9;padding:14px">
+      <div style="display:grid;grid-template-columns:44px 1fr;min-height:220px;border:1px solid #202327;border-radius:8px;overflow:hidden">
+        <div style="background:#000;padding:10px 5px;display:grid;gap:8px;align-content:start">
+          <div style="height:28px;width:28px;border-radius:7px;background:#16181c;margin:auto"></div>
+          <div style="height:42px;border-radius:7px;background:#22c55e"></div>
+          <div style="height:42px;border-radius:7px;background:#08090b;border:1px solid #22252b"></div>
+          <div style="height:42px;border-radius:7px;background:#08090b;border:1px solid #22252b"></div>
+        </div>
+        <div style="background:#050607;padding:14px;display:grid;gap:12px">
+          <div style="height:18px;width:160px;background:#f1f5f9;border-radius:4px"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div style="height:145px;background:#0a0c0f;border:1px solid #22252b;border-radius:8px"></div>
+            <div style="height:145px;background:#0a0c0f;border:1px solid #22252b;border-radius:8px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C. OLED 极暗黑</h3>
+      <p>亮度最低，适合夜间；但文字和边框对比更尖锐，白字容易“刺”。</p>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>建议默认范围</h4>
+    <ul>
+      <li>页面背景不使用纯黑，保持 #0f141c 附近</li>
+      <li>卡片比背景亮 5-8%，减少边界疲劳</li>
+      <li>正文不用纯白，采用柔和灰蓝文字</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>需要避免</h4>
+    <ul>
+      <li>大片纯黑配纯白字</li>
+      <li>过多高饱和蓝色发光效果</li>
+      <li>只改背景，不改输入框、状态、空态和错误态</li>
+    </ul>
+  </div>
+</div>
