@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   Activity,
   Braces,
@@ -8,6 +8,7 @@ import {
   Clock3,
   GitBranch,
   Hand,
+  History,
   ListPlus,
   Play,
   RefreshCw,
@@ -22,17 +23,24 @@ import {
 import { MarkerType, VueFlow } from "@vue-flow/core";
 import "@vue-flow/core/dist/style.css";
 import "@vue-flow/core/dist/theme-default.css";
-import { apiBase as resolveApiBase, requestJson as requestWorkflowJson } from "../services/http";
+import {
+  API_TARGET_CHANGED_EVENT,
+  requestJson as requestWorkflowJson,
+  selectedApiTarget,
+} from "../services/http";
 import { saveSong } from "../services/songs";
+import { openJsonStream } from "../services/transport";
+import { getWorkflowTrace, listWorkflowHistory } from "../services/workflows";
+import { useEnvironmentStore } from "../stores/environment";
 
 const workflowId = "pro_creation_hitl_v1";
-const target = ref(localStorage.getItem("yts-target") || "local");
-const bases = { local: "http://127.0.0.1:8765", cloud: "http://127.0.0.1:8000" };
+const environment = useEnvironmentStore();
 const template = ref(null);
 const draftTemplate = ref(null);
 const threadId = ref(`workflow-${Date.now()}`);
 const prompt = ref("下雨的午后，大雨倾盆，思念远方的故人");
 const selectedNodeId = ref("validate_request");
+const userSelectedNodeId = ref("");
 const nodeConfigText = ref("{}");
 const newNodeType = ref("hitl_approval");
 const centerTab = ref("workspace");
@@ -42,7 +50,13 @@ const result = ref(null);
 const status = ref("idle");
 const error = ref("");
 const saveMessage = ref("");
+const workflowSocket = ref(null);
+const workflowSocketClosing = ref(false);
 const drawerMode = ref(null);
+const historyDrawerOpen = ref(false);
+const historyItems = ref([]);
+const historyLoading = ref(false);
+const selectedHistoryThreadId = ref("");
 const drawerModes = [
   { id: "config", label: "配置", icon: Settings2 },
   { id: "io", label: "输入输出", icon: GitBranch },
@@ -68,7 +82,7 @@ const libraryNodes = [
 
 const flowStageDefinitions = [
   { id: "request", label: "01 输入校验", nodeIds: ["validate_request", "parse_intent"] },
-  { id: "brief", label: "02 歌曲简报", nodeIds: ["build_song_brief", "brief_approval"] },
+  { id: "brief", label: "02 歌曲简报", nodeIds: ["build_song_brief"] },
   { id: "style", label: "03 风格与 Hook", nodeIds: ["plan_music_style", "hook_lab"] },
   { id: "structure", label: "04 结构设计", nodeIds: ["draft_structure_blueprints", "critique_structure"] },
   {
@@ -113,6 +127,7 @@ const actionLabels = {
 
 const traceStatusLabels = {
   completed: "已完成",
+  executing: "运行中",
   waiting: "等待中",
   idle: "未运行",
   pending: "待执行",
@@ -148,12 +163,27 @@ const flowGroups = computed(() => {
     }))
     .filter((group) => group.nodes.length);
 });
+const orderedFlowNodes = computed(() => flowGroups.value.flatMap((group) => group.nodes));
 
 const traceNodes = computed(() => trace.value?.nodes ?? runResult.value?.trace?.nodes ?? []);
 const completedIds = computed(() => {
   return new Set(traceNodes.value.filter((node) => node.status === "completed").map((node) => node.node_id));
 });
 const waitingNodeId = computed(() => runResult.value?.waiting?.node_id ?? "");
+const isWorkflowExecuting = computed(() => {
+  return status.value === "running" || status.value.startsWith("resume-");
+});
+const hasLiveWaitingAction = computed(() => {
+  return Array.isArray(runResult.value?.waiting?.actions) && runResult.value.waiting.actions.length > 0;
+});
+const isWorkflowBusy = computed(() => {
+  return status.value !== "idle" || isWorkflowExecuting.value || hasLiveWaitingAction.value;
+});
+const currentExecutingNodeId = computed(() => {
+  if (!isWorkflowExecuting.value || waitingNodeId.value) return "";
+  const nextNode = orderedFlowNodes.value.find((node) => !completedIds.value.has(node.id));
+  return nextNode?.id ?? "";
+});
 
 const graphNodes = computed(() => {
   if (!draftTemplate.value) return [];
@@ -208,7 +238,10 @@ const selectedNodeMeta = computed(() => {
   return nodeTypeMeta[selectedNode.value?.type] ?? nodeTypeMeta.output;
 });
 
-const focusNodeId = computed(() => waitingNodeId.value || selectedNodeId.value);
+const focusNodeId = computed(() => {
+  if (userSelectedNodeId.value) return userSelectedNodeId.value;
+  return currentExecutingNodeId.value || waitingNodeId.value || selectedNodeId.value;
+});
 const focusNode = computed(() => {
   return draftTemplate.value?.nodes.find((node) => node.id === focusNodeId.value) ?? selectedNode.value;
 });
@@ -280,6 +313,7 @@ const runStatusLabel = computed(() => {
 });
 
 const runStatusText = computed(() => statusLabels[runStatusLabel.value] ?? runStatusLabel.value);
+const displayError = computed(() => formatUserError(error.value));
 const drawerTitle = computed(() => {
   const titles = {
     config: "节点配置",
@@ -291,8 +325,8 @@ const drawerTitle = computed(() => {
   return titles[drawerMode.value] ?? "";
 });
 
-function apiBase() {
-  return resolveApiBase(target.value);
+function workflowTarget() {
+  return selectedApiTarget();
 }
 
 async function withBusy(nextStatus, fn) {
@@ -307,13 +341,15 @@ async function withBusy(nextStatus, fn) {
     error.value = err instanceof Error ? err.message : String(err);
     return null;
   } finally {
-    status.value = "idle";
+    if (status.value === nextStatus) {
+      status.value = "idle";
+    }
   }
 }
 
 async function loadTemplate() {
   await withBusy("loading-template", async () => {
-    template.value = await requestWorkflowJson(`/api/workflows/${workflowId}/template`);
+    template.value = await requestWorkflowJson(`/api/workflows/${workflowId}/template`, { target: workflowTarget() });
     draftTemplate.value = cloneTemplateWithPositions(template.value);
     const current = draftTemplate.value.nodes.find((node) => node.id === selectedNodeId.value);
     selectedNodeId.value = current?.id ?? draftTemplate.value.start_node_id;
@@ -344,6 +380,14 @@ function formatJsonPreview(value, label) {
       error: reason,
     };
   }
+}
+
+function formatUserError(rawError) {
+  if (!rawError) return "";
+  if (rawError.includes("OpenAI text inference failed") || rawError.includes("YTS_OPENAI_BASE_URL")) {
+    return "OpenAI 接口请求失败：请检查 API Base URL 是否指向 /v1 接口，并确认模型服务可用。";
+  }
+  return rawError;
 }
 
 function resetSelectedNodeConfig() {
@@ -431,17 +475,16 @@ function defaultConfigForNodeType(type) {
 
 async function runThread() {
   await withBusy("running", async () => {
-    const body = {
+    result.value = null;
+    trace.value = null;
+    runResult.value = null;
+    userSelectedNodeId.value = "";
+    await streamWorkflow(`/api/workflows/${workflowId}/threads/stream`, {
+      type: "run",
       thread_id: threadId.value,
       user_prompt: prompt.value,
       node_config: buildNodeConfigPayload(),
-    };
-    runResult.value = await requestWorkflowJson(`/api/workflows/${workflowId}/threads`, {
-      method: "POST",
-      body: JSON.stringify(body),
     });
-    trace.value = runResult.value.trace;
-    result.value = runResult.value.output;
   });
 }
 
@@ -452,23 +495,191 @@ async function resumeThread(action) {
     return;
   }
   await withBusy(`resume-${action}`, async () => {
-    runResult.value = await requestWorkflowJson(`/api/workflows/${workflowId}/threads/${threadId.value}/resume`, {
+    userSelectedNodeId.value = "";
+    runResult.value = {
+      ...runResult.value,
+      waiting: null,
+      status: "waiting",
+    };
+    await streamWorkflow(`/api/workflows/${workflowId}/threads/${threadId.value}/stream`, {
+      type: "resume",
+      node_id: waiting.node_id,
+      action,
+      patch: action === "edit" ? parseNodeConfig() : {},
+    });
+  });
+}
+
+function streamWorkflow(path, payload) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const fallbackJson = () => fallbackWorkflowRequest(path, payload);
+    const ws = openJsonStream(
+      path,
+      payload,
+      {
+        onMessage: (message, socket) => {
+          if (message.type === "started") return;
+          if (message.type === "trace") {
+            applyWorkflowTrace(message.trace);
+            return;
+          }
+          if (message.type === "result") {
+            applyWorkflowResult(message.result);
+            settled = true;
+            resolve(message.result);
+            workflowSocket.value = null;
+            socket.close();
+            return;
+          }
+          if (message.type === "error") {
+            settled = true;
+            reject(new Error(message.detail || "工作流流式执行失败"));
+            workflowSocket.value = null;
+            socket.close();
+            return;
+          }
+          settled = true;
+          reject(new Error(`未知工作流流式消息: ${message.type}`));
+          workflowSocket.value = null;
+          socket.close();
+        },
+        onFallbackResult: (fallbackResult) => {
+          applyWorkflowResult(fallbackResult);
+          settled = true;
+          workflowSocket.value = null;
+          resolve(fallbackResult);
+        },
+        onError: (streamError) => {
+          if (!settled) {
+            settled = true;
+            workflowSocket.value = null;
+            reject(streamError);
+          }
+        },
+        onClose: (socket) => {
+          if (workflowSocket.value === socket) {
+            workflowSocket.value = null;
+          }
+          if (workflowSocketClosing.value) {
+            workflowSocketClosing.value = false;
+            if (!settled) {
+              settled = true;
+              resolve(null);
+            }
+            return;
+          }
+          if (!settled) {
+            settled = true;
+            reject(new Error("工作流 WebSocket 连接已中断"));
+          }
+        },
+      },
+      {
+        target: workflowTarget(),
+        fallbackJson,
+      },
+    );
+    workflowSocket.value = ws;
+  });
+}
+
+function fallbackWorkflowRequest(path, payload) {
+  if (payload.type === "run") {
+    return requestWorkflowJson(`/api/workflows/${workflowId}/threads`, {
       method: "POST",
+      target: workflowTarget(),
       body: JSON.stringify({
-        node_id: waiting.node_id,
-        action,
-        patch: action === "edit" ? parseNodeConfig() : {},
+        thread_id: payload.thread_id,
+        user_prompt: payload.user_prompt,
+        node_config: payload.node_config,
       }),
     });
-    trace.value = runResult.value.trace;
-    result.value = runResult.value.output;
-  });
+  }
+  if (payload.type === "resume") {
+    return requestWorkflowJson(`/api/workflows/${workflowId}/threads/${threadId.value}/resume`, {
+      method: "POST",
+      target: workflowTarget(),
+      body: JSON.stringify({
+        node_id: payload.node_id,
+        action: payload.action,
+        patch: payload.patch,
+      }),
+    });
+  }
+  throw new Error(`未知工作流 fallback 类型: ${payload.type}; path=${path}`);
+}
+
+function applyWorkflowTrace(nextTrace) {
+  if (!nextTrace) return;
+  trace.value = nextTrace;
+  runResult.value = {
+    ...(runResult.value ?? {}),
+    workflow_id: nextTrace.workflow_id,
+    thread_id: nextTrace.thread_id,
+    run_id: nextTrace.run_id,
+    trace: nextTrace,
+  };
+}
+
+function applyWorkflowResult(nextResult) {
+  runResult.value = nextResult;
+  trace.value = nextResult.trace;
+  result.value = nextResult.output;
 }
 
 async function refreshTrace() {
   await withBusy("trace", async () => {
-    trace.value = await requestWorkflowJson(`/api/workflows/${workflowId}/threads/${threadId.value}/trace`);
+    trace.value = await requestWorkflowJson(`/api/workflows/${workflowId}/threads/${threadId.value}/trace`, { target: workflowTarget() });
   });
+}
+
+async function openHistoryDrawer() {
+  historyDrawerOpen.value = true;
+  await loadHistoryItems();
+}
+
+function closeHistoryDrawer() {
+  historyDrawerOpen.value = false;
+}
+
+async function loadHistoryItems() {
+  historyLoading.value = true;
+  error.value = "";
+  try {
+    historyItems.value = await listWorkflowHistory(workflowId, { target: workflowTarget() });
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    historyLoading.value = false;
+  }
+}
+
+async function selectHistoryItem(item) {
+  selectedHistoryThreadId.value = item.thread_id;
+  error.value = "";
+  try {
+    const selectedTrace = await getWorkflowTrace(workflowId, item.thread_id, { target: workflowTarget() });
+    threadId.value = item.thread_id;
+    prompt.value = item.user_prompt;
+    trace.value = selectedTrace;
+    result.value = null;
+    runResult.value = {
+      workflow_id: selectedTrace.workflow_id,
+      thread_id: selectedTrace.thread_id,
+      run_id: selectedTrace.run_id,
+      status: item.status,
+      waiting: waitingFromTrace(selectedTrace),
+      output: null,
+      trace: selectedTrace,
+    };
+    userSelectedNodeId.value = focusNodeIdFromTrace(selectedTrace);
+    selectedNodeId.value = userSelectedNodeId.value || draftTemplate.value?.start_node_id || selectedNodeId.value;
+    centerTab.value = "workspace";
+    historyDrawerOpen.value = false;
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
 }
 
 async function saveFinalDeliveryToAssets() {
@@ -491,6 +702,7 @@ async function saveFinalDeliveryToAssets() {
 
 function selectNode(nodeId) {
   selectedNodeId.value = nodeId;
+  userSelectedNodeId.value = nodeId;
   resetSelectedNodeConfig();
   centerTab.value = "workspace";
 }
@@ -503,11 +715,31 @@ function closeDrawer() {
   drawerMode.value = null;
 }
 
+function waitingFromTrace(selectedTrace) {
+  const waitingNode = [...(selectedTrace.nodes ?? [])].reverse().find((node) => node.status === "waiting");
+  if (!waitingNode) return null;
+  return {
+    node_id: waitingNode.node_id,
+    kind: waitingNode.node_type.replace(/^hitl_/, ""),
+    prompt: waitingNode.summary,
+    actions: [],
+    editable_fields: [],
+    state_preview: waitingNode.artifact_preview ?? {},
+  };
+}
+
+function focusNodeIdFromTrace(selectedTrace) {
+  const nodes = selectedTrace.nodes ?? [];
+  const contentNode = [...nodes].reverse().find((node) => hasArtifactValue(node.artifact_preview));
+  return contentNode?.node_id ?? nodes[nodes.length - 1]?.node_id ?? "";
+}
+
 function onNodeClick(event) {
   selectNode(event.node.id);
 }
 
 function nodeStatus(nodeId) {
+  if (currentExecutingNodeId.value === nodeId) return "executing";
   if (waitingNodeId.value === nodeId) return "waiting";
   if (completedIds.value.has(nodeId)) return "completed";
   return "idle";
@@ -545,6 +777,20 @@ function formatDuration(durationMs) {
   if (typeof durationMs !== "number" || !Number.isFinite(durationMs)) return "--";
   if (durationMs < 1000) return `${Math.max(0, Math.round(durationMs))}ms`;
   return `${(durationMs / 1000).toFixed(1)}s`;
+}
+
+function formatHistoryTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return `时间格式错误：${value}`;
+  }
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function artifactLabel(key) {
@@ -627,11 +873,39 @@ function hasArtifactValue(value) {
   return value !== undefined && value !== null && String(value).trim() !== "";
 }
 
-watch(target, (nextTarget) => {
-  localStorage.setItem("yts-target", nextTarget);
+watch(isWorkflowBusy, () => {
+  environment.setSwitchLocked(isWorkflowBusy.value);
 });
 
-onMounted(loadTemplate);
+function handleApiTargetChanged() {
+  if (workflowSocket.value) {
+    workflowSocketClosing.value = true;
+    workflowSocket.value.close();
+    workflowSocket.value = null;
+  }
+  runResult.value = null;
+  trace.value = null;
+  result.value = null;
+  error.value = "";
+  status.value = "idle";
+  userSelectedNodeId.value = "";
+  void loadTemplate();
+}
+
+onMounted(() => {
+  window.addEventListener(API_TARGET_CHANGED_EVENT, handleApiTargetChanged);
+  environment.setSwitchLocked(isWorkflowBusy.value);
+  void loadTemplate();
+});
+onUnmounted(() => {
+  window.removeEventListener(API_TARGET_CHANGED_EVENT, handleApiTargetChanged);
+  environment.setSwitchLocked(false);
+  if (workflowSocket.value) {
+    workflowSocketClosing.value = true;
+    workflowSocket.value.close();
+    workflowSocket.value = null;
+  }
+});
 </script>
 
 <template>
@@ -686,13 +960,6 @@ onMounted(loadTemplate);
         </div>
 
         <div class="top-actions">
-          <div class="target-menu compact-target">
-            <select v-model="target" aria-label="API 环境">
-              <option value="local">本地</option>
-              <option value="cloud">云端</option>
-            </select>
-            <span>{{ bases[target] }}</span>
-          </div>
           <button class="icon-button" type="button" title="重新加载模板" @click="loadTemplate">
             <RefreshCw :size="17" />
           </button>
@@ -701,6 +968,10 @@ onMounted(loadTemplate);
           </button>
           <button class="icon-button" type="button" title="节点配置" @click="openDrawer('config')">
             <Settings2 :size="17" />
+          </button>
+          <button class="secondary-action" type="button" title="历史创作" @click="openHistoryDrawer">
+            <History :size="16" />
+            历史
           </button>
           <button class="primary-button" type="button" :disabled="status !== 'idle'" @click="runThread">
             <Play :size="16" />
@@ -762,8 +1033,8 @@ onMounted(loadTemplate);
           </div>
         </div>
 
-        <pre v-if="error" class="error-box compact-error">{{ error }}</pre>
-        <div v-if="runResult?.waiting && focusNode?.id === runResult.waiting.node_id" class="workspace-gate compact-gate">
+        <p v-if="displayError" class="error-box compact-error">{{ displayError }}</p>
+        <div v-if="hasLiveWaitingAction && focusNode?.id === runResult.waiting.node_id" class="workspace-gate compact-gate">
           <div>
             <strong>{{ runResult.waiting.kind === "approval" ? "等待确认" : "等待处理" }}</strong>
             <span>{{ runResult.waiting.prompt }}</span>
@@ -969,7 +1240,6 @@ onMounted(loadTemplate);
                 <span>创作需求</span>
                 <textarea v-model="prompt" class="prompt-box" />
               </label>
-              <pre v-if="error" class="error-box">{{ error }}</pre>
               <footer class="drawer-action-bar">
                 <button
                   class="primary-button drawer-primary-action"
@@ -1007,6 +1277,50 @@ onMounted(loadTemplate);
             <section v-else-if="drawerMode === 'result'" class="drawer-panel">
               <pre class="result-box">{{ result ? JSON.stringify(result, null, 2) : JSON.stringify(runResult?.waiting ?? {}, null, 2) }}</pre>
             </section>
+          </div>
+        </aside>
+      </div>
+    </Transition>
+
+    <Transition name="drawer-slide">
+      <div v-if="historyDrawerOpen" class="drawer-backdrop" @click.self="closeHistoryDrawer">
+        <aside class="side-drawer history-drawer" aria-label="历史创作列表">
+          <header class="drawer-head">
+            <div class="drawer-titleline">
+              <span class="eyebrow">创作回放</span>
+              <h3>历史</h3>
+            </div>
+            <button class="icon-button" type="button" title="关闭" @click="closeHistoryDrawer">×</button>
+          </header>
+
+          <div class="history-toolbar">
+            <button type="button" :disabled="historyLoading" @click="loadHistoryItems">
+              <RefreshCw :size="15" />
+              刷新
+            </button>
+          </div>
+
+          <div class="history-content">
+            <div v-if="historyLoading" class="workspace-note">正在加载历史创作。</div>
+            <div v-else-if="!historyItems.length" class="workspace-note">暂无历史创作。</div>
+            <div v-else class="history-list">
+              <button
+                v-for="item in historyItems"
+                :key="item.thread_id"
+                :class="{ active: selectedHistoryThreadId === item.thread_id }"
+                type="button"
+                @click="selectHistoryItem(item)"
+              >
+                <span class="history-main">
+                  <strong>{{ item.title }}</strong>
+                  <small>{{ item.user_prompt }}</small>
+                </span>
+                <span class="history-meta">
+                  <time :datetime="item.updated_at">{{ formatHistoryTime(item.updated_at) }}</time>
+                  <em>{{ item.completed_nodes }}/{{ item.total_nodes }}</em>
+                </span>
+              </button>
+            </div>
           </div>
         </aside>
       </div>
@@ -1109,9 +1423,14 @@ textarea {
 
 .brand-mark {
   background: var(--color-accent-soft);
-  color: var(--color-accent);
+  filter: drop-shadow(0 0 7px var(--color-brand-glow));
   height: 34px;
   width: 34px;
+}
+
+.brand-mark svg {
+  stroke: url(#yts-brand-gradient);
+  color: var(--color-brand-cyan);
 }
 
 .brand-block h1,
@@ -1131,7 +1450,6 @@ textarea {
 .timeline-node,
 .timeline-copy small,
 .timeline-status,
-.target-menu span,
 .node-content small,
 .edge-row,
 .empty-row,
@@ -1195,8 +1513,29 @@ textarea {
 }
 
 .compact-list {
+  --timeline-scrollbar-safe-zone: 14px;
+
   max-height: calc(100vh - 104px);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: var(--timeline-scrollbar-safe-zone);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.compact-list::-webkit-scrollbar {
+  width: 7px;
+}
+
+.compact-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.compact-list::-webkit-scrollbar-thumb {
+  background: rgba(138, 164, 189, 0.28);
+  background-clip: content-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
 }
 
 .flow-stage-group {
@@ -1232,6 +1571,13 @@ textarea {
   color: var(--color-accent);
 }
 
+.timeline-node.status-executing {
+  animation: timelineBreathing 1.45s ease-in-out infinite;
+  background: rgba(14, 165, 233, 0.12);
+  box-shadow: inset 3px 0 0 var(--color-accent), 0 0 22px rgba(14, 165, 233, 0.2);
+  color: var(--color-heading);
+}
+
 .timeline-track {
   align-items: center;
   display: flex;
@@ -1258,6 +1604,19 @@ textarea {
   position: relative;
   width: 9px;
   z-index: 1;
+}
+
+.timeline-dot::after {
+  border-radius: 50%;
+  content: "";
+  inset: -7px;
+  opacity: 0;
+  position: absolute;
+}
+
+.timeline-node.status-executing .timeline-dot::after {
+  animation: nodePulse 1.45s ease-out infinite;
+  background: rgba(14, 165, 233, 0.34);
 }
 
 .timeline-copy {
@@ -1311,6 +1670,12 @@ textarea {
   background: var(--color-warning-soft);
   border-color: var(--color-warning);
   color: var(--color-warning);
+}
+
+.timeline-node.status-executing .timeline-status {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 
 .main-stage {
@@ -1378,54 +1743,6 @@ textarea {
   gap: 9px;
 }
 
-.target-menu {
-  --target-font-size: 12px;
-  align-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 9px;
-  display: grid;
-  gap: 8px;
-  grid-template-columns: 78px 136px;
-  min-height: 38px;
-  padding: 0 8px;
-}
-
-.target-menu select {
-  border: 0;
-  padding: 0;
-}
-
-.target-menu span {
-  font-size: var(--target-font-size);
-}
-
-.compact-target {
-  border-radius: 8px;
-  gap: 6px;
-  grid-template-columns: 58px 124px;
-  min-height: 32px;
-  padding: 3px 7px;
-}
-
-.compact-target select {
-  appearance: none;
-  background-color: var(--color-panel);
-  background-image: url("data:image/svg+xml,%3Csvg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23abc2d6' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-  background-position: right 7px center;
-  background-repeat: no-repeat;
-  background-size: 14px 14px;
-  border: 0;
-  font-size: var(--target-font-size);
-  line-height: 1;
-  min-height: 24px;
-  padding: 0 18px 0 7px;
-}
-
-.compact-target span {
-  font-size: var(--target-font-size);
-  line-height: 1;
-}
-
 .icon-button {
   width: 38px;
 }
@@ -1434,6 +1751,20 @@ textarea {
   background: var(--color-accent-strong);
   border-color: var(--color-accent-strong);
   color: var(--color-heading);
+}
+
+.secondary-action {
+  background: rgba(14, 165, 233, 0.1);
+  border-color: var(--color-border-soft);
+  color: var(--color-muted-strong);
+  font-weight: 800;
+}
+
+.secondary-action:hover,
+.secondary-action:focus-visible {
+  background: rgba(14, 165, 233, 0.18);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 
 .center-tabs {
@@ -1455,8 +1786,7 @@ textarea {
 
 .workspace-card,
 .canvas-card {
-  background: var(--color-panel);
-  border: 1px solid var(--color-border);
+  background: transparent;
   border-radius: 10px;
   min-width: 0;
   overflow: hidden;
@@ -1478,9 +1808,9 @@ textarea {
 }
 
 .compact-focus-bar {
-  background: var(--color-panel-strong);
-  border: 1px solid var(--color-border-soft);
+  background: linear-gradient(90deg, rgba(14, 165, 233, 0.08), rgba(16, 36, 58, 0.78));
   border-radius: 8px;
+  box-shadow: inset 3px 0 0 rgba(14, 165, 233, 0.38), 0 12px 26px rgba(0, 8, 20, 0.14);
   display: grid;
   gap: 10px;
   grid-template-columns: minmax(240px, 1fr) minmax(180px, 0.82fr) minmax(220px, auto) auto;
@@ -1680,9 +2010,9 @@ textarea {
 
 .workspace-panel {
   align-content: start;
-  background: var(--color-panel-strong);
-  border: 1px solid var(--color-border-soft);
+  background: linear-gradient(180deg, rgba(16, 36, 58, 0.9), rgba(12, 30, 51, 0.82));
   border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(0, 8, 20, 0.12);
   display: grid;
   gap: 8px;
   grid-auto-rows: max-content;
@@ -1702,7 +2032,6 @@ textarea {
 
 .workspace-note {
   background: var(--color-panel);
-  border: 1px solid var(--color-border-soft);
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.4;
@@ -1799,7 +2128,8 @@ textarea {
 .diagnostic-side {
   display: grid;
   gap: 10px;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  align-content: start;
+  grid-template-rows: repeat(2, minmax(0, max-content));
   min-width: 0;
 }
 
@@ -1811,7 +2141,8 @@ textarea {
 
 .llm-panel {
   align-content: stretch;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto max-content;
+  height: max-content;
   min-height: 0;
 }
 
@@ -1862,6 +2193,7 @@ textarea {
   font-size: 11px;
   line-height: 1.45;
   margin: 0;
+  max-height: min(38vh, 420px);
   padding: 10px;
   white-space: pre-wrap;
 }
@@ -2028,6 +2360,12 @@ textarea {
 
 .workflow-node.status-waiting {
   border-color: #f2bd61;
+}
+
+.workflow-node.status-executing {
+  animation: nodeBreathing 1.45s ease-in-out infinite;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15), 0 0 30px rgba(14, 165, 233, 0.22);
 }
 
 .node-content {
@@ -2354,6 +2692,96 @@ textarea {
   max-height: calc(100vh - 118px);
 }
 
+.history-drawer {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.history-toolbar {
+  align-items: center;
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 0;
+}
+
+.history-content {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.history-list {
+  display: grid;
+  gap: 5px;
+  max-height: calc(100vh - 118px);
+  overflow: auto;
+}
+
+.history-list button {
+  align-items: center;
+  background: rgba(9, 28, 48, 0.7);
+  border: 0;
+  border-radius: 7px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  justify-content: stretch;
+  min-height: 58px;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.history-list button:hover,
+.history-list button:focus-visible,
+.history-list button.active {
+  background: rgba(14, 165, 233, 0.13);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+  outline: 0;
+}
+
+.history-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.history-main strong,
+.history-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-main strong {
+  color: var(--color-heading);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.history-main small,
+.history-meta {
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.history-meta {
+  display: grid;
+  gap: 5px;
+  justify-items: end;
+}
+
+.history-meta time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.history-meta em {
+  background: var(--color-panel);
+  border-radius: 999px;
+  color: var(--color-muted-strong);
+  font-style: normal;
+  line-height: 1;
+  padding: 4px 7px;
+}
+
 .drawer-slide-enter-active,
 .drawer-slide-leave-active {
   transition: opacity 0.18s ease;
@@ -2372,5 +2800,44 @@ textarea {
 .drawer-slide-enter-from .side-drawer,
 .drawer-slide-leave-to .side-drawer {
   transform: translateX(100%);
+}
+
+@keyframes timelineBreathing {
+  0%,
+  100% {
+    box-shadow: inset 3px 0 0 rgba(14, 165, 233, 0.55), 0 0 12px rgba(14, 165, 233, 0.12);
+  }
+  50% {
+    box-shadow: inset 3px 0 0 var(--color-accent), 0 0 28px rgba(14, 165, 233, 0.34);
+  }
+}
+
+@keyframes nodePulse {
+  0% {
+    opacity: 0.62;
+    transform: scale(0.68);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+
+@keyframes nodeBreathing {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.12), 0 8px 20px rgba(0, 8, 20, 0.12);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.2), 0 0 34px rgba(14, 165, 233, 0.28);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-node.status-executing,
+  .timeline-node.status-executing .timeline-dot::after,
+  .workflow-node.status-executing {
+    animation: none;
+  }
 }
 </style>

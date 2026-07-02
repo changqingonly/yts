@@ -67,9 +67,9 @@ def test_frontend_root_removes_browser_default_margin_for_flush_sidebar() -> Non
 
 
 def test_frontend_http_unauthorized_clears_session_and_announces_expiry() -> None:
-    http = read_source("services/http.js")
+    http = read_source("services/transport.js")
 
-    assert 'response.status === 401' in http
+    assert "status === 401" in http
     assert 'localStorage.removeItem("yts-access-token")' in http
     assert 'localStorage.removeItem("yts-user")' in http
     assert 'window.dispatchEvent(new CustomEvent("yts-auth-expired"' in http
@@ -134,9 +134,45 @@ def test_app_shell_uses_deep_sea_theme_tokens() -> None:
         "var(--color-bg)",
         "var(--color-sidebar)",
         "var(--color-border-soft)",
-        "var(--color-accent)",
+        "var(--color-brand-cyan)",
+        "var(--color-brand-green)",
     ]:
         assert token in shell
+
+
+def test_frontend_logo_uses_blue_green_gradient_mark() -> None:
+    base = read_source("styles/base.css")
+    shell = read_source("app/AppShell.vue")
+    creation = read_source("pages/CreationPage.vue")
+    favicon = Path("desktop/frontend/public/favicon.svg").read_text(encoding="utf-8")
+    index = Path("desktop/frontend/index.html").read_text(encoding="utf-8")
+
+    for token in [
+        "--color-brand-cyan: #22d3ee;",
+        "--color-brand-green: #34d399;",
+        "--color-brand-glow: rgba(45, 212, 191, 0.34);",
+    ]:
+        assert token in base
+    assert "DeepSeaLogo" not in shell
+    assert "DeepSeaLogo" not in creation
+    assert "components/DeepSeaLogo.vue" not in shell
+    assert "components/DeepSeaLogo.vue" not in creation
+    assert '<Sparkles :size="27" />' in shell
+    assert '<Workflow :size="18" />' in creation
+    assert 'id="yts-brand-gradient"' in shell
+    assert 'stop-color="var(--color-brand-cyan)"' in shell
+    assert 'stop-color="var(--color-brand-green)"' in shell
+    assert ".brand-gradient-defs" in shell
+    assert ".creator-brand-mark svg" in shell
+    assert "stroke: url(#yts-brand-gradient);" in shell
+    assert "filter: drop-shadow(0 0 9px var(--color-brand-glow));" in shell
+    assert ".brand-mark svg" in creation
+    assert "stroke: url(#yts-brand-gradient);" in creation
+    assert "filter: drop-shadow(0 0 7px var(--color-brand-glow));" in creation
+    assert 'aria-label="深海工作室"' in favicon
+    assert "brand-spark-large" in favicon
+    assert "brand-spark-small" in favicon
+    assert "<title>深海工作室</title>" in index
 
 
 def test_app_shell_settings_navigation_lives_at_sidebar_bottom_without_credit_card() -> None:
@@ -151,7 +187,7 @@ def test_app_shell_settings_navigation_lives_at_sidebar_bottom_without_credit_ca
     assert "display: flex;" in sidebar_rule
     assert "flex-direction: column;" in sidebar_rule
     assert "margin-top: auto;" in bottom_nav_rule
-    assert "display: grid;" not in bottom_nav_rule
+    assert "display: grid;" in bottom_nav_rule
     assert "creator-sidebar-card" not in shell
     assert "sidebar-card-label" not in shell
     assert "fetchCreditBalance" not in shell
@@ -159,6 +195,40 @@ def test_app_shell_settings_navigation_lives_at_sidebar_bottom_without_credit_ca
     assert "creditBalance" not in shell
     assert "dailyUsage" not in shell
     assert "歌词 {{" not in shell
+
+
+def test_app_shell_api_target_switch_lives_above_settings_navigation() -> None:
+    shell = read_source("app/AppShell.vue")
+    bottom_nav_block = shell.split('<nav class="creator-bottom-nav"', 1)[1].split("</nav>", 1)[0]
+
+    assert 'import { useEnvironmentStore } from "../stores/environment";' in shell
+    assert "const environment = useEnvironmentStore();" in shell
+    assert "environment.options" in shell
+    assert "environment.target" in shell
+    assert "environment.setTarget(item.value)" in shell
+    assert "environment.checkAllHealth()" in shell
+    assert "environment.targetHealth(item.value)" in shell
+    assert 'class="global-target-switch"' in bottom_nav_block
+    assert 'aria-label="API 环境"' in bottom_nav_block
+    assert 'v-for="item in environment.options"' in bottom_nav_block
+    assert ':disabled="environment.switchLocked"' in bottom_nav_block
+    assert "target-status-dot" in bottom_nav_block
+    assert 'class="target-lock-note"' in bottom_nav_block
+    assert bottom_nav_block.index('class="global-target-switch"') < bottom_nav_block.index(
+        ":to=\"settingsNavItem.to\""
+    )
+
+
+def test_app_shell_api_target_switch_only_highlights_selected_button() -> None:
+    shell = read_source("app/AppShell.vue")
+    switch_rule = shell.split(".global-target-switch {", 1)[1].split("}", 1)[0]
+    button_rule = shell.split(".global-target-switch button {", 1)[1].split("}", 1)[0]
+    active_rule = shell.split(".global-target-switch button.active {", 1)[1].split("}", 1)[0]
+
+    assert "background: transparent;" in switch_rule
+    assert "background: transparent;" in button_rule
+    assert "background: rgba(14, 165, 233, 0.28);" in active_rule
+    assert "box-shadow:" in active_rule
 
 
 def test_app_shell_active_navigation_has_no_outer_accent_border() -> None:
@@ -185,6 +255,28 @@ def test_main_pages_do_not_keep_broad_light_surfaces() -> None:
             assert color not in source, f"{relative_path} still contains {color}"
 
 
+def test_music_stream_generation_uses_global_api_target() -> None:
+    music = read_source("pages/MusicPage.vue")
+    player = read_source("stores/player.js")
+    stream_player = read_source("audio/streamPlayer.js")
+    environment = read_source("services/environment.js")
+    transport = read_source("services/transport.js")
+
+    assert 'import { selectedApiTarget } from "../services/http";' in music
+    assert "selectedApiTarget()" in music
+    assert "streamTarget" not in music
+    assert '<select v-model="streamTarget"' not in music
+    assert 'target = "local"' not in player
+    assert "target = selectedApiTarget()" in player
+    assert 'import { openBinaryStream } from "../services/transport";' in stream_player
+    assert "openBinaryStream(\"\", {" in stream_player
+    assert "streamEndpointForTarget(target)" in transport
+    assert "const WS_BASES = {" not in stream_player
+    assert "musicWsBase" in environment
+    assert "throw new Error(`Unsupported API target: ${target}`);" in environment
+    assert "WS_BASES[target] || WS_BASES.local" not in stream_player
+
+
 def test_creation_page_uses_dark_theme_instead_of_broad_light_surfaces() -> None:
     source = read_source("pages/CreationPage.vue")
 
@@ -200,6 +292,62 @@ def test_creation_page_uses_deep_sea_studio_branding() -> None:
     assert "深海工作室" in source
     assert "制作流程" in source
     assert "YTS Studio" not in source
+
+
+def test_creation_page_shows_one_concise_user_facing_error_message() -> None:
+    source = read_source("pages/CreationPage.vue")
+
+    assert 'const displayError = computed(() => formatUserError(error.value));' in source
+    assert "function formatUserError(rawError)" in source
+    assert "OpenAI 接口请求失败" in source
+    assert "API Base URL" in source
+    assert 'v-if="displayError"' in source
+    assert source.count('class="error-box compact-error"') == 1
+    assert '<pre v-if="error" class="error-box">{{ error }}</pre>' not in source
+    assert "{{ error }}" not in source
+
+
+def test_creation_page_exposes_history_drawer_for_replaying_workflow_trace() -> None:
+    source = read_source("pages/CreationPage.vue")
+    workflows = read_source("services/workflows.js")
+    top_actions_block = source.split('<div class="top-actions">', 1)[1].split("</div>", 1)[0]
+    history_drawer_block = source.split('class="side-drawer history-drawer"', 1)[1].split("</aside>", 1)[0]
+    history_list_rule = source.split(".history-list button {", 1)[1].split("}", 1)[0]
+
+    assert "History" in source
+    assert 'title="历史创作"' in top_actions_block
+    assert "@click=\"openHistoryDrawer\"" in top_actions_block
+    assert top_actions_block.index('title="历史创作"') < top_actions_block.index("@click=\"runThread\"")
+    assert "historyDrawerOpen" in source
+    assert "historyItems" in source
+    assert "historyLoading" in source
+    assert "listWorkflowHistory(workflowId" in source
+    assert "getWorkflowTrace(workflowId, item.thread_id" in source
+    assert "function selectHistoryItem(item)" in source
+    assert "threadId.value = item.thread_id;" in source
+    assert "prompt.value = item.user_prompt;" in source
+    assert "trace.value = selectedTrace;" in source
+    assert "runResult.value = {" in source
+    assert "waitingFromTrace(selectedTrace)" in source
+    assert "focusNodeIdFromTrace(selectedTrace)" in source
+    assert "hasArtifactValue(node.artifact_preview)" in source
+    assert "history-list" in history_drawer_block
+    assert "grid-template-columns: minmax(0, 1fr) 96px;" in history_list_rule
+    assert "/api/workflows/${workflowId}/threads/history" in workflows
+    assert "/api/workflows/${workflowId}/threads/${encodeURIComponent(threadId)}/trace" in workflows
+
+
+def test_creation_page_history_replay_does_not_lock_global_api_target_as_live_waiting() -> None:
+    source = read_source("pages/CreationPage.vue")
+    live_waiting_rule = source.split("const hasLiveWaitingAction = computed(() => {", 1)[1].split("});", 1)[0]
+    busy_rule = source.split("const isWorkflowBusy = computed(() => {", 1)[1].split("});", 1)[0]
+
+    assert "const hasLiveWaitingAction = computed(() => {" in source
+    assert "Array.isArray(runResult.value?.waiting?.actions)" in live_waiting_rule
+    assert "runResult.value.waiting.actions.length > 0" in live_waiting_rule
+    assert "hasLiveWaitingAction.value" in busy_rule
+    assert "runResult.value?.status === \"waiting\"" not in busy_rule
+    assert "v-if=\"hasLiveWaitingAction && focusNode?.id === runResult.waiting.node_id\"" in source
 
 
 def test_auth_pages_include_yuetools_register_login_fields() -> None:
@@ -253,15 +401,16 @@ def test_settings_page_exposes_logout_action_in_header() -> None:
 def test_assets_page_exposes_song_inspiration_gallery_and_audio_tabs() -> None:
     assets = read_source("pages/AssetsPage.vue")
 
-    for text in ["歌曲灵感", "图片大全", "音频特效", "待建设"]:
+    for text in ["歌曲灵感", "图片大全", "音频特效"]:
         assert text in assets
-    for field in ["原始 Prompt", "歌名", "Suno Style Prompt", "Lyric"]:
+    for field in ["原始 prompt", "歌名", "Style Prompt", "Lyric", "时间"]:
         assert field in assets
+    assert "Suno Style Prompt" not in assets
     assert "listSongs" in assets
     assert "saveSong" in read_source("services/songs.js")
 
 
-def test_assets_page_uses_compact_workbench_layout() -> None:
+def test_assets_page_defaults_to_list_with_detail_drawer_layout() -> None:
     assets = read_source("pages/AssetsPage.vue")
 
     for class_name in [
@@ -269,20 +418,79 @@ def test_assets_page_uses_compact_workbench_layout() -> None:
         "asset-workbench",
         "asset-library",
         "library-head",
-        "song-card-grid",
+        "asset-list",
+        "asset-list-head",
+        "asset-row",
+        "asset-drawer-layer",
+        "asset-detail-drawer",
+        "detail-section",
         "preview-block",
         "lyric-text",
         "asset-empty",
     ]:
         assert class_name in assets
-    assert "grid-template-columns: minmax(0, 1fr);" in assets
-    assert "grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));" in assets
+    assert 'const activeTab = ref("songs");' in assets
+    assert "visibleAssets" in assets
+    assert "selectedAsset" in assets
+    assert "selectAsset" in assets
+    assert '@click.stop="selectAsset(item)"' in assets
+    assert '@click="handlePageClick"' in assets
+    assert "function handlePageClick(event)" in assets
+    assert 'target.closest(".asset-row")' in assets
+    assert "<Teleport to=\"body\">" in assets
+    assert "aria-modal=\"false\"" in assets
+    assert "role=\"dialog\"" in assets
+    assert "drawer-backdrop" not in assets
+    assert ".asset-workbench.has-selection" not in assets
+    assert "grid-template-columns: var(--asset-list-columns);" in assets
+    assert "formatAssetTime" in assets
     assert "asset-composer" not in assets
     assert "composer-form" not in assets
     assert "新增灵感" not in assets
     assert "saveSong" not in assets
-    assert "asset-grid" not in assets
-    assert "song-list" not in assets
+    assert "song-card-grid" not in assets
+    assert "building-panel" not in assets
+
+
+def test_assets_page_uses_concise_heading_and_aligned_list_columns() -> None:
+    assets = read_source("pages/AssetsPage.vue")
+    page_header_block = assets.split('<header class="page-header">', 1)[1].split("</header>", 1)[0]
+    library_head_block = assets.split('<div class="library-head">', 1)[1].split("</div>", 2)[0]
+    asset_list_head_rule = assets.split(".asset-list-head,\n.asset-row {", 1)[1].split("}", 1)[0]
+    asset_list_head_rule_only = assets.split(".asset-list-head {", 1)[1].split("}", 1)[0]
+    asset_row_rule = assets.rsplit(".asset-row {", 1)[1].split("}", 1)[0]
+    asset_time_rule = assets.rsplit(".asset-row time {", 1)[1].split("}", 1)[0]
+
+    assert "<p>资产</p>" not in page_header_block
+    assert page_header_block.count("<h1>资产</h1>") == 1
+    assert "资产库" not in library_head_block
+    assert "--asset-list-columns: minmax(180px, 0.78fr) minmax(280px, 1.42fr) 118px;" in assets
+    assert "grid-template-columns: var(--asset-list-columns);" in asset_list_head_rule
+    assert "justify-items: start;" in asset_list_head_rule_only
+    assert ".asset-list-head span:last-child" in assets
+    assert "justify-self: end;" in assets
+    assert "border-radius: 6px;" in asset_row_rule
+    assert "font-variant-numeric: tabular-nums;" in asset_time_rule
+
+
+def test_assets_page_uses_same_list_detail_pattern_for_image_and_audio_assets() -> None:
+    assets = read_source("pages/AssetsPage.vue")
+
+    for token in [
+        "imageAssetRows",
+        "audioAssetRows",
+        "assetTypeMeta",
+        "activeTabMeta",
+        "assetTitleLabel",
+        "assetPrimaryLabel",
+        "assetSecondaryLabel",
+    ]:
+        assert token in assets
+    for text in ["图片标题", "图片 prompt", "音频标题", "音频 prompt"]:
+        assert text in assets
+    assert "activeTabMeta.emptyTitle" in assets
+    assert "selectedAsset.primaryText" in assets
+    assert "selectedAsset.secondaryText" in assets
 
 
 def test_assets_page_supports_copying_generated_song_fields_without_framed_tabs() -> None:
@@ -294,6 +502,8 @@ def test_assets_page_supports_copying_generated_song_fields_without_framed_tabs(
         ".asset-tabs button.active:hover,\n.asset-tabs button.active:focus-visible {", 1
     )[1].split("}", 1)[0]
     asset_library_rule = assets.split(".asset-library {", 1)[1].split("}", 1)[0]
+    asset_drawer_layer_rule = assets.split(".asset-drawer-layer {", 1)[1].split("}", 1)[0]
+    asset_detail_drawer_rule = assets.split(".asset-detail-drawer {", 1)[1].split("}", 1)[0]
     lyric_text_rule = assets.split(".lyric-text {", 1)[1].split("}", 1)[0]
 
     for text in [
@@ -305,7 +515,7 @@ def test_assets_page_supports_copying_generated_song_fields_without_framed_tabs(
         "\\n\\n$1\\n",
     ]:
         assert text in assets
-    for label in ["歌名", "Suno Style Prompt", "歌词"]:
+    for label in ["歌名", "Style Prompt", "歌词"]:
         assert f"copyAssetText('{label}'" in assets
     assert "border:" not in asset_tabs_rule
     assert "cursor: pointer;" in asset_tab_button_rule
@@ -315,6 +525,19 @@ def test_assets_page_supports_copying_generated_song_fields_without_framed_tabs(
     assert "outline: 2px solid rgba(14, 165, 233, 0.42);" in asset_tab_hover_rule
     assert "background: rgba(14, 165, 233, 0.18);" in asset_tab_active_hover_rule
     assert "border:" not in asset_library_rule
+    assert "position: fixed;" in asset_drawer_layer_rule
+    assert "inset: 0;" in asset_drawer_layer_rule
+    assert "pointer-events: none;" in asset_drawer_layer_rule
+    assert "position: absolute;" in asset_detail_drawer_rule
+    assert "right: 0;" in asset_detail_drawer_rule
+    assert "top: 0;" in asset_detail_drawer_rule
+    assert "bottom: 0;" in asset_detail_drawer_rule
+    assert "height: 100vh;" in asset_detail_drawer_rule
+    assert "border-radius: 0;" in asset_detail_drawer_rule
+    assert "color-scheme: dark;" in asset_detail_drawer_rule
+    assert "background: linear-gradient(180deg, #12304c 0%, #0e253d 100%);" in asset_detail_drawer_rule
+    assert "#f8fbff" not in assets
+    assert "#edf6fc" not in assets
     assert "white-space: pre-wrap;" in lyric_text_rule
     assert "word-break: break-word;" in lyric_text_rule
 

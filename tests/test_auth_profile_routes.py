@@ -32,6 +32,62 @@ def test_health_still_works_with_error_handlers() -> None:
     assert response.status_code == 200
 
 
+def test_health_exposes_inference_config_without_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("YTS_INFERENCE_BACKEND", "openai")
+    monkeypatch.setenv("YTS_DEEPSEEK_API_KEY", "sk-deepseek-health-secret")
+    monkeypatch.setenv("YTS_DEEPSEEK_TEXT_MODEL", "deepseek/deepseek-chat")
+    monkeypatch.setenv("YTS_DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.setenv("YTS_DEEPSEEK_REQUEST_TIMEOUT_SECONDS", "90")
+    monkeypatch.setenv("YTS_DEEPSEEK_MAX_RETRIES", "1")
+    monkeypatch.setenv("YTS_OPENAI_API_KEY", "sk-health-secret")
+    monkeypatch.setenv("YTS_OPENAI_TEXT_MODEL", "gpt-4.1-mini")
+    monkeypatch.setenv("YTS_OPENAI_BASE_URL", "https://api.example.test:8088/v1")
+    monkeypatch.setenv("YTS_OPENAI_REQUEST_TIMEOUT_SECONDS", "180")
+    monkeypatch.setenv("YTS_OPENAI_MAX_RETRIES", "0")
+    monkeypatch.setenv("YTS_LOGGING_LEVEL", "DEBUG")
+    monkeypatch.setenv("YTS_LOGGING_FORMAT", "json")
+    monkeypatch.setenv("YTS_CANDLE_TEXT_MAX_TOKENS", "512")
+    monkeypatch.setenv("YTS_IMAGE_PROVIDER", "openai")
+    monkeypatch.setenv("YTS_IMAGE_MODEL", "gpt-image-1")
+
+    with TestClient(create_app()) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["inference_backend"] == "openai"
+    assert body["openai_text_model"] == "gpt-4.1-mini"
+    assert body["default_text_model"]
+    assert body["model_fallbacks"]
+    assert body["deepseek_text_model"] == "deepseek/deepseek-chat"
+    assert body["deepseek_base_url_configured"] is True
+    assert body["deepseek_base_url_scheme"] == "https"
+    assert body["deepseek_base_url_host"] == "api.deepseek.com"
+    assert body["deepseek_base_url_path"] == "/v1"
+    assert body["deepseek_request_timeout_seconds"] == 90
+    assert body["deepseek_max_retries"] == 1
+    assert body["deepseek_api_key_configured"] is True
+    assert body["deepseek_api_key_length"] == len("sk-deepseek-health-secret")
+    assert body["openai_image_model"] == "gpt-image-1"
+    assert body["openai_speech_model"]
+    assert body["openai_base_url_configured"] is True
+    assert body["openai_base_url_scheme"] == "https"
+    assert body["openai_base_url_host"] == "api.example.test"
+    assert body["openai_base_url_port"] == 8088
+    assert body["openai_base_url_path"] == "/v1"
+    assert body["openai_request_timeout_seconds"] == 180
+    assert body["openai_max_retries"] == 0
+    assert body["openai_api_key_configured"] is True
+    assert body["openai_api_key_length"] == len("sk-health-secret")
+    assert body["candle_text_max_tokens"] == 512
+    assert body["logging_level"] == "DEBUG"
+    assert body["logging_format"] == "json"
+    assert body["image_provider"] == "openai"
+    assert body["image_model"] == "gpt-image-1"
+    assert "sk-health-secret" not in response.text
+    assert "sk-deepseek-health-secret" not in response.text
+
+
 def test_profile_update_preflight_allows_put_from_frontend_origin() -> None:
     with TestClient(create_app()) as client:
         response = client.options(
@@ -47,6 +103,28 @@ def test_profile_update_preflight_allows_put_from_frontend_origin() -> None:
     assert response.text == "OK"
     assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:1420"
     assert "PUT" in response.headers["access-control-allow-methods"]
+
+
+def test_profile_update_preflight_uses_configured_allowed_origins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "YTS_SERVER_ALLOWED_ORIGINS",
+        '["http://127.0.0.1:1420","https://studio.example.test"]',
+    )
+
+    with TestClient(create_app()) as client:
+        response = client.options(
+            "/api/user/profile",
+            headers={
+                "Origin": "https://studio.example.test",
+                "Access-Control-Request-Method": "PUT",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "https://studio.example.test"
 
 
 def test_cors_preflight_rejection_logs_specific_reason(caplog: pytest.LogCaptureFixture) -> None:

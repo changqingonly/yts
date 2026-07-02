@@ -18,11 +18,15 @@ def test_active_pro_lyrics_pack_declares_style_template_and_json_safety_contract
 
     pack = resolve_prompt_pack("pro_lyrics")
 
-    assert pack.version == "2026-06-28.2"
-    assert pack.contract_version == "pro_lyrics_schema_v13_compact_review_context"
+    assert pack.version == "2026-06-28.4"
+    assert pack.contract_version == "pro_lyrics_schema_v15_compact_style_prompt_context"
     assert "不得包含未转义的控制字符" in pack.system_template
     assert "必须写成 \\n" in pack.system_template
     structure_prompt = pack.stage_templates["draft_structure_blueprints"]
+    assert "请生成 2 个差异明显的歌曲结构蓝图" in structure_prompt
+    assert "clip_strategy" not in structure_prompt
+    assert "why_this_works" not in structure_prompt
+    assert "每个文本字段不超过 24 个汉字或 12 个英文词" in structure_prompt
     assert "hook_placement 必须使用以下三种形态之一" in structure_prompt
     assert "repeat_sections 必须引用互不重复的 sections" in structure_prompt
     assert "repeat_sections 中的每一项必须与 sections 数组中的某一项完全一致" in structure_prompt
@@ -35,9 +39,12 @@ def test_active_pro_lyrics_pack_declares_style_template_and_json_safety_contract
     assert "template_id 必须来自输入的 style_template_candidates" in music_style_prompt
     assert "suno_tags、instrumentation、production_notes 只能使用简短字符串" in music_style_prompt
     style_prompt = pack.stage_templates["plan_style_prompt"]
+    assert "请只基于 Input JSON 中的已选曲风、structure、hook、song_brief 与 intent 摘要" in style_prompt
     assert "style_family 必须包含 id、label、template_id 三个字段" in style_prompt
+    assert "required_sections 必须逐字复制 Input JSON.structure.sections" in style_prompt
     assert "style_prompt_draft 不得包含 style_prompt_contract.forbidden_positive_terms" in style_prompt
     assert "heavy distorted electric guitar" in style_prompt
+    assert "clip_strategy" not in style_prompt
     refine_title_prompt = pack.stage_templates["refine_title"]
     assert "reason 和 selection_reason 必须是一行短句" in refine_title_prompt
     assert "不要在 reason 中引用带引号的原歌词" in refine_title_prompt
@@ -135,11 +142,12 @@ def test_style_prompt_render_schema_preserves_selected_template_id() -> None:
                 "selected_style": {"template_id": "mandarin_pop_ballad"},
                 "negative_tags": ["heavy distorted electric guitar"],
             },
-            "structure_plan": {},
-            "professional_plan": {},
+            "hook": {},
+            "structure": {},
         },
     )
 
     assert '"template_id": "string"' in prompt
+    assert '"line_length_hint": "string"' in prompt
     assert '"style_prompt_contract"' in prompt
     assert '"forbidden_positive_terms": ["heavy distorted electric guitar"]' in prompt

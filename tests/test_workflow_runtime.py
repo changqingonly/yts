@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from yts_core.inference import TextResult
+from yts_core.orchestration.flow_builder import workflow_config
 from yts_core.orchestration.flows.pro_lyrics import PRO_STAGE_ORDER
+from yts_core.schemas.common import StageTrace
 from yts_core.workflow.runtime import (
     HumanDecision,
     WorkflowRunRequest,
@@ -24,7 +28,6 @@ async def test_locked_template_exposes_future_editable_dag_shape() -> None:
         "validate_request",
         "parse_intent",
         "build_song_brief",
-        "brief_approval",
         "plan_music_style",
         "hook_lab",
         "draft_structure_blueprints",
@@ -43,8 +46,7 @@ async def test_locked_template_exposes_future_editable_dag_shape() -> None:
     assert [(edge.source, edge.target) for edge in template.edges] == [
         ("validate_request", "parse_intent"),
         ("parse_intent", "build_song_brief"),
-        ("build_song_brief", "brief_approval"),
-        ("brief_approval", "plan_music_style"),
+        ("build_song_brief", "plan_music_style"),
         ("plan_music_style", "hook_lab"),
         ("hook_lab", "draft_structure_blueprints"),
         ("draft_structure_blueprints", "critique_structure"),
@@ -60,12 +62,13 @@ async def test_locked_template_exposes_future_editable_dag_shape() -> None:
     ]
     assert template.start_node_id == "validate_request"
     assert [node.id for node in template.nodes if node.type == "pro_stage"] == list(PRO_STAGE_ORDER)
-    assert template.nodes[3].type == "hitl_approval"
+    assert "brief_approval" not in [node.id for node in template.nodes]
+    assert [node.id for node in template.nodes if node.type.startswith("hitl_")] == ["final_review"]
     assert template.nodes[-2].type == "hitl_review"
 
 
 @pytest.mark.asyncio
-async def test_workflow_thread_run_waits_at_brief_approval() -> None:
+async def test_workflow_thread_run_waits_at_final_review_without_brief_approval() -> None:
     runtime = WorkflowHarness()
 
     result = await run_workflow_thread(
@@ -79,16 +82,19 @@ async def test_workflow_thread_run_waits_at_brief_approval() -> None:
     )
 
     assert result.status == "waiting"
-    assert result.waiting.node_id == "brief_approval"
-    assert result.waiting.kind == "approval"
+    assert result.waiting.node_id == "final_review"
+    assert result.waiting.kind == "review"
     assert result.thread_id == "thread-brief"
-    assert [node.node_id for node in result.trace.nodes[:4]] == [
+    trace_node_ids = [node.node_id for node in result.trace.nodes]
+    assert trace_node_ids[:3] == [
         "validate_request",
         "parse_intent",
         "build_song_brief",
-        "brief_approval",
     ]
-    assert result.trace.nodes[-1].node_id == "brief_approval"
+    assert "brief_approval" not in trace_node_ids
+    assert "generate_lyrics" in trace_node_ids
+    assert "build_response" in trace_node_ids
+    assert result.trace.nodes[-1].node_id == "final_review"
     assert result.trace.nodes[-1].status == "waiting"
 
 
@@ -102,9 +108,9 @@ async def test_workflow_thread_uses_editable_node_config_for_waiting_prompt() ->
             thread_id="thread-node-config",
             user_prompt="下雨的午后，大雨倾盆，思念远方的故人",
             node_config={
-                "brief_approval": {
-                    "actions": ["approve", "reject"],
-                    "editable_fields": ["user_prompt"],
+                "final_review": {
+                    "actions": ["accept", "rerun"],
+                    "editable_fields": ["title"],
                 }
             },
         ),
@@ -112,21 +118,22 @@ async def test_workflow_thread_uses_editable_node_config_for_waiting_prompt() ->
         checkpointer=runtime.checkpointer,
     )
 
-    assert result.waiting.actions == ["approve", "reject"]
-    assert result.waiting.editable_fields == ["user_prompt"]
+    assert result.waiting.node_id == "final_review"
+    assert result.waiting.actions == ["accept", "rerun"]
+    assert result.waiting.editable_fields == ["title"]
 
 
 @pytest.mark.asyncio
 async def test_workflow_thread_rejects_invalid_node_config_shape() -> None:
     runtime = WorkflowHarness()
 
-    with pytest.raises(ValueError, match="brief_approval.actions must be a list of strings"):
+    with pytest.raises(ValueError, match="final_review.actions must be a list of strings"):
         await run_workflow_thread(
             WorkflowRunRequest(
                 workflow_id="pro_creation_hitl_v1",
                 thread_id="thread-bad-node-config",
                 user_prompt="下雨的午后，大雨倾盆，思念远方的故人",
-                node_config={"brief_approval": {"actions": "approve"}},
+                node_config={"final_review": {"actions": "accept"}},
             ),
             backend=runtime.backend,
             checkpointer=runtime.checkpointer,
@@ -150,9 +157,9 @@ async def test_workflow_thread_requires_checkpointer_for_hitl() -> None:
 
 
 @pytest.mark.asyncio
-async def test_workflow_thread_resume_runs_to_final_review() -> None:
+async def test_workflow_thread_run_reaches_final_review_without_resume() -> None:
     runtime = WorkflowHarness()
-    await run_workflow_thread(
+    result = await run_workflow_thread(
         WorkflowRunRequest(
             workflow_id="pro_creation_hitl_v1",
             thread_id="thread-final",
@@ -162,17 +169,11 @@ async def test_workflow_thread_resume_runs_to_final_review() -> None:
         checkpointer=runtime.checkpointer,
     )
 
-    result = await resume_workflow_thread(
-        thread_id="thread-final",
-        decision=HumanDecision(node_id="brief_approval", action="approve"),
-        backend=runtime.backend,
-        checkpointer=runtime.checkpointer,
-    )
-
     assert result.status == "waiting"
     assert result.waiting.node_id == "final_review"
     assert result.output is None
     trace_node_ids = [node.node_id for node in result.trace.nodes]
+    assert "brief_approval" not in trace_node_ids
     assert "generate_lyrics" in trace_node_ids
     assert "build_response" in trace_node_ids
 
@@ -180,19 +181,12 @@ async def test_workflow_thread_resume_runs_to_final_review() -> None:
 @pytest.mark.asyncio
 async def test_workflow_trace_nodes_include_artifact_previews_for_workspace() -> None:
     runtime = WorkflowHarness()
-    await run_workflow_thread(
+    result = await run_workflow_thread(
         WorkflowRunRequest(
             workflow_id="pro_creation_hitl_v1",
             thread_id="thread-artifacts",
             user_prompt="下雨的午后，大雨倾盆，思念远方的故人",
         ),
-        backend=runtime.backend,
-        checkpointer=runtime.checkpointer,
-    )
-
-    result = await resume_workflow_thread(
-        thread_id="thread-artifacts",
-        decision=HumanDecision(node_id="brief_approval", action="approve"),
         backend=runtime.backend,
         checkpointer=runtime.checkpointer,
     )
@@ -249,19 +243,12 @@ async def test_workflow_thread_resume_accepts_structured_hook_placement() -> Non
         "repeat_sections": ["Final Chorus"],
         "strategy": "selected_hook anchors both chorus payoffs.",
     }
-    await run_workflow_thread(
+    result = await run_workflow_thread(
         WorkflowRunRequest(
             workflow_id="pro_creation_hitl_v1",
             thread_id="thread-structured-hook",
             user_prompt="下雨的午后，大雨倾盆，思念远方的故人",
         ),
-        backend=runtime.backend,
-        checkpointer=runtime.checkpointer,
-    )
-
-    result = await resume_workflow_thread(
-        thread_id="thread-structured-hook",
-        decision=HumanDecision(node_id="brief_approval", action="approve"),
         backend=runtime.backend,
         checkpointer=runtime.checkpointer,
     )
@@ -282,12 +269,6 @@ async def test_workflow_thread_accepts_final_review_and_returns_output() -> None
             thread_id="thread-done",
             user_prompt="下雨的午后，大雨倾盆，思念远方的故人",
         ),
-        backend=runtime.backend,
-        checkpointer=runtime.checkpointer,
-    )
-    await resume_workflow_thread(
-        thread_id="thread-done",
-        decision=HumanDecision(node_id="brief_approval", action="approve"),
         backend=runtime.backend,
         checkpointer=runtime.checkpointer,
     )
@@ -328,8 +309,61 @@ async def test_workflow_thread_trace_reads_checkpoint_state() -> None:
 
     assert trace.thread_id == "thread-trace"
     assert trace.nodes[0].node_id == "validate_request"
-    assert trace.nodes[-1].node_id == "brief_approval"
+    assert trace.nodes[-1].node_id == "final_review"
     assert trace.nodes[-1].status == "waiting"
+
+
+@pytest.mark.asyncio
+async def test_workflow_checkpoint_stores_stage_trace_as_plain_dicts() -> None:
+    runtime = WorkflowHarness()
+    await run_workflow_thread(
+        WorkflowRunRequest(
+            workflow_id="pro_creation_hitl_v1",
+            thread_id="thread-json-stages",
+            user_prompt="下雨的午后，大雨倾盆，思念远方的故人",
+        ),
+        backend=runtime.backend,
+        checkpointer=runtime.checkpointer,
+    )
+
+    snapshot = runtime.checkpointer.get_tuple(
+        workflow_config(checkpointer=runtime.checkpointer, thread_id="thread-json-stages")
+    )
+
+    stages = snapshot.checkpoint["channel_values"]["stages"]
+    assert stages
+    assert all(isinstance(stage, dict) for stage in stages)
+    assert not any(isinstance(stage, StageTrace) for stage in stages)
+
+
+@pytest.mark.asyncio
+async def test_workflow_thread_reuses_shared_event_loop_for_llm_calls() -> None:
+    runtime = WorkflowHarness()
+    request_loop = asyncio.get_running_loop()
+
+    await run_workflow_thread(
+        WorkflowRunRequest(
+            workflow_id="pro_creation_hitl_v1",
+            thread_id="thread-shared-loop-a",
+            user_prompt="下雨的午后，大雨倾盆，思念远方的故人",
+        ),
+        backend=runtime.backend,
+        checkpointer=runtime.checkpointer,
+    )
+    await run_workflow_thread(
+        WorkflowRunRequest(
+            workflow_id="pro_creation_hitl_v1",
+            thread_id="thread-shared-loop-b",
+            user_prompt="下雨的午后，大雨倾盆，思念远方的故人",
+        ),
+        backend=runtime.backend,
+        checkpointer=runtime.checkpointer,
+    )
+
+    assert runtime.backend.llm_loops
+    assert len({id(loop) for loop in runtime.backend.llm_loops}) == 1
+    assert runtime.backend.llm_loops[0] is not request_loop
+    assert not runtime.backend.llm_loops[0].is_closed()
 
 
 class WorkflowHarness:
@@ -350,10 +384,12 @@ class _FakeProBackend:
 
         self.payloads = deepcopy(_PAYLOADS)
         self.payloads["review_quality"]["submit_suno"] = True
+        self.llm_loops: list[asyncio.AbstractEventLoop] = []
 
     async def generate_text(self, messages, *, model=None, fallbacks=None, response_format=None) -> TextResult:
         import json
 
+        self.llm_loops.append(asyncio.get_running_loop())
         marker = "YTS_PRO_STAGE:"
         content = messages[-1]["content"]
         stage = content.split(marker, 1)[1].splitlines()[0].strip()

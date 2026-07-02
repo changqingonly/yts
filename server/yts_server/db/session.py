@@ -14,7 +14,8 @@ class Base(DeclarativeBase):
 @lru_cache(maxsize=1)
 def get_engine() -> AsyncEngine:
     # 惰性创建,import 不连库
-    return create_async_engine(get_settings().database_url, future=True)
+    settings = get_settings()
+    return create_async_engine(settings.database_url, echo=settings.database_echo, future=True)
 
 
 @lru_cache(maxsize=1)

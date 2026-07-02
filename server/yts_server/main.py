@@ -11,6 +11,7 @@ from yts_core.orchestration.checkpointing import close_langgraph_checkpointer
 from .cors import DiagnosticCORSMiddleware
 from .db.bootstrap import create_all_tables
 from .errors import register_error_handlers
+from .logging_config import configure_logging
 from .routes import (
     auth,
     creation,
@@ -20,6 +21,7 @@ from .routes import (
     music_stream,
     provider_gated,
     song,
+    transport,
     user,
     workflow,
 )
@@ -41,10 +43,11 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    configure_logging(settings)
     app = FastAPI(title="yts", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
         DiagnosticCORSMiddleware,
-        allow_origins=["http://127.0.0.1:1420", "http://localhost:1420"],
+        allow_origins=settings.server_allowed_origins,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization"],
     )
@@ -58,6 +61,7 @@ def create_app() -> FastAPI:
     app.include_router(provider_gated.router, prefix="/api")
     app.include_router(creation.router, prefix="/api")
     app.include_router(workflow.router, prefix="/api")
+    app.include_router(transport.router, prefix="/api")
     app.include_router(music_stream.router)  # WS /music/stream(无 /api 前缀,对齐流式契约)
     app.state.settings = settings
     return app

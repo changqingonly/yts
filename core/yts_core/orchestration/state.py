@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from ..schemas.common import StageTrace
-
 
 class CreationState(TypedDict, total=False):
     """Pro 创作管道的共享状态(LangGraph StateGraph)。"""
@@ -39,4 +37,4 @@ class CreationState(TypedDict, total=False):
     # 控制 + 轨迹
     retry: bool
     retries: int
-    stages: list[StageTrace]
+    stages: list[dict]

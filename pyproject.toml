@@ -40,3 +40,6 @@ ignore = ["E501"]                     # 行宽交给 formatter;长中文注释�
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -4,6 +4,7 @@ import { ListMusic, Music2, Play, RefreshCw, Radio, Square, Upload } from "@luci
 import { usePlayerStore } from "../stores/player";
 import { usePlaylistStore } from "../stores/playlist";
 import { uploadLocalImport } from "../services/music";
+import { selectedApiTarget } from "../services/http";
 
 const player = usePlayerStore();
 const playlist = usePlaylistStore();
@@ -12,11 +13,10 @@ const importing = ref(false);
 
 // 方案 B:流式生成播放
 const streamPrompt = ref("夏夜骑行的轻快电子乐");
-const streamTarget = ref(localStorage.getItem("yts-target") || "local");
 
 async function startStream() {
   try {
-    await player.streamGenerate({ prompt: streamPrompt.value, seconds: 8, target: streamTarget.value, channels: 2 });
+    await player.streamGenerate({ prompt: streamPrompt.value, seconds: 8, target: selectedApiTarget(), channels: 2 });
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -86,10 +86,6 @@ onMounted(refreshPlaylist);
       </div>
       <div class="stream-controls">
         <input v-model="streamPrompt" class="stream-input" placeholder="描述想生成的音乐" />
-        <select v-model="streamTarget" class="stream-source">
-          <option value="local">本地(Candle)</option>
-          <option value="cloud">云端</option>
-        </select>
         <button v-if="!player.isStreaming" class="stream-btn" type="button" @click="startStream">
           <Play :size="16" /> 生成并播放
         </button>
@@ -216,16 +212,6 @@ h1 {
   font: inherit;
   min-height: 38px;
   padding: 0 12px;
-}
-
-.stream-source {
-  background: var(--color-panel-strong);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  color: var(--color-text);
-  font: inherit;
-  min-height: 38px;
-  padding: 0 8px;
 }
 
 .stream-btn {

@@ -10,6 +10,12 @@ docs/
 .DS_Store
 .python-version
 .env
+.tools/
+conf/*.env
+!conf/*.example.env
+*.db
+*.sqlite
+*.sqlite3
 data/zvec/
 data/*.csv
 data/famous_song.jsonl
@@ -35,6 +41,7 @@ build/
 # --- PyInstaller sidecar output ---
 desktop/sidecar/build/
 desktop/sidecar/dist/
+desktop/vendor/
 
 # --- models / weights (never commit) ---
 *.gguf

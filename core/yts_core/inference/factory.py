@@ -31,7 +31,7 @@ def make_backend(settings: Settings | None = None) -> InferenceBackend:
     if kind == "candle":
         from .candle_adapter import CandleInference
 
-        return CandleInference()
+        return CandleInference(settings)
 
     if kind == "pro-fixture":
         from .pro_fixture_adapter import ProFixtureBackend

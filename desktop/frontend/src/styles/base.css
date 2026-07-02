@@ -14,6 +14,9 @@ html {
   --color-accent: #0ea5e9;
   --color-accent-strong: #0284c7;
   --color-accent-soft: #082f49;
+  --color-brand-cyan: #22d3ee;
+  --color-brand-green: #34d399;
+  --color-brand-glow: rgba(45, 212, 191, 0.34);
   --color-success: #34d399;
   --color-success-soft: #0c3b33;
   --color-warning: #fbbf24;

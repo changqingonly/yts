@@ -139,6 +139,78 @@ async def test_structure_planner_receives_machine_readable_hook_placement_contra
 
 
 @pytest.mark.asyncio
+async def test_structure_planner_receives_compact_context_for_gateway_timeout_budget() -> None:
+    service._graph_cache.clear()
+    backend = _FakeProBackend()
+
+    await service.run_creation(
+        CreationRequest(user_prompt="下雨的午后，大雨倾盆，思念远方的故人"),
+        backend=backend,
+    )
+
+    payload = backend.input_payloads["draft_structure_blueprints"]
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "style_candidates" not in serialized
+    assert "candidates" not in payload["hook_lab"]
+    assert set(payload["music_style_plan"]) == {
+        "selected_style_id",
+        "selected_style",
+        "negative_tags",
+    }
+    assert set(payload["hook_lab"]) == {"selected_hook", "hook_strategy"}
+    assert "请生成 2 个差异明显的歌曲结构蓝图" in backend.input_prompts[
+        "draft_structure_blueprints"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_style_prompt_planner_receives_compact_context_without_duplicate_plans() -> None:
+    service._graph_cache.clear()
+    backend = _FakeProBackend()
+
+    await service.run_creation(
+        CreationRequest(user_prompt="下雨的午后，大雨倾盆，思念远方的故人"),
+        backend=backend,
+    )
+
+    payload = backend.input_payloads["plan_style_prompt"]
+    assert set(payload) == {
+        "user_prompt",
+        "intent",
+        "song_brief",
+        "music_style_plan",
+        "hook",
+        "structure",
+        "style_prompt_contract",
+    }
+
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "professional_plan" not in serialized
+    assert "style_candidates" not in serialized
+    assert "structure_blueprints" not in serialized
+    assert "structure_critique" not in serialized
+    assert "rejected" not in serialized
+    assert "candidates" not in payload["hook"]
+    assert set(payload["music_style_plan"]) == {
+        "selected_style_id",
+        "selected_style",
+        "negative_tags",
+    }
+    assert payload["music_style_plan"]["selected_style"]["id"] == "mainstream_pop"
+    assert payload["hook"]["selected_hook"] == _PAYLOADS["hook_lab"]["selected_hook"]
+    assert payload["structure"]["sections"] == [
+        "Verse 1",
+        "Verse 2",
+        "Pre-Chorus",
+        "Chorus",
+        "Bridge",
+        "Final Chorus",
+        "Outro",
+    ]
+    assert '"line_length_hint": "string"' in backend.input_prompts["plan_style_prompt"]
+
+
+@pytest.mark.asyncio
 async def test_generate_lyrics_receives_compact_context_without_duplicate_plans() -> None:
     service._graph_cache.clear()
     backend = _FakeProBackend()
@@ -357,6 +429,22 @@ async def test_run_creation_rejects_style_prompt_that_drops_selected_template_id
 
 
 @pytest.mark.asyncio
+async def test_run_creation_rejects_style_prompt_that_omits_line_length_hint() -> None:
+    service._graph_cache.clear()
+    style_prompt = deepcopy(_PAYLOADS["plan_style_prompt"])
+    style_prompt["lyric_guidance"].pop("line_length_hint", None)
+    backend = _FakeProBackend(overrides={"plan_style_prompt": style_prompt})
+
+    with pytest.raises(
+        ValueError, match="style_spec.lyric_guidance.line_length_hint must not be empty"
+    ):
+        await service.run_creation(
+            CreationRequest(user_prompt="下雨的午后，大雨倾盆，思念远方的故人"),
+            backend=backend,
+        )
+
+
+@pytest.mark.asyncio
 async def test_run_creation_rejects_style_prompt_that_contains_negative_terms() -> None:
     service._graph_cache.clear()
     music_style_plan = deepcopy(_PAYLOADS["plan_music_style"])
@@ -400,6 +488,49 @@ async def test_style_prompt_planner_receives_negative_tags_as_forbidden_positive
     ]
     assert contract["style_prompt_draft_must_avoid_forbidden_positive_terms"] is True
     assert contract["negative_terms_may_include_forbidden_terms"] is True
+
+
+@pytest.mark.asyncio
+async def test_music_style_plan_removes_negative_tags_that_conflict_with_selected_vocal() -> None:
+    service._graph_cache.clear()
+    music_style_plan = deepcopy(_PAYLOADS["plan_music_style"])
+    selected = music_style_plan["style_candidates"][0]
+    selected["suno_tags"] = ["Mandopop", "male vocal"]
+    selected["vocal_profile"] = "warm male vocal"
+    selected["instrumentation"] = ["piano", "warm strings"]
+    music_style_plan["negative_tags"] = ["male vocal", "duet harmony"]
+
+    style_prompt = deepcopy(_PAYLOADS["plan_style_prompt"])
+    style_prompt["style_prompt_draft"] = "Mandopop, 88 BPM, warm male vocal, piano, warm strings"
+    style_prompt["style_components"] = [
+        "Mandopop",
+        "88 BPM",
+        "warm male vocal",
+        "piano",
+        "warm strings",
+    ]
+
+    generation = deepcopy(_PAYLOADS["generate_lyrics"])
+    generation["style_prompt"] = style_prompt["style_prompt_draft"]
+    backend = _FakeProBackend(
+        overrides={
+            "plan_music_style": music_style_plan,
+            "plan_style_prompt": style_prompt,
+            "generate_lyrics": generation,
+        }
+    )
+
+    result = await service.run_creation(
+        CreationRequest(user_prompt="春山雨后，烟雾静谧，鸟鸣空响，思念远方的故人"),
+        backend=backend,
+    )
+
+    assert result.style.startswith("Mandopop, 88 BPM, warm male vocal, piano, warm strings")
+    contract = backend.input_payloads["plan_style_prompt"]["style_prompt_contract"]
+    assert contract["forbidden_positive_terms"] == ["duet harmony"]
+    assert backend.input_payloads["plan_style_prompt"]["music_style_plan"]["negative_tags"] == [
+        "duet harmony"
+    ]
 
 
 @pytest.mark.asyncio
@@ -892,6 +1023,7 @@ class _FakeProBackend:
         self.called_stages: list[str] = []
         self.response_formats: list[str | None] = []
         self.input_payloads: dict[str, dict] = {}
+        self.input_prompts: dict[str, str] = {}
 
     async def generate_text(self, messages, *, model=None, fallbacks=None, response_format=None) -> TextResult:
         content = messages[-1]["content"]
@@ -901,6 +1033,7 @@ class _FakeProBackend:
         stage = content.split(marker, 1)[1].splitlines()[0].strip()
         self.called_stages.append(stage)
         self.response_formats.append(response_format.get("type") if isinstance(response_format, dict) else None)
+        self.input_prompts[stage] = content
         input_marker = "Input JSON:\n"
         if input_marker in content:
             self.input_payloads[stage] = json.loads(content.split(input_marker, 1)[1])
@@ -1011,6 +1144,7 @@ _PAYLOADS = {
             "required_sections": ["Verse 1", "Verse 2", "Pre-Chorus", "Chorus", "Bridge", "Final Chorus", "Outro"],
             "hook_policy": "Chorus and Final Chorus repeat selected hook",
             "mood_arc": "rain memory -> warm ache -> quiet release",
+            "line_length_hint": "8-14 Chinese characters per lyric line",
         },
         "negative_terms": [],
         "source_signals": ["华语流行"],

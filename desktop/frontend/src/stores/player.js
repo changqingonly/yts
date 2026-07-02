@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { getStreamPlayer } from "../audio/streamPlayer";
+import { selectedApiTarget } from "../services/http";
 
 export const usePlayerStore = defineStore("player", {
   state: () => ({
@@ -17,7 +18,7 @@ export const usePlayerStore = defineStore("player", {
     isStreaming: (state) => state.streamState === "connecting" || state.streamState === "streaming",
   },
   actions: {
-    async streamGenerate({ prompt, seconds = 8, target = "local", channels = 2 }) {
+    async streamGenerate({ prompt, seconds = 8, target = selectedApiTarget(), channels = 2 }) {
       const sp = getStreamPlayer();
       sp.onState = (s) => {
         this.streamState = s;

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
+from concurrent.futures import Future
+from threading import Lock, Thread
 from time import perf_counter
 from typing import Any, Literal
 from uuid import uuid4
 
+import structlog
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
@@ -15,6 +19,8 @@ from yts_core.orchestration.nodes.pro_lyrics import ProLyricsNodes
 from yts_core.orchestration.prompt_packs import resolve_prompt_pack
 from yts_core.orchestration.state import CreationState
 from yts_core.schemas.creation import CreationResult
+
+logger = structlog.get_logger(__name__)
 
 
 class WorkflowCapabilities(BaseModel):
@@ -103,12 +109,23 @@ class WorkflowRunResult(BaseModel):
     trace: WorkflowTrace
 
 
+class WorkflowStreamEvent(BaseModel):
+    type: Literal["trace", "result"]
+    trace: WorkflowTrace | None = None
+    result: WorkflowRunResult | None = None
+
+
 class WorkflowState(CreationState, total=False):
     workflow_id: str
     workflow_version: int
     node_config: dict[str, dict[str, Any]]
     trace_nodes: list[dict[str, Any]]
     creation_result: dict[str, Any]
+
+
+_PRO_STAGE_LOOP_LOCK = Lock()
+_PRO_STAGE_LOOP: asyncio.AbstractEventLoop | None = None
+_PRO_STAGE_LOOP_THREAD: Thread | None = None
 
 
 PRO_STAGE_LABELS = {
@@ -139,23 +156,7 @@ def default_workflow_template() -> WorkflowDefinition:
         )
         for stage in PRO_STAGE_ORDER
     ]
-    nodes = [*pro_nodes[:3]]
-    nodes.append(
-        WorkflowNodeDefinition(
-            id="brief_approval",
-            type="hitl_approval",
-            label="简报确认",
-            config={
-                "actions": ["approve", "edit", "reject"],
-                "editable_fields": [
-                    "user_prompt",
-                    "song_brief.core_story",
-                    "hook_lab.selected_hook",
-                ],
-            },
-        )
-    )
-    nodes.extend(pro_nodes[3:])
+    nodes = [*pro_nodes]
     nodes.append(
         WorkflowNodeDefinition(
             id="final_review",
@@ -176,8 +177,7 @@ def default_workflow_template() -> WorkflowDefinition:
         edges=[
             WorkflowEdgeDefinition(source="validate_request", target="parse_intent"),
             WorkflowEdgeDefinition(source="parse_intent", target="build_song_brief"),
-            WorkflowEdgeDefinition(source="build_song_brief", target="brief_approval"),
-            WorkflowEdgeDefinition(source="brief_approval", target="plan_music_style"),
+            WorkflowEdgeDefinition(source="build_song_brief", target="plan_music_style"),
             WorkflowEdgeDefinition(source="plan_music_style", target="hook_lab"),
             WorkflowEdgeDefinition(source="hook_lab", target="draft_structure_blueprints"),
             WorkflowEdgeDefinition(
@@ -203,31 +203,84 @@ async def run_workflow_thread(
     backend,
     checkpointer,
 ) -> WorkflowRunResult:
-    _require_hitl_checkpointer(checkpointer)
-    if request.workflow_id != default_workflow_template().workflow_id:
-        raise ValueError(f"unsupported workflow_id: {request.workflow_id}")
-    if not request.thread_id.strip():
-        raise ValueError("thread_id must not be empty")
-    state: WorkflowState = {
-        "workflow_id": request.workflow_id,
-        "workflow_version": default_workflow_template().version,
-        "thread_id": request.thread_id.strip(),
-        "run_id": f"run-{uuid4().hex}",
-        "user_prompt": request.user_prompt,
-        "music_dimensions": {},
-        "skill_id": None,
-        "prompt_pack": resolve_prompt_pack("pro_lyrics").to_state(),
-        "node_config": request.node_config,
-        "trace_nodes": [],
-    }
+    started_at = perf_counter()
+    state = _initial_workflow_state(request, checkpointer=checkpointer)
+    logger.info(
+        "workflow.thread.started",
+        workflow_id=request.workflow_id,
+        thread_id=request.thread_id.strip(),
+        run_id=state["run_id"],
+        prompt_chars=len(request.user_prompt),
+        node_config_keys=sorted(request.node_config),
+        backend=getattr(backend, "name", type(backend).__name__),
+    )
     graph = _build_template_graph(
         default_workflow_template(), backend=backend, checkpointer=checkpointer
     )
     config = workflow_config(
         checkpointer=checkpointer, thread_id=request.thread_id.strip(), run_id=state["run_id"]
     )
-    result = await asyncio.to_thread(graph.invoke, state, config)
-    return _run_result_from_state(result)
+    try:
+        result = await asyncio.to_thread(graph.invoke, state, config)
+        run_result = _run_result_from_state(result)
+        logger.info(
+            "workflow.thread.completed",
+            workflow_id=request.workflow_id,
+            thread_id=request.thread_id.strip(),
+            run_id=run_result.run_id,
+            status=run_result.status,
+            waiting_node_id=run_result.waiting.node_id if run_result.waiting else None,
+            trace_node_count=len(run_result.trace.nodes),
+            duration_ms=_elapsed_ms(started_at),
+        )
+        return run_result
+    except Exception as exc:
+        logger.exception(
+            "workflow.thread.failed",
+            workflow_id=request.workflow_id,
+            thread_id=request.thread_id.strip(),
+            run_id=state["run_id"],
+            error_type=type(exc).__name__,
+            duration_ms=_elapsed_ms(started_at),
+        )
+        raise
+
+
+async def stream_workflow_thread(
+    request: WorkflowRunRequest,
+    *,
+    backend,
+    checkpointer,
+) -> AsyncIterator[WorkflowStreamEvent]:
+    started_at = perf_counter()
+    state = _initial_workflow_state(request, checkpointer=checkpointer)
+    logger.info(
+        "workflow.thread.stream_started",
+        workflow_id=request.workflow_id,
+        thread_id=request.thread_id.strip(),
+        run_id=state["run_id"],
+        prompt_chars=len(request.user_prompt),
+        node_config_keys=sorted(request.node_config),
+        backend=getattr(backend, "name", type(backend).__name__),
+    )
+    graph = _build_template_graph(
+        default_workflow_template(), backend=backend, checkpointer=checkpointer
+    )
+    config = workflow_config(
+        checkpointer=checkpointer, thread_id=request.thread_id.strip(), run_id=state["run_id"]
+    )
+    async for event in _stream_graph_values(
+        graph=graph,
+        input_value=state,
+        config=config,
+        started_at=started_at,
+        log_context={
+            "workflow_id": request.workflow_id,
+            "thread_id": request.thread_id.strip(),
+            "run_id": state["run_id"],
+        },
+    ):
+        yield event
 
 
 async def resume_workflow_thread(
@@ -237,18 +290,91 @@ async def resume_workflow_thread(
     backend,
     checkpointer,
 ) -> WorkflowRunResult:
+    started_at = perf_counter()
     _require_hitl_checkpointer(checkpointer)
     if not thread_id.strip():
         raise ValueError("thread_id must not be empty")
+    logger.info(
+        "workflow.thread.resume_requested",
+        thread_id=thread_id.strip(),
+        node_id=decision.node_id,
+        action=decision.action,
+        patch_keys=sorted(decision.patch),
+        has_choice=decision.choice is not None,
+        backend=getattr(backend, "name", type(backend).__name__),
+    )
     graph = _build_template_graph(
         default_workflow_template(), backend=backend, checkpointer=checkpointer
     )
     config = workflow_config(checkpointer=checkpointer, thread_id=thread_id.strip())
-    result = await asyncio.to_thread(graph.invoke, Command(resume=decision.model_dump()), config)
-    return _run_result_from_state(result)
+    try:
+        result = await asyncio.to_thread(
+            graph.invoke, Command(resume=decision.model_dump()), config
+        )
+        run_result = _run_result_from_state(result)
+        logger.info(
+            "workflow.thread.resume_completed",
+            workflow_id=run_result.workflow_id,
+            thread_id=thread_id.strip(),
+            run_id=run_result.run_id,
+            status=run_result.status,
+            waiting_node_id=run_result.waiting.node_id if run_result.waiting else None,
+            trace_node_count=len(run_result.trace.nodes),
+            duration_ms=_elapsed_ms(started_at),
+        )
+        return run_result
+    except Exception as exc:
+        logger.exception(
+            "workflow.thread.failed",
+            thread_id=thread_id.strip(),
+            node_id=decision.node_id,
+            action=decision.action,
+            error_type=type(exc).__name__,
+            duration_ms=_elapsed_ms(started_at),
+        )
+        raise
+
+
+async def stream_resume_workflow_thread(
+    *,
+    thread_id: str,
+    decision: HumanDecision,
+    backend,
+    checkpointer,
+) -> AsyncIterator[WorkflowStreamEvent]:
+    started_at = perf_counter()
+    _require_hitl_checkpointer(checkpointer)
+    if not thread_id.strip():
+        raise ValueError("thread_id must not be empty")
+    logger.info(
+        "workflow.thread.resume_stream_started",
+        thread_id=thread_id.strip(),
+        node_id=decision.node_id,
+        action=decision.action,
+        patch_keys=sorted(decision.patch),
+        has_choice=decision.choice is not None,
+        backend=getattr(backend, "name", type(backend).__name__),
+    )
+    graph = _build_template_graph(
+        default_workflow_template(), backend=backend, checkpointer=checkpointer
+    )
+    config = workflow_config(checkpointer=checkpointer, thread_id=thread_id.strip())
+    async for event in _stream_graph_values(
+        graph=graph,
+        input_value=Command(resume=decision.model_dump()),
+        config=config,
+        started_at=started_at,
+        log_context={
+            "thread_id": thread_id.strip(),
+            "node_id": decision.node_id,
+            "action": decision.action,
+        },
+    ):
+        yield event
 
 
 async def workflow_thread_trace(*, thread_id: str, checkpointer) -> WorkflowTrace:
+    started_at = perf_counter()
     _require_hitl_checkpointer(checkpointer)
     if not thread_id.strip():
         raise ValueError("thread_id must not be empty")
@@ -260,7 +386,16 @@ async def workflow_thread_trace(*, thread_id: str, checkpointer) -> WorkflowTrac
         workflow_config(checkpointer=checkpointer, thread_id=thread_id.strip()),
     )
     values = dict(snapshot.values or {})
-    return _trace_from_state(values, _waiting_from_interrupts(snapshot.interrupts))
+    trace = _trace_from_state(values, _waiting_from_interrupts(snapshot.interrupts))
+    logger.info(
+        "workflow.thread.trace_loaded",
+        workflow_id=trace.workflow_id,
+        thread_id=thread_id.strip(),
+        run_id=trace.run_id,
+        trace_node_count=len(trace.nodes),
+        duration_ms=_elapsed_ms(started_at),
+    )
+    return trace
 
 
 def _build_template_graph(template: WorkflowDefinition, *, backend, checkpointer):
@@ -291,6 +426,86 @@ def _require_hitl_checkpointer(checkpointer) -> None:
         raise ValueError("HITL workflow requires a LangGraph checkpointer")
 
 
+def _initial_workflow_state(request: WorkflowRunRequest, *, checkpointer) -> WorkflowState:
+    _require_hitl_checkpointer(checkpointer)
+    if request.workflow_id != default_workflow_template().workflow_id:
+        raise ValueError(f"unsupported workflow_id: {request.workflow_id}")
+    if not request.thread_id.strip():
+        raise ValueError("thread_id must not be empty")
+    return {
+        "workflow_id": request.workflow_id,
+        "workflow_version": default_workflow_template().version,
+        "thread_id": request.thread_id.strip(),
+        "run_id": f"run-{uuid4().hex}",
+        "user_prompt": request.user_prompt,
+        "music_dimensions": {},
+        "skill_id": None,
+        "prompt_pack": resolve_prompt_pack("pro_lyrics").to_state(),
+        "node_config": request.node_config,
+        "trace_nodes": [],
+    }
+
+
+async def _stream_graph_values(
+    *,
+    graph,
+    input_value,
+    config: dict[str, Any],
+    started_at: float,
+    log_context: dict[str, Any],
+) -> AsyncIterator[WorkflowStreamEvent]:
+    queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+    latest_state: dict[str, Any] | None = None
+    last_trace_count = 0
+
+    def run_stream() -> None:
+        try:
+            for state in graph.stream(input_value, config, stream_mode="values"):
+                loop.call_soon_threadsafe(queue.put_nowait, ("state", dict(state)))
+            loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+        except Exception as exc:
+            loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
+
+    stream_thread = Thread(target=run_stream, name="yts-workflow-stream", daemon=True)
+    stream_thread.start()
+
+    try:
+        while True:
+            kind, payload = await queue.get()
+            if kind == "done":
+                break
+            if kind == "error":
+                raise payload
+            state = payload
+            latest_state = state
+            waiting = _interrupt_from_state(state)
+            trace = _trace_from_state(state, waiting)
+            if len(trace.nodes) > last_trace_count:
+                last_trace_count = len(trace.nodes)
+                yield WorkflowStreamEvent(type="trace", trace=trace)
+        if latest_state is None:
+            raise ValueError("workflow stream produced no state")
+        result = _run_result_from_state(latest_state)
+        logger.info(
+            "workflow.thread.stream_completed",
+            **log_context,
+            status=result.status,
+            waiting_node_id=result.waiting.node_id if result.waiting else None,
+            trace_node_count=len(result.trace.nodes),
+            duration_ms=_elapsed_ms(started_at),
+        )
+        yield WorkflowStreamEvent(type="result", result=result)
+    except Exception as exc:
+        logger.exception(
+            "workflow.thread.stream_failed",
+            **log_context,
+            error_type=type(exc).__name__,
+            duration_ms=_elapsed_ms(started_at),
+        )
+        raise
+
+
 class _TemplateNodeRegistry:
     def __init__(self, template: WorkflowDefinition, backend) -> None:
         self.template = template
@@ -300,8 +515,6 @@ class _TemplateNodeRegistry:
     def callable_for(self, node: WorkflowNodeDefinition):
         if node.type == "pro_stage":
             return self._pro_stage(node)
-        if node.type == "hitl_approval":
-            return self._brief_approval
         if node.type == "hitl_review":
             return self._final_review
         if node.type == "output":
@@ -322,8 +535,42 @@ class _TemplateNodeRegistry:
             if not callable(stage_fn):
                 raise ValueError(f"workflow pro stage {stage} is not callable")
             started_at = perf_counter()
-            update = asyncio.run(stage_fn(state))
+            logger.info(
+                "workflow.node.started",
+                workflow_id=state.get("workflow_id"),
+                thread_id=state.get("thread_id"),
+                run_id=state.get("run_id"),
+                node_id=node.id,
+                node_type="pro_stage",
+                stage=stage,
+            )
+            try:
+                update = _run_pro_stage(stage_fn, state)
+            except Exception as exc:
+                logger.exception(
+                    "workflow.node.failed",
+                    workflow_id=state.get("workflow_id"),
+                    thread_id=state.get("thread_id"),
+                    run_id=state.get("run_id"),
+                    node_id=node.id,
+                    node_type="pro_stage",
+                    stage=stage,
+                    error_type=type(exc).__name__,
+                    duration_ms=_elapsed_ms(started_at),
+                )
+                raise
             duration_ms = _elapsed_ms(started_at)
+            logger.info(
+                "workflow.node.completed",
+                workflow_id=state.get("workflow_id"),
+                thread_id=state.get("thread_id"),
+                run_id=state.get("run_id"),
+                node_id=node.id,
+                node_type="pro_stage",
+                stage=stage,
+                update_keys=sorted(update),
+                duration_ms=duration_ms,
+            )
             update["trace_nodes"] = _append_trace(
                 {**state, **update},
                 node.id,
@@ -336,37 +583,6 @@ class _TemplateNodeRegistry:
             return update
 
         return run_stage
-
-    def _brief_approval(self, state: WorkflowState) -> dict[str, Any]:
-        node_config = _node_config(state, "brief_approval")
-        actions = _string_list_config(node_config, "brief_approval", "actions")
-        editable_fields = _string_list_config(node_config, "brief_approval", "editable_fields")
-        waiting = WaitingForHuman(
-            node_id="brief_approval",
-            kind="approval",
-            prompt="请确认歌曲简报，或编辑后继续 Pro 创作。",
-            actions=actions,
-            editable_fields=editable_fields,
-            state_preview={"user_prompt": state["user_prompt"]},
-        )
-        decision = HumanDecision.model_validate(interrupt(waiting.model_dump()))
-        if decision.node_id != "brief_approval":
-            raise ValueError("human decision node_id must match brief_approval")
-        if decision.action == "reject":
-            raise ValueError("brief approval rejected")
-        started_at = perf_counter()
-        update: dict[str, Any] = {
-            "trace_nodes": _append_trace(
-                state,
-                "brief_approval",
-                "hitl_approval",
-                "completed",
-                duration_ms=_elapsed_ms(started_at),
-            )
-        }
-        if decision.action == "edit" and "user_prompt" in decision.patch:
-            update["user_prompt"] = str(decision.patch["user_prompt"])
-        return update
 
     def _final_review(self, state: WorkflowState) -> dict[str, Any]:
         creation_result = _creation_result_from_state(state)
@@ -385,7 +601,27 @@ class _TemplateNodeRegistry:
                 "lyrics": creation_result.lyrics,
             },
         )
+        logger.info(
+            "workflow.hitl.waiting",
+            workflow_id=state.get("workflow_id"),
+            thread_id=state.get("thread_id"),
+            run_id=state.get("run_id"),
+            node_id=waiting.node_id,
+            kind=waiting.kind,
+            actions=actions,
+            editable_fields=editable_fields,
+        )
         decision = HumanDecision.model_validate(interrupt(waiting.model_dump()))
+        logger.info(
+            "workflow.hitl.decision",
+            workflow_id=state.get("workflow_id"),
+            thread_id=state.get("thread_id"),
+            run_id=state.get("run_id"),
+            node_id=decision.node_id,
+            action=decision.action,
+            patch_keys=sorted(decision.patch),
+            has_choice=decision.choice is not None,
+        )
         if decision.node_id != "final_review":
             raise ValueError("human decision node_id must match final_review")
         if decision.action == "rerun":
@@ -532,6 +768,49 @@ def _validate_workflow_definition(template: WorkflowDefinition) -> None:
 def _terminal_node_ids(template: WorkflowDefinition) -> list[str]:
     sources = {edge.source for edge in template.edges}
     return [node.id for node in template.nodes if node.id not in sources]
+
+
+def _run_pro_stage(
+    stage_fn: Callable[[WorkflowState], Awaitable[dict[str, Any]]],
+    state: WorkflowState,
+) -> dict[str, Any]:
+    loop = _pro_stage_event_loop()
+    future = asyncio.run_coroutine_threadsafe(stage_fn(state), loop)
+    return _pro_stage_result(future)
+
+
+def _pro_stage_result(future: Future) -> dict[str, Any]:
+    result = future.result()
+    if not isinstance(result, dict):
+        raise TypeError(f"workflow pro stage must return dict, got {type(result).__name__}")
+    return result
+
+
+def _pro_stage_event_loop() -> asyncio.AbstractEventLoop:
+    global _PRO_STAGE_LOOP, _PRO_STAGE_LOOP_THREAD
+
+    with _PRO_STAGE_LOOP_LOCK:
+        if (
+            _PRO_STAGE_LOOP is not None
+            and _PRO_STAGE_LOOP_THREAD is not None
+            and _PRO_STAGE_LOOP_THREAD.is_alive()
+            and not _PRO_STAGE_LOOP.is_closed()
+        ):
+            return _PRO_STAGE_LOOP
+
+        loop_ready: Future[asyncio.AbstractEventLoop] = Future()
+
+        def run_loop() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop_ready.set_result(loop)
+            loop.run_forever()
+
+        thread = Thread(target=run_loop, name="yts-pro-stage-llm-loop", daemon=True)
+        thread.start()
+        _PRO_STAGE_LOOP = loop_ready.result()
+        _PRO_STAGE_LOOP_THREAD = thread
+        return _PRO_STAGE_LOOP
 
 
 def _append_trace(

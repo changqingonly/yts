@@ -6,7 +6,8 @@ import json
 from time import perf_counter
 from typing import Any
 
-from ...schemas.common import StageTrace
+import structlog
+
 from ..pro_lyrics_contracts import structure_contract, style_prompt_contract
 from ..prompts.pro_lyrics import (
     _generate_lyrics_prompt,
@@ -48,12 +49,14 @@ from ..validators.pro_lyrics import (
     _validate_style_spec_matches_music_style,
 )
 
+logger = structlog.get_logger(__name__)
+
 
 def _append_stage(
     state: CreationState, name: str, provider: str, ok: bool = True
-) -> list[StageTrace]:
+) -> list[dict[str, Any]]:
     stages = list(state.get("stages", []))
-    stages.append(StageTrace(name=name, ok=ok, note=provider))
+    stages.append({"name": name, "ok": ok, "note": provider})
     return stages
 
 
@@ -125,6 +128,100 @@ def _generation_context(state: CreationState) -> dict[str, Any]:
             "negative_tags": music_style_plan["negative_tags"],
             "forbidden_meta_tags": _forbidden_meta_tags(selected_blueprint),
         },
+    }
+
+
+def _structure_blueprint_context(state: CreationState) -> dict[str, Any]:
+    music_style_plan = _require_mapping(state["music_style_plan"], "music_style_plan")
+    selected_style = _require_mapping(
+        music_style_plan.get("selected_style"), "music_style_plan.selected_style"
+    )
+    hook_lab = _require_mapping(state["hook_lab"], "hook_lab")
+    return {
+        "user_prompt": state["user_prompt"],
+        "intent": _require_mapping(state["intent"], "intent"),
+        "song_brief": _require_mapping(state["song_brief"], "song_brief"),
+        "music_style_plan": {
+            "selected_style_id": music_style_plan["selected_style_id"],
+            "selected_style": {
+                "id": selected_style["id"],
+                "template_id": selected_style["template_id"],
+                "label": selected_style["label"],
+                "bpm_range": selected_style["bpm_range"],
+                "groove": selected_style["groove"],
+                "vocal_profile": selected_style["vocal_profile"],
+                "instrumentation": selected_style["instrumentation"],
+                "production_notes": selected_style["production_notes"],
+            },
+            "negative_tags": music_style_plan["negative_tags"],
+        },
+        "hook_lab": {
+            "selected_hook": hook_lab["selected_hook"],
+            "hook_strategy": hook_lab.get("hook_strategy", ""),
+        },
+        "structure_contract": structure_contract(),
+    }
+
+
+def _style_prompt_context(state: CreationState) -> dict[str, Any]:
+    intent = _require_mapping(state["intent"], "intent")
+    song_brief = _require_mapping(state["song_brief"], "song_brief")
+    music_style_plan = _require_mapping(state["music_style_plan"], "music_style_plan")
+    selected_style = _require_mapping(
+        music_style_plan.get("selected_style"), "music_style_plan.selected_style"
+    )
+    hook_lab = _require_mapping(state["hook_lab"], "hook_lab")
+    professional_plan = _require_mapping(state["professional_plan"], "professional_plan")
+    selected_blueprint = _require_mapping(
+        professional_plan.get("selected_blueprint"), "professional_plan.selected_blueprint"
+    )
+    return {
+        "user_prompt": state["user_prompt"],
+        "intent": {
+            "scene_cues": intent["scene_cues"],
+            "emotion_cues": intent["emotion_cues"],
+            "style_cues": intent["style_cues"],
+            "negative_terms": intent["negative_terms"],
+        },
+        "song_brief": {
+            "core_story": song_brief["core_story"],
+            "narrative_perspective": song_brief["narrative_perspective"],
+            "target_form": song_brief["target_form"],
+            "emotion_arc": song_brief["emotion_arc"],
+            "duet_allowed": song_brief["duet_allowed"],
+            "required_devices": song_brief["required_devices"],
+            "forbidden_devices": song_brief["forbidden_devices"],
+        },
+        "music_style_plan": {
+            "selected_style_id": music_style_plan["selected_style_id"],
+            "selected_style": {
+                "id": selected_style["id"],
+                "template_id": selected_style["template_id"],
+                "label": selected_style["label"],
+                "suno_tags": selected_style["suno_tags"],
+                "bpm_range": selected_style["bpm_range"],
+                "groove": selected_style["groove"],
+                "vocal_profile": selected_style["vocal_profile"],
+                "instrumentation": selected_style["instrumentation"],
+                "production_notes": selected_style["production_notes"],
+            },
+            "negative_tags": music_style_plan["negative_tags"],
+        },
+        "hook": {
+            "selected_hook": hook_lab["selected_hook"],
+            "hook_strategy": hook_lab.get("hook_strategy", ""),
+        },
+        "structure": {
+            "mode": selected_blueprint["mode"],
+            "sections": selected_blueprint["sections"],
+            "section_roles": selected_blueprint.get("section_roles", {}),
+            "line_budget": selected_blueprint.get("line_budget", {}),
+            "energy_curve": selected_blueprint.get("energy_curve", {}),
+            "hook_placement": selected_blueprint.get("hook_placement", {}),
+            "bridge_function": selected_blueprint.get("bridge_function", ""),
+            "vocal_plan": selected_blueprint.get("vocal_plan", {}),
+        },
+        "style_prompt_contract": style_prompt_contract(music_style_plan),
     }
 
 
@@ -271,14 +368,7 @@ class ProLyricsNodes:
         payload, provider, llm_call = await _generate_json_object(
             self.backend,
             "draft_structure_blueprints",
-            {
-                "user_prompt": state["user_prompt"],
-                "intent": _require_mapping(state["intent"], "intent"),
-                "song_brief": _require_mapping(state["song_brief"], "song_brief"),
-                "music_style_plan": _require_mapping(state["music_style_plan"], "music_style_plan"),
-                "hook_lab": _require_mapping(state["hook_lab"], "hook_lab"),
-                "structure_contract": structure_contract(),
-            },
+            _structure_blueprint_context(state),
             _structure_blueprints_prompt,
             prompt_pack=_prompt_pack(state),
         )
@@ -338,16 +428,7 @@ class ProLyricsNodes:
         payload, provider, llm_call = await _generate_json_object(
             self.backend,
             "plan_style_prompt",
-            {
-                "user_prompt": state["user_prompt"],
-                "intent": _require_mapping(state["intent"], "intent"),
-                "music_style_plan": music_style_plan,
-                "structure_plan": _require_mapping(state["structure_plan"], "structure_plan"),
-                "professional_plan": _require_mapping(
-                    state["professional_plan"], "professional_plan"
-                ),
-                "style_prompt_contract": style_prompt_contract(music_style_plan),
-            },
+            _style_prompt_context(state),
             _style_prompt_prompt,
             prompt_pack=_prompt_pack(state),
         )
@@ -519,22 +600,71 @@ async def _generate_json_object(
         },
         {"role": "user", "content": prompt_builder(stage, payload, prompt_pack=prompt_pack)},
     ]
-    started_at = perf_counter()
-    response = await backend.generate_text(
-        messages,
-        response_format={"type": "json_object"},
+    logger.info(
+        "pro_lyrics.llm.requested",
+        stage=stage,
+        backend=getattr(backend, "name", type(backend).__name__),
+        payload_keys=sorted(payload),
+        prompt_pack_version=prompt_pack.get("version"),
+        message_count=len(messages),
+        response_format="json_object",
     )
+    started_at = perf_counter()
+    try:
+        response = await backend.generate_text(
+            messages,
+            response_format={"type": "json_object"},
+        )
+    except Exception as exc:
+        logger.exception(
+            "pro_lyrics.llm.failed",
+            stage=stage,
+            backend=getattr(backend, "name", type(backend).__name__),
+            payload_keys=sorted(payload),
+            prompt_pack_version=prompt_pack.get("version"),
+            error_type=type(exc).__name__,
+            duration_ms=max(0, int(round((perf_counter() - started_at) * 1000))),
+        )
+        raise
     duration_ms = max(0, int(round((perf_counter() - started_at) * 1000)))
+    logger.info(
+        "pro_lyrics.llm.completed",
+        stage=stage,
+        provider=response.provider,
+        model=response.model,
+        duration_ms=duration_ms,
+        response_chars=len(response.text),
+    )
     content = _strip_json_fence(response.text)
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError as exc:
+        logger.warning(
+            "pro_lyrics.llm.invalid_json",
+            stage=stage,
+            provider=response.provider,
+            model=response.model,
+            duration_ms=duration_ms,
+            response_chars=len(response.text),
+            line=exc.lineno,
+            column=exc.colno,
+            response_excerpt=_response_excerpt(content),
+        )
         raise ValueError(
             f"{stage} must return a strict JSON object: {_json_decode_message(exc)} "
             f"at line {exc.lineno} column {exc.colno}; response starts with "
             f"{_response_excerpt(content)!r}"
         ) from exc
     if not isinstance(parsed, dict):
+        logger.warning(
+            "pro_lyrics.llm.invalid_shape",
+            stage=stage,
+            provider=response.provider,
+            model=response.model,
+            duration_ms=duration_ms,
+            parsed_type=type(parsed).__name__,
+            response_excerpt=_response_excerpt(content),
+        )
         raise ValueError(
             f"{stage} must return a strict JSON object: got {type(parsed).__name__}; "
             f"response starts with {_response_excerpt(content)!r}"

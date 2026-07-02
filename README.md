@@ -24,40 +24,61 @@ scripts/   安装 / 开发 / 打包脚本
 
 ## 快速开始
 ```bash
-# 1) 安装 uv(若未装)
-bash scripts/install_uv.sh
+# 1) 安装客户机运行环境到当前项目目录(.tools + .venv + node_modules)
+./install
 
-# 2) 安装 Python 依赖(core + server)
-uv sync
+# 2) 准备真实 profile 配置
+cp conf/cloud.example.env conf/cloud.env
+# 编辑 conf/cloud.env,填入数据库、鉴权、LLM 等真实值
 
-# 3) 起云端/本地服务(FastAPI)
-bash scripts/dev_server.sh          # uvicorn yts_server.main:app --reload
+# 3) 部署 Python 服务端环境 + Node 前端产物
+./servctl deploy --profile cloud
 
-# 4) 桌面端(Mac)
+# 4) 控制 FastAPI 服务 + Web 前端预览(127.0.0.1:1420)
+./servctl start --profile cloud
+./servctl status --profile cloud
+./servctl stop --profile cloud
+./servctl restart --profile cloud   # deploy + stop + start
+
+# 5) 桌面端(Mac)
 bash scripts/dev_desktop.sh         # tauri dev(需 npm install)
 
-# 5) 打包 Mac sidecar(PyInstaller)
+# 6) 打包 Mac sidecar(PyInstaller)
 bash scripts/build_sidecar_macos.sh
 ```
+
+`./install` 会用 `curl` 拉取 uv 和 Node 官方二进制到项目 `.tools/` 下,并把 Python
+运行环境创建在当前目录 `.venv/`,前端依赖安装到 `desktop/frontend/node_modules/`。
+`servctl start` 会在暴露后端端口前检查 `conf/{profile}.env`、端口占用、数据库连接、
+FastAPI app 装配和当前推理后端的最小文本调用,后端健康后再用 Vite preview 暴露
+Web 前端 `http://127.0.0.1:1420/`。任一步失败都会非零退出,不做隐式 fallback。
+`servctl deploy` 负责校验配置并构建前端产物(`npm run build`);单独执行 `servctl start`
+不会重复安装 Python/Node 环境。
 
 ## 推理后端切换(YTS_INFERENCE_BACKEND)
 - `echo`(默认):确定性、无依赖,用于验证编排链路。
 - `cloud`:LiteLLM 云模型(需 provider 凭据,如 `YTS_DEFAULT_TEXT_MODEL` + key)。
-- `openai`:OpenAI-compatible 文本模型,服务端和本地 sidecar 都支持。配置写入 `.env` 或环境变量:
+- `openai`:OpenAI-compatible 文本模型,服务端和本地 sidecar 都支持。配置写入 `conf/{profile}.env` 或环境变量:
 ```bash
-cp .env.example .env
-# 编辑 .env:
+cp conf/local.example.env conf/local.env
+# 编辑 conf/local.env:
 # YTS_INFERENCE_BACKEND=openai
 # YTS_OPENAI_API_KEY=sk-...
 # YTS_OPENAI_TEXT_MODEL=gpt-4.1-mini
 # YTS_OPENAI_BASE_URL=        # 可选,兼容代理或私有网关时填写
 # YTS_AUTH_JWT_SECRET=dev-yts-auth-secret-that-is-long-enough-for-hs256
-# YTS_CONFIG_FILE=/absolute/path/to/yts.env  # 可选,显式指定配置文件路径
+
+# 云端 profile 使用:
+# cp conf/cloud.example.env conf/cloud.env
+# YTS_PROFILE=cloud
 ```
+`conf/*.env` 是 Python 侧唯一的本地配置入口,已覆盖日志、数据库、鉴权、存储、CORS、
+LangGraph checkpoint、LiteLLM/OpenAI/Candle 文本模型,以及图片/音频/音乐模型槽位。
 - `candle`:本地 Rust Candle。需先起 candle-server:
 ```bash
 bash scripts/dev_candle.sh           # Rust candle-server(:8799),首次下载 TinyLlama GGUF
-YTS_INFERENCE_BACKEND=candle bash scripts/dev_server.sh   # write_lyrics 等节点改走本地 Candle
+# 在 conf/{profile}.env 中设置 YTS_INFERENCE_BACKEND=candle 后:
+./servctl restart --profile cloud    # write_lyrics 等节点改走本地 Candle
 ```
 
 ## 现状(本轮脚手架)

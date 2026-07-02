@@ -133,6 +133,27 @@ class CreationJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class WorkflowRunHistory(Base):
+    __tablename__ = "workflow_run_history"
+    __table_args__ = (UniqueConstraint("workflow_id", "user_uuid", "thread_id"),)
+
+    id: Mapped[str] = mapped_column(String(320), primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(String(128), index=True)
+    user_uuid: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    thread_id: Mapped[str] = mapped_column(String(128), index=True)
+    run_id: Mapped[str] = mapped_column(String(128), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    user_prompt: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    completed_nodes: Mapped[int] = mapped_column(Integer, default=0)
+    total_nodes: Mapped[int] = mapped_column(Integer, default=0)
+    last_node_id: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class SongPrompt(Base):
     __tablename__ = "song_prompt"
 

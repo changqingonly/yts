@@ -74,16 +74,16 @@ def test_cloud_workflow_reserves_and_captures_credit(monkeypatch: pytest.MonkeyP
         resume_response = client.post(
             "/api/workflows/pro_creation_hitl_v1/threads/cloud-billing/resume",
             headers=headers,
-            json={"node_id": "brief_approval", "action": "approve"},
+            json={"node_id": "final_review", "action": "accept"},
         )
         assert resume_response.status_code == 200
 
         after = client.get("/api/credits/balance", headers=headers).json()
-        assert after["balance"] == before - 6
+        assert after["balance"] == before - 3
         assert after["frozen_balance"] == 0
 
         usage = client.get("/api/usage/daily", headers=headers).json()
-        assert usage["lyrics"]["used"] == 2
+        assert usage["lyrics"]["used"] == 1
 
 
 def test_cloud_workflow_releases_credit_when_model_fails(monkeypatch: pytest.MonkeyPatch) -> None:

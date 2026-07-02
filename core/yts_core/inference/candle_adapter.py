@@ -10,26 +10,27 @@ from __future__ import annotations
 
 import httpx
 
-from ..config import get_settings
+from ..config import Settings, get_settings
 from .port import TextResult
 
 
 class CandleInference:
     name = "candle"
 
-    def __init__(self, base_url: str | None = None) -> None:
-        self._base = (base_url or get_settings().candle_base_url).rstrip("/")
+    def __init__(self, settings: Settings | None = None, base_url: str | None = None) -> None:
+        self._settings = settings or get_settings()
+        self._base = (base_url or self._settings.candle_base_url).rstrip("/")
 
     async def generate_text(
         self, messages, *, model=None, fallbacks=None, response_format=None
     ) -> TextResult:
         prompt = messages[-1]["content"] if messages else ""
-        async with httpx.AsyncClient(timeout=120) as c:
+        async with httpx.AsyncClient(timeout=self._settings.candle_request_timeout_seconds) as c:
             r = await c.post(
                 f"{self._base}/candle/text",
                 json={
                     "prompt": prompt,
-                    "max_tokens": 256,
+                    "max_tokens": self._settings.candle_text_max_tokens,
                     "response_format": response_format,
                 },
             )

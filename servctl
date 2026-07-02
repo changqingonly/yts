@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+if [ -x ".tools/uv/uv" ]; then
+  exec .tools/uv/uv run python -m scripts.servctl "$@"
+fi
+exec uv run python -m scripts.servctl "$@"

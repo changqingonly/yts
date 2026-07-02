@@ -1,4 +1,5 @@
-"""云端流式 PCM 帧生成器(传输无关)。契约:f32le @ 48k mono。
+"""
+云端流式 PCM 帧生成器(传输无关)。契约:f32le @ 48k mono。
 
 generate_frames 是 async generator,逐块 yield Float32 bytes(little-endian),
 配合 asyncio.sleep 模拟生成/播放节奏。FastAPI WS 路由消费它并推给前端。

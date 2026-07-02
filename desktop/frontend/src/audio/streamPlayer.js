@@ -3,10 +3,7 @@
 // 连 WS(本地 candle-server / 云端 server 同契约)→ 解析 header → 把二进制 PCM 帧
 // 灌进 AudioWorklet(pcm-player)→ 边生成边播。切 local/cloud 只换 base,不改逻辑。
 
-const WS_BASES = {
-  local: "ws://127.0.0.1:8799",
-  cloud: "ws://127.0.0.1:8000", // 云端同契约,TODO 接通
-};
+import { openBinaryStream } from "../services/transport";
 
 export class StreamAudioPlayer {
   constructor() {
@@ -63,46 +60,44 @@ export class StreamAudioPlayer {
     await this._ensureAudio();
     if (this.ctx.state === "suspended") await this.ctx.resume();
 
-    const base = WS_BASES[target] || WS_BASES.local;
     const accept = { codecs: await this._supportedCodecs(), channels };
     this._set("connecting");
-    const ws = new WebSocket(`${base}/music/stream`);
-    ws.binaryType = "arraybuffer";
-    this.ws = ws;
-
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: "start", prompt, seconds, accept }));
-    };
-    ws.onmessage = (ev) => {
-      if (typeof ev.data === "string") {
-        const msg = JSON.parse(ev.data);
-        if (msg.type === "header") {
-          // 据协商出的声道数重置 worklet(并清空 ring)
-          this.node.port.postMessage({ type: "reset", channels: msg.channels || 1 });
-          this._headerFormat = msg.format || "f32le";
-          this._set("streaming");
-        } else if (msg.type === "end") {
-          // 帧已发完;worklet 放空后会回 drained → done
-        } else if (msg.type === "error") {
-          this.onError(new Error(msg.message));
-          this._set("error");
-          ws.close();
+    this.ws = openBinaryStream("", {
+      target,
+      onOpen: (ws) => {
+        ws.send(JSON.stringify({ type: "start", prompt, seconds, accept }));
+      },
+      onMessage: (ev, ws) => {
+        if (typeof ev.data === "string") {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === "header") {
+            // 据协商出的声道数重置 worklet(并清空 ring)
+            this.node.port.postMessage({ type: "reset", channels: msg.channels || 1 });
+            this._headerFormat = msg.format || "f32le";
+            this._set("streaming");
+          } else if (msg.type === "end") {
+            // 帧已发完;worklet 放空后会回 drained → done
+          } else if (msg.type === "error") {
+            this.onError(new Error(msg.message));
+            this._set("error");
+            ws.close();
+          }
+        } else {
+          // 二进制 PCM 帧:ArrayBuffer → Float32Array,灌入 worklet
+          const samples = new Float32Array(ev.data);
+          this.node.port.postMessage({ type: "pcm", samples }, [samples.buffer]);
         }
-      } else {
-        // 二进制 PCM 帧:ArrayBuffer → Float32Array,灌入 worklet
-        const samples = new Float32Array(ev.data);
-        this.node.port.postMessage({ type: "pcm", samples }, [samples.buffer]);
-      }
-    };
-    ws.onerror = () => {
-      this.onError(new Error("WebSocket 连接失败"));
-      this._set("error");
-    };
-    ws.onclose = () => {
-      if (this.state === "streaming") {
-        // 服务端已发 end,等 worklet drained;否则视为停止
-      }
-    };
+      },
+      onError: () => {
+        this.onError(new Error("WebSocket 连接失败"));
+        this._set("error");
+      },
+      onClose: () => {
+        if (this.state === "streaming") {
+          // 服务端已发 end,等 worklet drained;否则视为停止
+        }
+      },
+    });
   }
 
   /** 中途停止生成 + 播放 */

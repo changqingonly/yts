@@ -174,6 +174,7 @@ def _style_prompt_prompt(
                 "required_sections": ["Verse 1", "Chorus"],
                 "hook_policy": "string",
                 "mood_arc": "string",
+                "line_length_hint": "string",
             },
             "negative_terms": ["string"],
             "source_signals": ["string"],
