@@ -23,6 +23,8 @@ candle-transformers = "0.8"
 tokenizers = "0.20"
 hf-hub = "0.3"
 hound = "3.5"          # 读取 producer 输出的 WAV(acestep.cpp 输出 48kHz WAV)
+image = { version = "0.25", default-features = false, features = ["png"] }  # 读/编码 PNG(sd.cpp 输出)
+base64 = "0.22"        # /image 返回 base64 PNG
 
 # mac Metal 加速(默认开;非 mac 构建时去掉此 feature 或改 cpu)
 [features]

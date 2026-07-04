@@ -160,7 +160,9 @@ def _remove_selected_style_conflicting_negative_tags(
     return [
         tag
         for tag in negative_tags
-        if not any(_contains_style_term(positive_term, tag) for positive_term in selected_positive_terms)
+        if not any(
+            _contains_style_term(positive_term, tag) for positive_term in selected_positive_terms
+        )
     ]
 
 
@@ -284,9 +286,7 @@ def _normalize_hook_lab(payload: dict[str, Any]) -> dict[str, Any]:
 def _normalize_style_spec(payload: dict[str, Any]) -> dict[str, Any]:
     style_family = _require_mapping(payload.get("style_family"), "style_spec.style_family")
     style_prompt = _required_string(payload, "style_prompt_draft", "style_spec")
-    lyric_guidance = _require_mapping(
-        payload.get("lyric_guidance"), "style_spec.lyric_guidance"
-    )
+    lyric_guidance = _require_mapping(payload.get("lyric_guidance"), "style_spec.lyric_guidance")
     return {
         "style_family": {
             "id": _required_string(style_family, "id", "style_spec.style_family"),
@@ -298,21 +298,15 @@ def _normalize_style_spec(payload: dict[str, Any]) -> dict[str, Any]:
             _required_list(payload, "style_components", "style_spec"), "style_spec.style_components"
         ),
         "lyric_guidance": {
-            "language": _required_string(
-                lyric_guidance, "language", "style_spec.lyric_guidance"
-            ),
+            "language": _required_string(lyric_guidance, "language", "style_spec.lyric_guidance"),
             "required_sections": _string_list(
-                _required_list(
-                    lyric_guidance, "required_sections", "style_spec.lyric_guidance"
-                ),
+                _required_list(lyric_guidance, "required_sections", "style_spec.lyric_guidance"),
                 "style_spec.lyric_guidance.required_sections",
             ),
             "hook_policy": _required_string(
                 lyric_guidance, "hook_policy", "style_spec.lyric_guidance"
             ),
-            "mood_arc": _required_string(
-                lyric_guidance, "mood_arc", "style_spec.lyric_guidance"
-            ),
+            "mood_arc": _required_string(lyric_guidance, "mood_arc", "style_spec.lyric_guidance"),
             "line_length_hint": _required_string(
                 lyric_guidance, "line_length_hint", "style_spec.lyric_guidance"
             ),

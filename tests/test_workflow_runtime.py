@@ -215,6 +215,45 @@ async def test_workflow_trace_nodes_include_artifact_previews_for_workspace() ->
     ]
 
 
+@pytest.mark.asyncio
+async def test_workflow_trace_marks_repaired_node_attempts() -> None:
+    from copy import deepcopy
+
+    runtime = WorkflowHarness()
+    broken_generation = deepcopy(runtime.backend.payloads["generate_lyrics"])
+    broken_generation["lyric_prompt"] = broken_generation["lyric_prompt"].replace(
+        "[Chorus]\n"
+        "雨落旧窗前\n"
+        "雨落旧窗前\n",
+        "[Chorus]\n"
+        "午后的城慢慢暗下来\n"
+        "旧照片在雨里发亮\n",
+    )
+    repaired_generation = deepcopy(runtime.backend.payloads["generate_lyrics"])
+    runtime.backend.payloads["generate_lyrics"] = broken_generation
+    runtime.backend.repair_payloads["generate_lyrics"] = [repaired_generation]
+
+    result = await run_workflow_thread(
+        WorkflowRunRequest(
+            workflow_id="pro_creation_hitl_v1",
+            thread_id="thread-repair-trace",
+            user_prompt="下雨的午后，大雨倾盆，思念远方的故人",
+        ),
+        backend=runtime.backend,
+        checkpointer=runtime.checkpointer,
+    )
+
+    by_id = {node.node_id: node for node in result.trace.nodes}
+    repaired_node = by_id["generate_lyrics"]
+    assert repaired_node.metrics["repair_attempt_count"] == 1
+    assert repaired_node.metrics["repaired"] is True
+    assert "generation.lyric_prompt section [Chorus] must repeat selected_hook" in repaired_node.metrics[
+        "repair_errors"
+    ][0]
+    assert repaired_node.llm_call["repair_attempts"][0]["attempt"] == 1
+    assert runtime.backend.repair_called_stages == ["generate_lyrics"]
+
+
 def test_workflow_trace_preview_fails_when_stage_artifact_is_missing() -> None:
     state = {
         "trace_nodes": [],
@@ -384,13 +423,28 @@ class _FakeProBackend:
 
         self.payloads = deepcopy(_PAYLOADS)
         self.payloads["review_quality"]["submit_suno"] = True
+        self.repair_payloads: dict[str, list[dict]] = {}
+        self.repair_called_stages: list[str] = []
+        self.repair_input_payloads: dict[str, list[dict]] = {}
         self.llm_loops: list[asyncio.AbstractEventLoop] = []
 
     async def generate_text(self, messages, *, model=None, fallbacks=None, response_format=None) -> TextResult:
         import json
 
         self.llm_loops.append(asyncio.get_running_loop())
-        marker = "YTS_PRO_STAGE:"
+        repair_marker = "YTS_PRO_STAGE_REPAIR:"
         content = messages[-1]["content"]
+        if repair_marker in content:
+            stage = content.split(repair_marker, 1)[1].splitlines()[0].strip()
+            self.repair_called_stages.append(stage)
+            input_marker = "Repair Input JSON:\n"
+            if input_marker in content:
+                self.repair_input_payloads.setdefault(stage, []).append(
+                    json.loads(content.split(input_marker, 1)[1])
+                )
+            payloads = self.repair_payloads.get(stage)
+            payload = payloads.pop(0) if payloads else self.payloads[stage]
+            return TextResult(text=json.dumps(payload, ensure_ascii=False), provider="fake", model="fake")
+        marker = "YTS_PRO_STAGE:"
         stage = content.split(marker, 1)[1].splitlines()[0].strip()
         return TextResult(text=json.dumps(self.payloads[stage], ensure_ascii=False), provider="fake", model="fake")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from time import perf_counter
 from typing import Any
 
@@ -22,6 +23,7 @@ from ..prompts.pro_lyrics import (
     _style_prompt_prompt,
     _title_refinement_prompt,
     pro_lyrics_system_prompt,
+    stage_output_schema,
 )
 from ..state import CreationState
 from ..style_templates import match_style_templates
@@ -50,6 +52,8 @@ from ..validators.pro_lyrics import (
 )
 
 logger = structlog.get_logger(__name__)
+MAX_STAGE_REPAIR_ATTEMPTS = 2
+RepairEventSink = Callable[[dict[str, Any]], None]
 
 
 def _append_stage(
@@ -70,6 +74,21 @@ def _record_llm_call(state: CreationState, stage: str, llm_call: dict[str, Any])
     calls = dict(state.get("llm_calls", {}))
     calls[stage] = llm_call
     return calls
+
+
+def _repair_state_update(
+    state: CreationState,
+    stage: str,
+    repair_attempts: list[dict[str, Any]],
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    if not repair_attempts:
+        return {}
+    repairs = dict(state.get("node_repairs", {}))
+    existing = repairs.get(stage, [])
+    if not isinstance(existing, list):
+        raise ValueError(f"node_repairs.{stage} must be a list")
+    repairs[stage] = [*existing, *repair_attempts]
+    return {"node_repairs": repairs}
 
 
 def _generation_context(state: CreationState) -> dict[str, Any]:
@@ -266,11 +285,22 @@ def _forbidden_meta_tags(selected_blueprint: dict[str, Any]) -> list[str]:
     return [str(tag).strip() for tag in tags if str(tag).strip()]
 
 
+def _normalize_structure_blueprint_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    blueprint_items = _blueprint_items(payload)
+    if len(blueprint_items) < 2:
+        raise ValueError("pro structure planner requires at least two blueprints")
+    return blueprint_items
+
+
 class ProLyricsNodes:
     def __init__(self, backend) -> None:
         self.backend = backend
 
-    async def validate_request(self, state: CreationState) -> dict:
+    async def validate_request(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
         user_prompt = str(state["user_prompt"]).strip()
         if not user_prompt:
             raise ValueError("user_prompt must not be empty")
@@ -280,8 +310,12 @@ class ProLyricsNodes:
             "stages": _append_stage(state, "validate_request", "gate"),
         }
 
-    async def parse_intent(self, state: CreationState) -> dict:
-        payload, provider, llm_call = await _generate_json_object(
+    async def parse_intent(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
+        intent, provider, llm_call, repair_attempts = await _generate_validated_json_object(
             self.backend,
             "parse_intent",
             {
@@ -290,16 +324,22 @@ class ProLyricsNodes:
             },
             _parse_intent_prompt,
             prompt_pack=_prompt_pack(state),
+            validator=_normalize_intent,
+            repair_event_sink=repair_event_sink,
         )
-        intent = _normalize_intent(payload)
         return {
             "intent": intent,
             "llm_calls": _record_llm_call(state, "parse_intent", llm_call),
             "stages": _append_stage(state, "parse_intent", provider),
+            **_repair_state_update(state, "parse_intent", repair_attempts),
         }
 
-    async def build_song_brief(self, state: CreationState) -> dict:
-        payload, provider, llm_call = await _generate_json_object(
+    async def build_song_brief(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
+        brief, provider, llm_call, repair_attempts = await _generate_validated_json_object(
             self.backend,
             "build_song_brief",
             {
@@ -308,15 +348,21 @@ class ProLyricsNodes:
             },
             _song_brief_prompt,
             prompt_pack=_prompt_pack(state),
+            validator=_normalize_song_brief,
+            repair_event_sink=repair_event_sink,
         )
-        brief = _normalize_song_brief(payload)
         return {
             "song_brief": brief,
             "llm_calls": _record_llm_call(state, "build_song_brief", llm_call),
             "stages": _append_stage(state, "build_song_brief", provider),
+            **_repair_state_update(state, "build_song_brief", repair_attempts),
         }
 
-    async def plan_music_style(self, state: CreationState) -> dict:
+    async def plan_music_style(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
         intent = _require_mapping(state["intent"], "intent")
         song_brief = _require_mapping(state["song_brief"], "song_brief")
         style_template_candidates = match_style_templates(
@@ -324,7 +370,12 @@ class ProLyricsNodes:
             intent=intent,
             song_brief=song_brief,
         )
-        payload, provider, llm_call = await _generate_json_object(
+        (
+            music_style_plan,
+            provider,
+            llm_call,
+            repair_attempts,
+        ) = await _generate_validated_json_object(
             self.backend,
             "plan_music_style",
             {
@@ -335,17 +386,25 @@ class ProLyricsNodes:
             },
             _music_style_plan_prompt,
             prompt_pack=_prompt_pack(state),
+            validator=lambda payload: _normalize_music_style_plan(
+                payload, style_template_candidates
+            ),
+            repair_event_sink=repair_event_sink,
         )
-        music_style_plan = _normalize_music_style_plan(payload, style_template_candidates)
         return {
             "style_template_candidates": style_template_candidates,
             "music_style_plan": music_style_plan,
             "llm_calls": _record_llm_call(state, "plan_music_style", llm_call),
             "stages": _append_stage(state, "plan_music_style", provider),
+            **_repair_state_update(state, "plan_music_style", repair_attempts),
         }
 
-    async def hook_lab(self, state: CreationState) -> dict:
-        payload, provider, llm_call = await _generate_json_object(
+    async def hook_lab(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
+        hook, provider, llm_call, repair_attempts = await _generate_validated_json_object(
             self.backend,
             "hook_lab",
             {
@@ -356,33 +415,64 @@ class ProLyricsNodes:
             },
             _hook_lab_prompt,
             prompt_pack=_prompt_pack(state),
+            validator=_normalize_hook_lab,
+            repair_event_sink=repair_event_sink,
         )
-        hook = _normalize_hook_lab(payload)
         return {
             "hook_lab": hook,
             "llm_calls": _record_llm_call(state, "hook_lab", llm_call),
             "stages": _append_stage(state, "hook_lab", provider),
+            **_repair_state_update(state, "hook_lab", repair_attempts),
         }
 
-    async def draft_structure_blueprints(self, state: CreationState) -> dict:
-        payload, provider, llm_call = await _generate_json_object(
+    async def draft_structure_blueprints(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
+        (
+            blueprint_items,
+            provider,
+            llm_call,
+            repair_attempts,
+        ) = await _generate_validated_json_object(
             self.backend,
             "draft_structure_blueprints",
             _structure_blueprint_context(state),
             _structure_blueprints_prompt,
             prompt_pack=_prompt_pack(state),
+            validator=_normalize_structure_blueprint_items,
+            repair_event_sink=repair_event_sink,
         )
-        blueprint_items = _blueprint_items(payload)
-        if len(blueprint_items) < 2:
-            raise ValueError("pro structure planner requires at least two blueprints")
         return {
             "structure_blueprints": {"blueprints": blueprint_items},
             "llm_calls": _record_llm_call(state, "draft_structure_blueprints", llm_call),
             "stages": _append_stage(state, "draft_structure_blueprints", provider),
+            **_repair_state_update(state, "draft_structure_blueprints", repair_attempts),
         }
 
-    async def critique_structure(self, state: CreationState) -> dict:
-        payload, provider, llm_call = await _generate_json_object(
+    async def critique_structure(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
+        blueprints = _require_list(
+            _require_mapping(state["structure_blueprints"], "structure_blueprints").get(
+                "blueprints"
+            ),
+            "structure_blueprints.blueprints",
+        )
+
+        def validate_critique(payload: dict[str, Any]) -> dict[str, Any]:
+            selected = _selected_blueprint(payload, blueprints)
+            selected = _blueprint_items({"blueprints": [selected]})[0]
+            return {
+                "payload": payload,
+                "selected": selected,
+                "structure_plan": _structure_plan_from_blueprint(selected, payload),
+            }
+
+        critique, provider, llm_call, repair_attempts = await _generate_validated_json_object(
             self.backend,
             "critique_structure",
             {
@@ -396,46 +486,52 @@ class ProLyricsNodes:
             },
             _structure_critique_prompt,
             prompt_pack=_prompt_pack(state),
+            validator=validate_critique,
+            repair_event_sink=repair_event_sink,
         )
-        blueprints = _require_list(
-            _require_mapping(state["structure_blueprints"], "structure_blueprints").get(
-                "blueprints"
-            ),
-            "structure_blueprints.blueprints",
-        )
-        selected = _selected_blueprint(payload, blueprints)
-        selected = _blueprint_items({"blueprints": [selected]})[0]
-        structure_plan = _structure_plan_from_blueprint(selected, payload)
         professional_plan = {
             "song_brief": _require_mapping(state["song_brief"], "song_brief"),
             "music_style_plan": _require_mapping(state["music_style_plan"], "music_style_plan"),
             "hook_lab": _require_mapping(state["hook_lab"], "hook_lab"),
             "structure_blueprints": blueprints,
-            "structure_critique": payload,
-            "selected_blueprint": selected,
+            "structure_critique": critique["payload"],
+            "selected_blueprint": critique["selected"],
         }
         return {
-            "structure_critique": payload,
+            "structure_critique": critique["payload"],
             "professional_plan": professional_plan,
-            "structure_plan": structure_plan,
-            "structure": "\n".join(structure_plan["structure_candidates"][0]["structure"]),
+            "structure_plan": critique["structure_plan"],
+            "structure": "\n".join(
+                critique["structure_plan"]["structure_candidates"][0]["structure"]
+            ),
             "llm_calls": _record_llm_call(state, "critique_structure", llm_call),
             "stages": _append_stage(state, "critique_structure", provider),
+            **_repair_state_update(state, "critique_structure", repair_attempts),
         }
 
-    async def plan_style_prompt(self, state: CreationState) -> dict:
+    async def plan_style_prompt(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
         music_style_plan = _require_mapping(state["music_style_plan"], "music_style_plan")
-        payload, provider, llm_call = await _generate_json_object(
+
+        def validate_style_prompt(payload: dict[str, Any]) -> dict[str, Any]:
+            style_spec = _normalize_style_spec(payload)
+            _validate_style_spec_matches_music_style(
+                style_spec,
+                music_style_plan,
+            )
+            return style_spec
+
+        style_spec, provider, llm_call, repair_attempts = await _generate_validated_json_object(
             self.backend,
             "plan_style_prompt",
             _style_prompt_context(state),
             _style_prompt_prompt,
             prompt_pack=_prompt_pack(state),
-        )
-        style_spec = _normalize_style_spec(payload)
-        _validate_style_spec_matches_music_style(
-            style_spec,
-            music_style_plan,
+            validator=validate_style_prompt,
+            repair_event_sink=repair_event_sink,
         )
         professional_plan = dict(_require_mapping(state["professional_plan"], "professional_plan"))
         professional_plan["style_spec"] = style_spec
@@ -445,21 +541,29 @@ class ProLyricsNodes:
             "professional_plan": professional_plan,
             "llm_calls": _record_llm_call(state, "plan_style_prompt", llm_call),
             "stages": _append_stage(state, "plan_style_prompt", provider),
+            **_repair_state_update(state, "plan_style_prompt", repair_attempts),
         }
 
-    async def generate_lyrics(self, state: CreationState) -> dict:
-        payload, provider, llm_call = await _generate_json_object(
+    async def generate_lyrics(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
+        professional_plan = _require_mapping(state["professional_plan"], "professional_plan")
+
+        def validate_generation(payload: dict[str, Any]) -> dict[str, Any]:
+            generation = _normalize_generation_payload(payload)
+            _validate_generation_against_pro_plan(generation, professional_plan)
+            return generation
+
+        generation, provider, llm_call, repair_attempts = await _generate_validated_json_object(
             self.backend,
             "generate_lyrics",
             {"generation_context": _generation_context(state)},
             _generate_lyrics_prompt,
             prompt_pack=_prompt_pack(state),
-        )
-        generation = _normalize_generation_payload(
-            payload,
-        )
-        _validate_generation_against_pro_plan(
-            generation, _require_mapping(state["professional_plan"], "professional_plan")
+            validator=validate_generation,
+            repair_event_sink=repair_event_sink,
         )
         return {
             "generation": generation,
@@ -468,24 +572,35 @@ class ProLyricsNodes:
             "title": generation["title"],
             "llm_calls": _record_llm_call(state, "generate_lyrics", llm_call),
             "stages": _append_stage(state, "generate_lyrics", provider),
+            **_repair_state_update(state, "generate_lyrics", repair_attempts),
         }
 
-    async def review_quality(self, state: CreationState) -> dict:
-        payload, provider, llm_call = await _generate_json_object(
+    async def review_quality(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
+        review, provider, llm_call, repair_attempts = await _generate_validated_json_object(
             self.backend,
             "review_quality",
             {"review_context": _review_context(state)},
             _quality_review_prompt,
             prompt_pack=_prompt_pack(state),
+            validator=_normalize_quality_review,
+            repair_event_sink=repair_event_sink,
         )
-        review = _normalize_quality_review(payload)
         return {
             "quality_review": review,
             "llm_calls": _record_llm_call(state, "review_quality", llm_call),
             "stages": _append_stage(state, "review_quality", provider),
+            **_repair_state_update(state, "review_quality", repair_attempts),
         }
 
-    async def repair_lyrics(self, state: CreationState) -> dict:
+    async def repair_lyrics(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
         review = _require_mapping(state["quality_review"], "quality_review")
         generation = _require_mapping(state["generation"], "generation")
         if review["decision"] != DECISION_REPAIR:
@@ -495,7 +610,14 @@ class ProLyricsNodes:
                 "stages": _append_stage(state, "repair_lyrics", "gate"),
             }
 
-        payload, provider, llm_call = await _generate_json_object(
+        professional_plan = _require_mapping(state["professional_plan"], "professional_plan")
+
+        def validate_repaired_generation(payload: dict[str, Any]) -> dict[str, Any]:
+            repaired = _normalize_generation_payload(payload)
+            _validate_generation_against_pro_plan(repaired, professional_plan)
+            return repaired
+
+        repaired, provider, llm_call, repair_attempts = await _generate_validated_json_object(
             self.backend,
             "repair_lyrics",
             {
@@ -506,12 +628,8 @@ class ProLyricsNodes:
             },
             _repair_lyrics_prompt,
             prompt_pack=_prompt_pack(state),
-        )
-        repaired = _normalize_generation_payload(
-            payload,
-        )
-        _validate_generation_against_pro_plan(
-            repaired, _require_mapping(state["professional_plan"], "professional_plan")
+            validator=validate_repaired_generation,
+            repair_event_sink=repair_event_sink,
         )
         repaired_review = dict(review)
         repaired_review["repair_attempted"] = True
@@ -524,9 +642,14 @@ class ProLyricsNodes:
             "title": repaired["title"],
             "llm_calls": _record_llm_call(state, "repair_lyrics", llm_call),
             "stages": _append_stage(state, "repair_lyrics", provider),
+            **_repair_state_update(state, "repair_lyrics", repair_attempts),
         }
 
-    async def normalize_suno_format(self, state: CreationState) -> dict:
+    async def normalize_suno_format(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
         generation = _normalize_generation_format(
             _require_mapping(state["generation"], "generation"),
         )
@@ -539,7 +662,11 @@ class ProLyricsNodes:
             "stages": _append_stage(state, "normalize_suno_format", "normalizer"),
         }
 
-    async def refine_title(self, state: CreationState) -> dict:
+    async def refine_title(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
         review = _require_mapping(state["quality_review"], "quality_review")
         generation = _require_mapping(state["generation"], "generation")
         if not review["submit_suno"]:
@@ -550,7 +677,12 @@ class ProLyricsNodes:
                 "stages": _append_stage(state, "refine_title", "gate"),
             }
 
-        payload, provider, llm_call = await _generate_json_object(
+        (
+            title_refinement,
+            provider,
+            llm_call,
+            repair_attempts,
+        ) = await _generate_validated_json_object(
             self.backend,
             "refine_title",
             {
@@ -561,16 +693,22 @@ class ProLyricsNodes:
             },
             _title_refinement_prompt,
             prompt_pack=_prompt_pack(state),
+            validator=lambda payload: _normalize_title_refinement(payload, generation),
+            repair_event_sink=repair_event_sink,
         )
-        title_refinement = _normalize_title_refinement(payload, generation)
         return {
             "title_refinement": title_refinement,
             "title": title_refinement["final_title"],
             "llm_calls": _record_llm_call(state, "refine_title", llm_call),
             "stages": _append_stage(state, "refine_title", provider),
+            **_repair_state_update(state, "refine_title", repair_attempts),
         }
 
-    async def build_response(self, state: CreationState) -> dict:
+    async def build_response(
+        self,
+        state: CreationState,
+        repair_event_sink: RepairEventSink | None = None,
+    ) -> dict:
         generation = _require_mapping(state["generation"], "generation")
         title_refinement = _require_mapping(state["title_refinement"], "title_refinement")
         title = str(title_refinement["final_title"]).strip()
@@ -583,6 +721,184 @@ class ProLyricsNodes:
             "final_draft": _build_final_draft(title=title, style=style, lyrics=lyrics),
             "stages": _append_stage(state, "build_response", "assembler"),
         }
+
+
+async def _generate_validated_json_object(
+    backend,
+    stage: str,
+    payload: dict[str, Any],
+    prompt_builder,
+    *,
+    prompt_pack: dict,
+    validator: Callable[[dict[str, Any]], Any],
+    repair_event_sink: RepairEventSink | None = None,
+) -> tuple[Any, str, dict[str, Any], list[dict[str, Any]]]:
+    parsed, provider, llm_call = await _generate_json_object(
+        backend,
+        stage,
+        payload,
+        prompt_builder,
+        prompt_pack=prompt_pack,
+    )
+    repair_attempts: list[dict[str, Any]] = []
+    try:
+        return validator(parsed), provider, llm_call, repair_attempts
+    except (TypeError, ValueError) as exc:
+        last_error: TypeError | ValueError = exc
+        invalid_output = parsed
+
+    for attempt in range(1, MAX_STAGE_REPAIR_ATTEMPTS + 1):
+        if repair_event_sink is not None:
+            repair_event_sink(
+                {
+                    "type": "node_status",
+                    "node_id": stage,
+                    "status": "repairing",
+                    "attempt": attempt,
+                    "detail": str(last_error),
+                }
+            )
+        repair_payload, repair_provider, repair_llm_call = await _repair_json_object(
+            backend,
+            stage,
+            original_payload=payload,
+            invalid_output=invalid_output,
+            validation_error=last_error,
+            attempt=attempt,
+            prompt_pack=prompt_pack,
+        )
+        attempt_record = _repair_attempt_record(
+            attempt=attempt,
+            validation_error=last_error,
+            llm_call=repair_llm_call,
+        )
+        repair_attempts.append(attempt_record)
+        try:
+            validated = validator(repair_payload)
+        except (TypeError, ValueError) as exc:
+            attempt_record["repair_failed_error"] = str(exc)
+            last_error = exc
+            invalid_output = repair_payload
+            continue
+        llm_call = dict(llm_call)
+        llm_call["repair_attempts"] = repair_attempts
+        return validated, repair_provider, llm_call, repair_attempts
+
+    raise ValueError(
+        f"{stage} output contract failed after {MAX_STAGE_REPAIR_ATTEMPTS} "
+        f"repair attempts: {last_error}"
+    ) from last_error
+
+
+async def _repair_json_object(
+    backend,
+    stage: str,
+    *,
+    original_payload: dict[str, Any],
+    invalid_output: dict[str, Any],
+    validation_error: BaseException,
+    attempt: int,
+    prompt_pack: dict,
+) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    repair_input = {
+        "stage": stage,
+        "attempt": attempt,
+        "validation_error": str(validation_error),
+        "original_input": original_payload,
+        "invalid_output": invalid_output,
+        "output_schema": stage_output_schema(stage),
+    }
+    content = (
+        f"YTS_PRO_STAGE_REPAIR: {stage}\n"
+        "Repair this stage output so it satisfies the exact contract. "
+        "Return only one strict JSON object. Do not explain the repair.\n"
+        f"Validation error:\n{validation_error}\n"
+        "Return JSON object matching this shape:\n"
+        f"{json.dumps(stage_output_schema(stage), ensure_ascii=False)}\n"
+        "Repair Input JSON:\n"
+        f"{json.dumps(repair_input, ensure_ascii=False, default=str)}"
+    )
+    messages = [
+        {
+            "role": "system",
+            "content": pro_lyrics_system_prompt(prompt_pack, stage),
+        },
+        {"role": "user", "content": content},
+    ]
+    logger.info(
+        "pro_lyrics.llm.repair_requested",
+        stage=stage,
+        attempt=attempt,
+        backend=getattr(backend, "name", type(backend).__name__),
+        prompt_pack_version=prompt_pack.get("version"),
+        validation_error=str(validation_error),
+        response_format="json_object",
+    )
+    started_at = perf_counter()
+    try:
+        response = await backend.generate_text(
+            messages,
+            response_format={"type": "json_object"},
+        )
+    except Exception as exc:
+        logger.exception(
+            "pro_lyrics.llm.repair_failed",
+            stage=stage,
+            attempt=attempt,
+            backend=getattr(backend, "name", type(backend).__name__),
+            error_type=type(exc).__name__,
+            duration_ms=max(0, int(round((perf_counter() - started_at) * 1000))),
+        )
+        raise
+    duration_ms = max(0, int(round((perf_counter() - started_at) * 1000)))
+    logger.info(
+        "pro_lyrics.llm.repair_completed",
+        stage=stage,
+        attempt=attempt,
+        provider=response.provider,
+        model=response.model,
+        duration_ms=duration_ms,
+        response_chars=len(response.text),
+    )
+    parsed = _parse_json_response(
+        stage,
+        response.text,
+        provider=response.provider,
+        model=response.model,
+        duration_ms=duration_ms,
+        repair_attempt=attempt,
+    )
+    return (
+        parsed,
+        response.provider,
+        {
+            "stage": stage,
+            "attempt": attempt,
+            "provider": response.provider,
+            "model": response.model,
+            "duration_ms": duration_ms,
+            "input_messages": messages,
+            "response_text": response.text,
+            "parsed_json": parsed,
+        },
+    )
+
+
+def _repair_attempt_record(
+    *,
+    attempt: int,
+    validation_error: BaseException,
+    llm_call: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "attempt": attempt,
+        "validation_error": str(validation_error),
+        "provider": llm_call["provider"],
+        "model": llm_call["model"],
+        "duration_ms": llm_call["duration_ms"],
+        "response_text": llm_call["response_text"],
+        "parsed_json": llm_call["parsed_json"],
+    }
 
 
 async def _generate_json_object(
@@ -635,40 +951,13 @@ async def _generate_json_object(
         duration_ms=duration_ms,
         response_chars=len(response.text),
     )
-    content = _strip_json_fence(response.text)
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError as exc:
-        logger.warning(
-            "pro_lyrics.llm.invalid_json",
-            stage=stage,
-            provider=response.provider,
-            model=response.model,
-            duration_ms=duration_ms,
-            response_chars=len(response.text),
-            line=exc.lineno,
-            column=exc.colno,
-            response_excerpt=_response_excerpt(content),
-        )
-        raise ValueError(
-            f"{stage} must return a strict JSON object: {_json_decode_message(exc)} "
-            f"at line {exc.lineno} column {exc.colno}; response starts with "
-            f"{_response_excerpt(content)!r}"
-        ) from exc
-    if not isinstance(parsed, dict):
-        logger.warning(
-            "pro_lyrics.llm.invalid_shape",
-            stage=stage,
-            provider=response.provider,
-            model=response.model,
-            duration_ms=duration_ms,
-            parsed_type=type(parsed).__name__,
-            response_excerpt=_response_excerpt(content),
-        )
-        raise ValueError(
-            f"{stage} must return a strict JSON object: got {type(parsed).__name__}; "
-            f"response starts with {_response_excerpt(content)!r}"
-        )
+    parsed = _parse_json_response(
+        stage,
+        response.text,
+        provider=response.provider,
+        model=response.model,
+        duration_ms=duration_ms,
+    )
     return (
         parsed,
         response.provider,
@@ -682,6 +971,54 @@ async def _generate_json_object(
             "parsed_json": parsed,
         },
     )
+
+
+def _parse_json_response(
+    stage: str,
+    text: str,
+    *,
+    provider: str,
+    model: str,
+    duration_ms: int,
+    repair_attempt: int | None = None,
+) -> dict[str, Any]:
+    content = _strip_json_fence(text)
+    log_context: dict[str, Any] = {
+        "stage": stage,
+        "provider": provider,
+        "model": model,
+        "duration_ms": duration_ms,
+        "response_chars": len(text),
+    }
+    if repair_attempt is not None:
+        log_context["repair_attempt"] = repair_attempt
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "pro_lyrics.llm.invalid_json",
+            **log_context,
+            line=exc.lineno,
+            column=exc.colno,
+            response_excerpt=_response_excerpt(content),
+        )
+        raise ValueError(
+            f"{stage} must return a strict JSON object: {_json_decode_message(exc)} "
+            f"at line {exc.lineno} column {exc.colno}; response starts with "
+            f"{_response_excerpt(content)!r}"
+        ) from exc
+    if not isinstance(parsed, dict):
+        logger.warning(
+            "pro_lyrics.llm.invalid_shape",
+            **log_context,
+            parsed_type=type(parsed).__name__,
+            response_excerpt=_response_excerpt(content),
+        )
+        raise ValueError(
+            f"{stage} must return a strict JSON object: got {type(parsed).__name__}; "
+            f"response starts with {_response_excerpt(content)!r}"
+        )
+    return parsed
 
 
 def _json_decode_message(exc: json.JSONDecodeError) -> str:

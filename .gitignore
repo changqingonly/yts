@@ -2,6 +2,7 @@
 .pytest_cache/
 .ruff_cache/
 __pycache__/
+.python-version
 *.pyc
 *.egg-info/
 logs/
@@ -11,6 +12,8 @@ docs/
 .python-version
 .env
 .tools/
+.cache/
+.claude/
 conf/*.env
 !conf/*.example.env
 *.db
@@ -19,7 +22,7 @@ conf/*.env
 data/zvec/
 data/*.csv
 data/famous_song.jsonl
-
+.superpowers/
 
 # --- Rust / Tauri ---
 target/

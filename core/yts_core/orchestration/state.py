@@ -34,6 +34,7 @@ class CreationState(TypedDict, total=False):
     quality_review: dict
     title_refinement: dict
     llm_calls: dict[str, dict]
+    node_repairs: dict[str, list[dict]]
     # 控制 + 轨迹
     retry: bool
     retries: int

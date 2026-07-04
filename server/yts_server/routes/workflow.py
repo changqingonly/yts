@@ -85,9 +85,9 @@ async def run_workflow_stream(workflow_id: str, websocket: WebSocket) -> None:
             raise ValueError("workflow stream expected type=run")
         _require_workflow_template(workflow_id)
         settings = get_settings()
-        checkpointer = build_langgraph_checkpointer(settings)
         async with get_sessionmaker()() as session:
             user = await billing_user_if_required(session, message.authorization)
+            checkpointer = build_langgraph_checkpointer(settings)
             async with GenerationBillingGuard(
                 session=session,
                 user=user,
@@ -133,9 +133,7 @@ async def run_workflow_stream(workflow_id: str, websocket: WebSocket) -> None:
             code=exc.code,
             detail=exc.message,
         )
-        await websocket.send_json(
-            {"type": "error", "code": exc.code, "detail": exc.message}
-        )
+        await websocket.send_json({"type": "error", "code": exc.code, "detail": exc.message})
     finally:
         await _close_websocket(websocket)
 
@@ -149,7 +147,6 @@ async def resume_workflow_stream(workflow_id: str, thread_id: str, websocket: We
             raise ValueError("workflow stream expected type=resume")
         _require_workflow_template(workflow_id)
         settings = get_settings()
-        checkpointer = build_langgraph_checkpointer(settings)
         decision = HumanDecision(
             node_id=message.node_id,
             action=message.action,
@@ -159,6 +156,7 @@ async def resume_workflow_stream(workflow_id: str, thread_id: str, websocket: We
         )
         async with get_sessionmaker()() as session:
             user = await billing_user_if_required(session, message.authorization)
+            checkpointer = build_langgraph_checkpointer(settings)
             await websocket.send_json({"type": "started", "mode": "resume"})
             async for event in stream_resume_workflow_thread(
                 thread_id=thread_id,
@@ -195,9 +193,7 @@ async def resume_workflow_stream(workflow_id: str, thread_id: str, websocket: We
             code=exc.code,
             detail=exc.message,
         )
-        await websocket.send_json(
-            {"type": "error", "code": exc.code, "detail": exc.message}
-        )
+        await websocket.send_json({"type": "error", "code": exc.code, "detail": exc.message})
     finally:
         await _close_websocket(websocket)
 
@@ -210,8 +206,8 @@ async def run_workflow(
     authorization: str | None = Header(default=None),
 ) -> WorkflowRunResult:
     settings = get_settings()
-    checkpointer = build_langgraph_checkpointer(settings)
     user = await billing_user_if_required(session, authorization)
+    checkpointer = build_langgraph_checkpointer(settings)
     async with GenerationBillingGuard(
         session=session,
         user=user,
@@ -276,8 +272,8 @@ async def resume_workflow(
 ) -> WorkflowRunResult:
     _require_workflow_template(workflow_id)
     settings = get_settings()
-    checkpointer = build_langgraph_checkpointer(settings)
     user = await billing_user_if_required(session, authorization)
+    checkpointer = build_langgraph_checkpointer(settings)
     logger.info(
         "workflow.resume.requested",
         workflow_id=workflow_id,
@@ -389,6 +385,9 @@ async def _send_stream_event(websocket: WebSocket, event) -> None:
         await websocket.send_json(
             {"type": "result", "result": event.result.model_dump(mode="json")}
         )
+        return
+    if event.type == "node_status":
+        await websocket.send_json(event.model_dump(mode="json", exclude_none=True))
         return
     raise ValueError(f"unsupported workflow stream event: {event.type}")
 

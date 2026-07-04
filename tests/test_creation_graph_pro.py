@@ -760,6 +760,7 @@ async def test_run_creation_reports_strict_json_parse_context() -> None:
             CreationRequest(user_prompt="下雨的午后，大雨倾盆，思念远方的故人"),
             backend=backend,
         )
+    assert backend.repair_called_stages == []
 
 
 @pytest.mark.asyncio
@@ -821,6 +822,64 @@ async def test_run_creation_rejects_generated_hook_drift() -> None:
             CreationRequest(user_prompt="下雨的午后，大雨倾盆，思念远方的故人"),
             backend=backend,
         )
+
+
+@pytest.mark.asyncio
+async def test_generate_lyrics_self_repairs_missing_hook_repetition() -> None:
+    service._graph_cache.clear()
+    broken_generation = deepcopy(_PAYLOADS["generate_lyrics"])
+    broken_generation["lyric_prompt"] = broken_generation["lyric_prompt"].replace(
+        "[Chorus]\n"
+        "雨落旧窗前\n"
+        "雨落旧窗前\n",
+        "[Chorus]\n"
+        "午后的城慢慢暗下来\n"
+        "旧照片在雨里发亮\n",
+    )
+    repaired_generation = deepcopy(_PAYLOADS["generate_lyrics"])
+    repaired_generation["title"] = "雨中自修复"
+    backend = _FakeProBackend(
+        overrides={"generate_lyrics": broken_generation},
+        repair_overrides={"generate_lyrics": [repaired_generation]},
+    )
+
+    result = await service.run_creation(
+        CreationRequest(user_prompt="下雨的午后，大雨倾盆，思念远方的故人"),
+        backend=backend,
+    )
+
+    assert "雨落旧窗前" in result.lyrics
+    assert backend.repair_called_stages == ["generate_lyrics"]
+    repair_input = backend.repair_input_payloads["generate_lyrics"][0]
+    assert "generation.lyric_prompt section [Chorus] must repeat selected_hook" in repair_input[
+        "validation_error"
+    ]
+    assert repair_input["invalid_output"]["title"] == "雨中旧窗"
+    assert repair_input["attempt"] == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_lyrics_exhausts_self_repair_attempts_for_missing_required_field() -> None:
+    service._graph_cache.clear()
+    broken_generation = _payload_without("generate_lyrics", "style_prompt")
+    backend = _FakeProBackend(
+        overrides={"generate_lyrics": broken_generation},
+        repair_overrides={"generate_lyrics": [broken_generation, broken_generation]},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "generate_lyrics output contract failed after 2 repair attempts: "
+            "generation.style_prompt must not be empty"
+        ),
+    ):
+        await service.run_creation(
+            CreationRequest(user_prompt="下雨的午后，大雨倾盆，思念远方的故人"),
+            backend=backend,
+        )
+
+    assert backend.repair_called_stages == ["generate_lyrics", "generate_lyrics"]
 
 
 @pytest.mark.asyncio
@@ -1015,18 +1074,39 @@ class _FakeProBackend:
         self,
         overrides: dict[str, dict] | None = None,
         raw_overrides: dict[str, str] | None = None,
+        repair_overrides: dict[str, list[dict]] | None = None,
     ) -> None:
         self.payloads = deepcopy(_PAYLOADS)
         for stage, payload in (overrides or {}).items():
             self.payloads[stage] = payload
         self.raw_overrides = raw_overrides or {}
+        self.repair_payloads = {
+            stage: [deepcopy(item) for item in payloads]
+            for stage, payloads in (repair_overrides or {}).items()
+        }
         self.called_stages: list[str] = []
+        self.repair_called_stages: list[str] = []
         self.response_formats: list[str | None] = []
         self.input_payloads: dict[str, dict] = {}
+        self.repair_input_payloads: dict[str, list[dict]] = {}
         self.input_prompts: dict[str, str] = {}
 
     async def generate_text(self, messages, *, model=None, fallbacks=None, response_format=None) -> TextResult:
         content = messages[-1]["content"]
+        repair_marker = "YTS_PRO_STAGE_REPAIR:"
+        if repair_marker in content:
+            stage = content.split(repair_marker, 1)[1].splitlines()[0].strip()
+            self.repair_called_stages.append(stage)
+            self.response_formats.append(response_format.get("type") if isinstance(response_format, dict) else None)
+            self.input_prompts[f"repair:{stage}"] = content
+            input_marker = "Repair Input JSON:\n"
+            if input_marker in content:
+                self.repair_input_payloads.setdefault(stage, []).append(
+                    json.loads(content.split(input_marker, 1)[1])
+                )
+            payloads = self.repair_payloads.get(stage)
+            payload = payloads.pop(0) if payloads else self.payloads[stage]
+            return TextResult(text=json.dumps(payload, ensure_ascii=False), provider="fake", model="fake")
         marker = "YTS_PRO_STAGE:"
         if marker not in content:
             raise AssertionError(f"missing pro stage marker in prompt: {content[:120]}")

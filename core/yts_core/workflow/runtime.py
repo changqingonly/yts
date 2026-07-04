@@ -9,6 +9,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 import structlog
+from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
@@ -110,9 +111,13 @@ class WorkflowRunResult(BaseModel):
 
 
 class WorkflowStreamEvent(BaseModel):
-    type: Literal["trace", "result"]
+    type: Literal["trace", "result", "node_status"]
     trace: WorkflowTrace | None = None
     result: WorkflowRunResult | None = None
+    node_id: str | None = None
+    status: str | None = None
+    attempt: int | None = None
+    detail: str | None = None
 
 
 class WorkflowState(CreationState, total=False):
@@ -121,6 +126,7 @@ class WorkflowState(CreationState, total=False):
     node_config: dict[str, dict[str, Any]]
     trace_nodes: list[dict[str, Any]]
     creation_result: dict[str, Any]
+    node_repairs: dict[str, list[dict[str, Any]]]
 
 
 _PRO_STAGE_LOOP_LOCK = Lock()
@@ -461,8 +467,16 @@ async def _stream_graph_values(
 
     def run_stream() -> None:
         try:
-            for state in graph.stream(input_value, config, stream_mode="values"):
-                loop.call_soon_threadsafe(queue.put_nowait, ("state", dict(state)))
+            for chunk in graph.stream(input_value, config, stream_mode=["values", "custom"]):
+                if not isinstance(chunk, tuple) or len(chunk) != 2:
+                    raise ValueError("workflow stream chunk must be a (mode, payload) tuple")
+                mode, payload = chunk
+                if mode == "values":
+                    loop.call_soon_threadsafe(queue.put_nowait, ("state", dict(payload)))
+                elif mode == "custom":
+                    loop.call_soon_threadsafe(queue.put_nowait, ("custom", payload))
+                else:
+                    raise ValueError(f"unsupported workflow stream mode: {mode}")
             loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
         except Exception as exc:
             loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
@@ -477,6 +491,9 @@ async def _stream_graph_values(
                 break
             if kind == "error":
                 raise payload
+            if kind == "custom":
+                yield _stream_event_from_custom_payload(payload)
+                continue
             state = payload
             latest_state = state
             waiting = _interrupt_from_state(state)
@@ -504,6 +521,34 @@ async def _stream_graph_values(
             duration_ms=_elapsed_ms(started_at),
         )
         raise
+
+
+def _stream_event_from_custom_payload(payload: Any) -> WorkflowStreamEvent:
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"workflow custom stream payload must be an object, got {type(payload).__name__}"
+        )
+    if payload.get("type") != "node_status":
+        raise ValueError(f"unsupported workflow custom stream event: {payload.get('type')}")
+    node_id = payload.get("node_id")
+    status = payload.get("status")
+    if not isinstance(node_id, str) or not node_id.strip():
+        raise ValueError("workflow node_status event requires node_id")
+    if not isinstance(status, str) or not status.strip():
+        raise ValueError("workflow node_status event requires status")
+    attempt = payload.get("attempt")
+    if attempt is not None and not isinstance(attempt, int):
+        raise ValueError("workflow node_status event attempt must be an integer")
+    detail = payload.get("detail")
+    if detail is not None and not isinstance(detail, str):
+        raise ValueError("workflow node_status event detail must be a string")
+    return WorkflowStreamEvent(
+        type="node_status",
+        node_id=node_id,
+        status=status,
+        attempt=attempt,
+        detail=detail,
+    )
 
 
 class _TemplateNodeRegistry:
@@ -545,7 +590,11 @@ class _TemplateNodeRegistry:
                 stage=stage,
             )
             try:
-                update = _run_pro_stage(stage_fn, state)
+                update = _run_pro_stage(
+                    stage_fn,
+                    state,
+                    repair_event_sink=_current_stream_event_sink(),
+                )
             except Exception as exc:
                 logger.exception(
                     "workflow.node.failed",
@@ -771,12 +820,24 @@ def _terminal_node_ids(template: WorkflowDefinition) -> list[str]:
 
 
 def _run_pro_stage(
-    stage_fn: Callable[[WorkflowState], Awaitable[dict[str, Any]]],
+    stage_fn: Callable[..., Awaitable[dict[str, Any]]],
     state: WorkflowState,
+    *,
+    repair_event_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     loop = _pro_stage_event_loop()
-    future = asyncio.run_coroutine_threadsafe(stage_fn(state), loop)
+    future = asyncio.run_coroutine_threadsafe(
+        stage_fn(state, repair_event_sink=repair_event_sink),
+        loop,
+    )
     return _pro_stage_result(future)
+
+
+def _current_stream_event_sink() -> Callable[[dict[str, Any]], None] | None:
+    try:
+        return get_stream_writer()
+    except RuntimeError:
+        return None
 
 
 def _pro_stage_result(future: Future) -> dict[str, Any]:
@@ -1014,23 +1075,38 @@ def _trace_artifact_preview(state: dict[str, Any], node_id: str) -> dict[str, An
 
 
 def _trace_metrics(state: dict[str, Any], node_id: str) -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
     if node_id == "plan_music_style":
         candidates = _require_trace_mapping(state, node_id, "music_style_plan").get(
             "style_candidates", []
         )
-        return {"candidate_count": len(candidates) if isinstance(candidates, list) else 0}
-    if node_id == "hook_lab":
+        metrics["candidate_count"] = len(candidates) if isinstance(candidates, list) else 0
+    elif node_id == "hook_lab":
         candidates = _require_trace_mapping(state, node_id, "hook_lab").get("candidates", [])
-        return {"candidate_count": len(candidates) if isinstance(candidates, list) else 0}
-    if node_id == "draft_structure_blueprints":
+        metrics["candidate_count"] = len(candidates) if isinstance(candidates, list) else 0
+    elif node_id == "draft_structure_blueprints":
         blueprints = _require_trace_mapping(state, node_id, "structure_blueprints").get(
             "blueprints", []
         )
-        return {"candidate_count": len(blueprints) if isinstance(blueprints, list) else 0}
-    if node_id == "generate_lyrics":
+        metrics["candidate_count"] = len(blueprints) if isinstance(blueprints, list) else 0
+    elif node_id == "generate_lyrics":
         lyrics = str(_require_trace_mapping(state, node_id, "generation").get("lyric_prompt", ""))
-        return {"lyric_chars": len(lyrics)}
-    return {}
+        metrics["lyric_chars"] = len(lyrics)
+    repairs = state.get("node_repairs", {})
+    if not isinstance(repairs, dict):
+        raise ValueError("workflow state node_repairs must be an object")
+    repair_attempts = repairs.get(node_id, [])
+    if repair_attempts:
+        if not isinstance(repair_attempts, list):
+            raise ValueError(f"workflow trace {node_id} node_repairs must be a list")
+        metrics["repaired"] = True
+        metrics["repair_attempt_count"] = len(repair_attempts)
+        metrics["repair_errors"] = [
+            str(attempt.get("validation_error", ""))
+            for attempt in repair_attempts
+            if isinstance(attempt, dict)
+        ]
+    return metrics
 
 
 def _require_trace_mapping(state: dict[str, Any], node_id: str, key: str) -> dict[str, Any]:

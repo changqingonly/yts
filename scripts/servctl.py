@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -11,6 +13,7 @@ import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from string import Formatter
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -20,6 +23,7 @@ DEFAULT_HEALTH_TIMEOUT_SECONDS = 30.0
 RUN_DIR_NAME = "run"
 REMOVED_CONFIG_ENV_NAMES = ("YTS_CONFIG_FILE", "YTS_CONFIG_HOME")
 SUPPORTED_INFERENCE_BACKENDS = ("echo", "cloud", "openai", "candle", "pro-fixture")
+SKIP_STARTUP_DB_BOOTSTRAP_ENV = "YTS_SKIP_STARTUP_DB_BOOTSTRAP"
 
 
 class ServctlError(RuntimeError):
@@ -51,6 +55,7 @@ class FrontendProcessConfig:
 
 
 RunCommand = Callable[..., None]
+ProgressReporter = Callable[[str], None]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -64,6 +69,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "install":
             install(root)
         elif args.command == "start":
+            progress = _console_progress
+            print(f"servctl: starting profile={args.profile}", flush=True)
             start(
                 root,
                 args.profile,
@@ -72,9 +79,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                 reload=args.reload,
                 frontend_host=args.frontend_host,
                 frontend_port=args.frontend_port,
+                progress=progress,
+            )
+            print(
+                "servctl: started "
+                f"profile={args.profile} "
+                f"backend=http://{args.host}:{args.port} "
+                f"frontend=http://{args.frontend_host}:{args.frontend_port}",
+                flush=True,
             )
         elif args.command == "stop":
-            stop(root, args.profile)
+            progress = _console_progress
+            print(f"servctl: stopping profile={args.profile}", flush=True)
+            stop(
+                root,
+                args.profile,
+                host=args.host,
+                port=args.port,
+                frontend_host=args.frontend_host,
+                frontend_port=args.frontend_port,
+                progress=progress,
+            )
+            print(f"servctl: stopped profile={args.profile}", flush=True)
         elif args.command == "restart":
             restart(
                 root,
@@ -120,7 +146,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     stop_parser = subparsers.add_parser("stop", help="stop the FastAPI server and web frontend")
-    stop_parser.add_argument("--profile", default="cloud", choices=["cloud", "local"])
+    _add_server_args(stop_parser)
+    _add_frontend_args(stop_parser)
 
     restart_parser = subparsers.add_parser(
         "restart", help="deploy, stop, then start the FastAPI server and web frontend"
@@ -186,14 +213,21 @@ def start(
     start_backend_func: Callable[..., None] | None = None,
     start_frontend_func: Callable[..., None] | None = None,
     stop_backend_func: Callable[[Path, str], None] | None = None,
+    progress: ProgressReporter | None = None,
 ) -> None:
     start_backend_func = start_backend_func or start_server
     start_frontend_func = start_frontend_func or start_frontend
     stop_backend_func = stop_backend_func or stop_server
-    start_backend_func(root, profile, host=host, port=port, reload=reload)
+    backend_kwargs = {"host": host, "port": port, "reload": reload}
+    frontend_kwargs = {"host": frontend_host, "port": frontend_port}
+    if progress is not None:
+        backend_kwargs["progress"] = progress
+        frontend_kwargs["progress"] = progress
+    start_backend_func(root, profile, **backend_kwargs)
     try:
-        start_frontend_func(root, profile, host=frontend_host, port=frontend_port)
+        start_frontend_func(root, profile, **frontend_kwargs)
     except Exception:
+        _report_progress(progress, "frontend failed; stopping backend")
         stop_backend_func(root, profile)
         raise
 
@@ -210,6 +244,7 @@ def start_server(
     wait_health: Callable[[str, int, float], None] | None = None,
     is_process_running: Callable[[int], bool] | None = None,
     terminate_process: Callable[[int], None] | None = None,
+    progress: ProgressReporter | None = None,
 ) -> None:
     preflight = preflight or run_preflight_checks
     spawn = spawn or spawn_server_process
@@ -221,7 +256,13 @@ def start_server(
     if existing_pid is not None and is_process_running(existing_pid):
         raise ServctlError(f"server already running for profile {profile}: pid {existing_pid}")
 
+    backend_url = _http_url(host, port)
+    _report_progress(progress, f"preparing backend log: {config.log_path.name}")
+    _prepare_log_file(config.log_path)
+    _report_progress(progress, f"checking backend dependencies: {backend_url}")
     preflight(root, profile, port, host)
+    config.env[SKIP_STARTUP_DB_BOOTSTRAP_ENV] = "1"
+    _report_progress(progress, f"starting backend listener: {backend_url}")
     pid = spawn(config)
     _write_pid(config.pid_path, pid)
     try:
@@ -231,15 +272,20 @@ def start_server(
         if config.pid_path.exists():
             config.pid_path.unlink()
         raise
+    _report_progress(progress, f"backend ready: {backend_url}")
 
 
 def stop_server(
     root: Path,
     profile: str,
     *,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
     timeout_seconds: float = 10.0,
     is_process_running_func: Callable[[int], bool] | None = None,
+    wait_port_release_func: Callable[[str, int, float, str], None] | None = None,
 ) -> None:
+    wait_port_release_func = wait_port_release_func or _wait_for_port_release
     _stop_pid_file_process(
         _pid_path(root, profile),
         "server",
@@ -247,6 +293,7 @@ def stop_server(
         timeout_seconds=timeout_seconds,
         is_process_running_func=is_process_running_func,
     )
+    wait_port_release_func(host, port, timeout_seconds, "backend")
 
 
 def start_frontend(
@@ -259,6 +306,7 @@ def start_frontend(
     wait_ready: Callable[[str, int, float], None] | None = None,
     is_process_running: Callable[[int], bool] | None = None,
     terminate_process: Callable[[int], None] | None = None,
+    progress: ProgressReporter | None = None,
 ) -> None:
     spawn = spawn or spawn_frontend_process
     wait_ready = wait_ready or wait_for_frontend
@@ -266,6 +314,9 @@ def start_frontend(
     terminate_process = terminate_process or _terminate_process
     config = _frontend_process_config(root, profile, host=host, port=port)
     index_path = config.frontend_dir / "dist" / "index.html"
+    _report_progress(progress, f"preparing frontend log: {config.log_path.name}")
+    _prepare_log_file(config.log_path)
+    _report_progress(progress, f"checking frontend build: {index_path}")
     _require_file(
         index_path,
         f"missing frontend build: {index_path}; run ./servctl deploy --profile {profile}",
@@ -274,6 +325,9 @@ def start_frontend(
     if existing_pid is not None and is_process_running(existing_pid):
         raise ServctlError(f"frontend already running for profile {profile}: pid {existing_pid}")
 
+    _ensure_port_available(host, port, "frontend")
+    frontend_url = _http_url(host, port)
+    _report_progress(progress, f"starting frontend listener: {frontend_url}")
     pid = spawn(config)
     _write_pid(config.pid_path, pid)
     try:
@@ -283,15 +337,20 @@ def start_frontend(
         if config.pid_path.exists():
             config.pid_path.unlink()
         raise
+    _report_progress(progress, f"frontend ready: {frontend_url}")
 
 
 def stop_frontend(
     root: Path,
     profile: str,
     *,
+    host: str = DEFAULT_FRONTEND_HOST,
+    port: int = DEFAULT_FRONTEND_PORT,
     timeout_seconds: float = 10.0,
     is_process_running_func: Callable[[int], bool] | None = None,
+    wait_port_release_func: Callable[[str, int, float, str], None] | None = None,
 ) -> None:
+    wait_port_release_func = wait_port_release_func or _wait_for_port_release
     _stop_pid_file_process(
         _frontend_pid_path(root, profile),
         "frontend",
@@ -299,24 +358,34 @@ def stop_frontend(
         timeout_seconds=timeout_seconds,
         is_process_running_func=is_process_running_func,
     )
+    wait_port_release_func(host, port, timeout_seconds, "frontend")
 
 
 def stop(
     root: Path,
     profile: str,
     *,
-    stop_backend_func: Callable[[Path, str], None] = stop_server,
-    stop_frontend_func: Callable[[Path, str], None] = stop_frontend,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    frontend_host: str = DEFAULT_FRONTEND_HOST,
+    frontend_port: int = DEFAULT_FRONTEND_PORT,
+    stop_backend_func: Callable[..., None] = stop_server,
+    stop_frontend_func: Callable[..., None] = stop_frontend,
+    progress: ProgressReporter | None = None,
 ) -> None:
     errors: list[str] = []
     frontend_pid_path = _frontend_pid_path(root, profile)
     if frontend_pid_path.exists():
         try:
-            stop_frontend_func(root, profile)
+            _report_progress(progress, "stopping frontend")
+            stop_frontend_func(root, profile, host=frontend_host, port=frontend_port)
+            _report_progress(progress, "frontend stopped")
         except ServctlError as exc:
             errors.append(f"frontend: {exc}")
     try:
-        stop_backend_func(root, profile)
+        _report_progress(progress, "stopping backend")
+        stop_backend_func(root, profile, host=host, port=port)
+        _report_progress(progress, "backend stopped")
     except ServctlError as exc:
         errors.append(f"backend: {exc}")
     if errors:
@@ -333,11 +402,18 @@ def restart(
     frontend_host: str = DEFAULT_FRONTEND_HOST,
     frontend_port: int = DEFAULT_FRONTEND_PORT,
     deploy_func: Callable[[Path, str], None] = deploy,
-    stop_func: Callable[[Path, str], None] = stop,
+    stop_func: Callable[..., None] = stop,
     start_func: Callable[..., None] = start,
 ) -> None:
     deploy_func(root, profile)
-    stop_func(root, profile)
+    stop_func(
+        root,
+        profile,
+        host=host,
+        port=port,
+        frontend_host=frontend_host,
+        frontend_port=frontend_port,
+    )
     start_func(
         root,
         profile,
@@ -392,6 +468,7 @@ def status(
 
 def run_preflight_checks(root: Path, profile: str, port: int, host: str) -> None:
     require_profile_config(root, profile)
+    _ensure_port_available(host, port, "backend")
     env = _command_env(root, profile)
     _run_python_probe(root, env, _preflight_python_code(port=port, host=host))
 
@@ -559,6 +636,63 @@ def _terminate_process(pid: int) -> None:
         return
 
 
+def _console_progress(message: str) -> None:
+    print(f"servctl: {message}", flush=True)
+
+
+def _report_progress(progress: ProgressReporter | None, message: str) -> None:
+    if progress is not None:
+        progress(message)
+
+
+def _http_url(host: str, port: int) -> str:
+    return f"http://{host}:{port}"
+
+
+def _prepare_log_file(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("ab"):
+        return
+
+
+def _ensure_port_available(host: str, port: int, process_name: str) -> None:
+    probe_host = _probe_host(host)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        result = sock.connect_ex((probe_host, port))
+    if result == 0:
+        raise ServctlError(f"{process_name} port is already in use: {host}:{port}")
+    if result != errno.ECONNREFUSED:
+        raise ServctlError(
+            f"{process_name} port probe failed for {host}:{port}: errno {result}"
+        )
+
+
+def _probe_host(host: str) -> str:
+    if host == "0.0.0.0":
+        return "127.0.0.1"
+    return host
+
+
+def _wait_for_port_release(
+    host: str,
+    port: int,
+    timeout_seconds: float,
+    process_name: str,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            _ensure_port_available(host, port, process_name)
+        except ServctlError:
+            time.sleep(0.1)
+            continue
+        return
+    raise ServctlError(
+        f"{process_name} port did not release within {timeout_seconds:.1f}s: {host}:{port}"
+    )
+
+
 def _server_process_config(
     root: Path,
     profile: str,
@@ -638,40 +772,73 @@ def _reject_removed_config_env() -> None:
 
 
 def _run_python_probe(root: Path, env: dict[str, str], code: str) -> None:
-    subprocess.check_call(["uv", "run", "python", "-c", code], cwd=root, env=env)
+    completed = subprocess.run(
+        ["uv", "run", "python", "-c", code],
+        cwd=root,
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if completed.returncode == 0:
+        return
+    output = _tail_lines(
+        "\n".join(
+            part.strip() for part in [completed.stdout, completed.stderr] if part.strip()
+        ),
+        40,
+    )
+    if not output:
+        output = "<no output>"
+    raise ServctlError(
+        f"preflight probe failed with exit code {completed.returncode}:\n{output}"
+    )
+
+
+def _tail_lines(value: str, line_count: int) -> str:
+    lines = value.splitlines()
+    return "\n".join(lines[-line_count:])
 
 
 def _preflight_python_code(*, port: int, host: str) -> str:
-    return f"""
+    return """
 import asyncio
-import socket
 
 from sqlalchemy import text
 
 from yts_core.config import get_settings
 from yts_core.inference.factory import make_backend
+from yts_core.orchestration.checkpointing import setup_langgraph_checkpointer
+from yts_server.db.bootstrap import create_all_tables
 from yts_server.db.session import get_engine
 from yts_server.main import create_app
 
 
 async def main():
-    settings = get_settings()
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(({host!r}, {port!r}))
-    engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.execute(text("SELECT 1"))
-    backend = make_backend(settings)
-    if settings.inference_backend == "pro-fixture":
-        messages = [{{"role": "user", "content": "YTS_PRO_STAGE: parse_intent"}}]
-    else:
-        messages = [{{"role": "user", "content": "Return the word ok."}}]
-    result = await backend.generate_text(messages)
-    if not result.text.strip():
-        raise RuntimeError("LLM preflight returned empty text")
-    app = create_app()
-    if app.state.settings.profile != settings.profile:
-        raise RuntimeError("app settings profile mismatch")
+    try:
+        settings = get_settings()
+        await create_all_tables()
+        if settings.langgraph_checkpoint_backend.strip().lower() == "postgres":
+            setup_langgraph_checkpointer(settings)
+        engine = get_engine()
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
+        backend = make_backend(settings)
+        if settings.inference_backend == "pro-fixture":
+            messages = [{"role": "user", "content": "YTS_PRO_STAGE: parse_intent"}]
+        else:
+            messages = [{"role": "user", "content": "Return the word ok."}]
+        try:
+            result = await backend.generate_text(messages)
+        except Exception as exc:
+            raise RuntimeError(f"LLM preflight failed: {type(exc).__name__}: {exc}") from exc
+        if not result.text.strip():
+            raise RuntimeError("LLM preflight returned empty text")
+        app = create_app()
+        if app.state.settings.profile != settings.profile:
+            raise RuntimeError("app settings profile mismatch")
+    except Exception as exc:
+        raise SystemExit(f"servctl preflight failed: {type(exc).__name__}: {exc}") from None
 
 
 asyncio.run(main())
@@ -683,7 +850,13 @@ def _pid_path(root: Path, profile: str) -> Path:
 
 
 def _log_path(root: Path, profile: str) -> Path:
-    return root / RUN_DIR_NAME / f"yts-server-{profile}.log"
+    settings = _profile_settings(root, profile)
+    return _configured_log_path(
+        root,
+        profile,
+        log_dir=settings.logging.dir,
+        file_template=settings.logging.backend_file,
+    )
 
 
 def _frontend_pid_path(root: Path, profile: str) -> Path:
@@ -691,7 +864,61 @@ def _frontend_pid_path(root: Path, profile: str) -> Path:
 
 
 def _frontend_log_path(root: Path, profile: str) -> Path:
-    return root / RUN_DIR_NAME / f"yts-frontend-{profile}.log"
+    settings = _profile_settings(root, profile)
+    return _configured_log_path(
+        root,
+        profile,
+        log_dir=settings.logging.dir,
+        file_template=settings.logging.frontend_file,
+    )
+
+
+def _profile_settings(root: Path, profile: str):
+    from yts_core.config import settings_from_env_mapping
+
+    env = load_profile_env(root, profile)
+    env["YTS_PROFILE"] = profile
+    try:
+        return settings_from_env_mapping(env)
+    except Exception as exc:
+        raise ServctlError(f"invalid profile config for {profile}: {exc}") from exc
+
+
+def _configured_log_path(root: Path, profile: str, *, log_dir: str, file_template: str) -> Path:
+    log_file = _format_log_file(file_template, profile)
+    log_file_path = Path(log_file)
+    if log_file_path.is_absolute():
+        raise ServctlError(
+            "logging file templates must be relative; configure absolute directories with "
+            "YTS_LOGGING_DIR"
+        )
+    if ".." in log_file_path.parts:
+        raise ServctlError("logging file templates must not contain '..'")
+
+    log_dir_path = Path(log_dir).expanduser()
+    if not log_dir_path.is_absolute():
+        log_dir_path = root / log_dir_path
+    return log_dir_path / log_file_path
+
+
+def _format_log_file(file_template: str, profile: str) -> str:
+    allowed_fields = {"profile"}
+    try:
+        parsed_template = list(Formatter().parse(file_template))
+    except ValueError as exc:
+        raise ServctlError(f"invalid log file template {file_template!r}: {exc}") from exc
+    for _, field_name, _, _ in parsed_template:
+        if field_name is None:
+            continue
+        if field_name not in allowed_fields:
+            raise ServctlError(
+                f"unsupported log file template variable {{{field_name}}}; "
+                "only {profile} is supported"
+            )
+    try:
+        return file_template.format(profile=profile)
+    except ValueError as exc:
+        raise ServctlError(f"invalid log file template {file_template!r}: {exc}") from exc
 
 
 def _stop_pid_file_process(
@@ -710,7 +937,7 @@ def _stop_pid_file_process(
         )
     if not is_process_running_func(pid):
         pid_path.unlink()
-        raise ServctlError(f"pid file exists but process is not running: {pid}")
+        return
 
     _terminate_process(pid)
     deadline = time.monotonic() + timeout_seconds

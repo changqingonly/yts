@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -17,6 +18,7 @@ from .routes import (
     creation,
     credits,
     health,
+    image,
     music,
     music_stream,
     provider_gated,
@@ -34,7 +36,8 @@ async def lifespan(app: FastAPI):
         from .eval.phoenix import init_phoenix
 
         init_phoenix()
-    await create_all_tables()
+    if os.environ.get("YTS_SKIP_STARTUP_DB_BOOTSTRAP") != "1":
+        await create_all_tables()
     try:
         yield
     finally:
@@ -59,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(song.router, prefix="/api")
     app.include_router(music.router, prefix="/api")
     app.include_router(provider_gated.router, prefix="/api")
+    app.include_router(image.router, prefix="/api")
     app.include_router(creation.router, prefix="/api")
     app.include_router(workflow.router, prefix="/api")
     app.include_router(transport.router, prefix="/api")

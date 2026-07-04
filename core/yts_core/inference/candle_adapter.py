@@ -38,8 +38,20 @@ class CandleInference:
             data = r.json()
         return TextResult(text=data["text"], provider="candle", model=data.get("model", "local"))
 
-    async def generate_image(self, prompt: str) -> bytes:
-        raise NotImplementedError("candle image (SD): TODO in candle-server")
+    async def generate_image(
+        self, prompt: str, *, width: int = 512, height: int = 512, steps: int = 20
+    ) -> bytes:
+        """经 candle-server /image 调 stable-diffusion.cpp(或占位 producer)。返回 PNG 字节。"""
+        import base64
+
+        async with httpx.AsyncClient(timeout=self._settings.candle_request_timeout_seconds) as c:
+            r = await c.post(
+                f"{self._base}/image",
+                json={"prompt": prompt, "width": width, "height": height, "steps": steps},
+            )
+            r.raise_for_status()
+            data = r.json()
+        return base64.b64decode(data["png_base64"])
 
     async def generate_speech(self, text: str) -> bytes:
         raise NotImplementedError("candle TTS: TODO in candle-server")

@@ -8,6 +8,7 @@
 //!
 //! 图片/语音/音乐(SD / Whisper+TTS / MusicGen)为 TODO。
 
+mod image;
 mod stream;
 
 use std::sync::Arc;
@@ -145,6 +146,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/candle/text", post(gen_text))
+        .route("/image", post(image::gen_image))
         .route("/music/stream", get(stream::music_stream_handler))
         .with_state(engine);
 

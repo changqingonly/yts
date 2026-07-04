@@ -41,6 +41,9 @@ def test_settings_exposes_typed_config_sections() -> None:
         langgraph_checkpoint_postgres_dsn="postgresql://example/checkpoints",
         logging_level="DEBUG",
         logging_format="json",
+        logging_dir="var/log/yts",
+        logging_backend_file="backend-{profile}.log",
+        logging_frontend_file="frontend-{profile}.log",
         server_allowed_origins=["http://127.0.0.1:1420", "https://studio.example.test"],
     )
 
@@ -82,6 +85,9 @@ def test_settings_exposes_typed_config_sections() -> None:
     assert settings.langgraph.checkpoint_postgres_dsn == "postgresql://example/checkpoints"
     assert settings.logging.level == "DEBUG"
     assert settings.logging.format == "json"
+    assert settings.logging.dir == "var/log/yts"
+    assert settings.logging.backend_file == "backend-{profile}.log"
+    assert settings.logging.frontend_file == "frontend-{profile}.log"
     assert settings.server.allowed_origins == [
         "http://127.0.0.1:1420",
         "https://studio.example.test",
@@ -100,6 +106,9 @@ def test_settings_exposes_typed_config_sections() -> None:
     assert settings.music_provider == "suno"
     assert settings.music_model == "suno-v4.5"
     assert settings.logging_level == "DEBUG"
+    assert settings.logging_dir == "var/log/yts"
+    assert settings.logging_backend_file == "backend-{profile}.log"
+    assert settings.logging_frontend_file == "frontend-{profile}.log"
     assert settings.server_allowed_origins == [
         "http://127.0.0.1:1420",
         "https://studio.example.test",
@@ -142,6 +151,9 @@ def test_settings_reads_profile_config_file_and_env_override(
                 "YTS_DATABASE_ECHO=true",
                 "YTS_LOGGING_LEVEL=DEBUG",
                 "YTS_LOGGING_FORMAT=json",
+                "YTS_LOGGING_DIR=var/log/yts",
+                "YTS_LOGGING_BACKEND_FILE=backend-{profile}.log",
+                "YTS_LOGGING_FRONTEND_FILE=frontend-{profile}.log",
                 'YTS_SERVER_ALLOWED_ORIGINS=["http://127.0.0.1:1420","https://studio.example.test"]',
                 "YTS_CANDLE_TEXT_MAX_TOKENS=512",
                 "YTS_IMAGE_PROVIDER=openai",
@@ -169,6 +181,9 @@ def test_settings_reads_profile_config_file_and_env_override(
     assert settings.database.echo is True
     assert settings.logging.level == "DEBUG"
     assert settings.logging.format == "json"
+    assert settings.logging.dir == "var/log/yts"
+    assert settings.logging.backend_file == "backend-{profile}.log"
+    assert settings.logging.frontend_file == "frontend-{profile}.log"
     assert settings.server.allowed_origins == [
         "http://127.0.0.1:1420",
         "https://studio.example.test",

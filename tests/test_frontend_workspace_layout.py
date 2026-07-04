@@ -245,6 +245,22 @@ def test_frontend_workflow_run_and_resume_use_shared_websocket_stream() -> None:
     )
 
 
+def test_frontend_workflow_stream_surfaces_node_repair_status() -> None:
+    source = WORKFLOW_SOURCE.read_text(encoding="utf-8")
+    node_status_body = source.split("function nodeStatus(nodeId) {", 1)[1].split("\n}", 1)[0]
+    timeline_repairing_rule = source.split(".timeline-node.status-repairing {", 1)[1].split("}", 1)[0]
+    workflow_repairing_rule = source.split(".workflow-node.status-repairing {", 1)[1].split("}", 1)[0]
+
+    assert "const liveNodeStatuses = ref({});" in source
+    assert 'if (message.type === "node_status") {' in source
+    assert "applyWorkflowNodeStatus(message)" in source
+    assert 'repairing: "自修复中"' in source
+    assert 'const liveStatus = liveNodeStatuses.value[nodeId];' in node_status_body
+    assert 'if (liveStatus) return liveStatus;' in node_status_body
+    assert "animation: timelineBreathing" in timeline_repairing_rule
+    assert "animation: nodeBreathing" in workflow_repairing_rule
+
+
 def test_frontend_workflow_websocket_authorization_uses_bearer_token() -> None:
     source = Path("desktop/frontend/src/services/transport.js").read_text(encoding="utf-8")
 

@@ -77,8 +77,7 @@ async def _dispatch_asgi_request(
     parsed = urlsplit(path)
     body_bytes = b"" if body is None else json.dumps(body).encode("utf-8")
     header_items = [
-        (name.lower().encode("latin-1"), value.encode("latin-1"))
-        for name, value in headers.items()
+        (name.lower().encode("latin-1"), value.encode("latin-1")) for name, value in headers.items()
     ]
     if body is not None and not any(name == b"content-type" for name, _ in header_items):
         header_items.append((b"content-type", b"application/json"))

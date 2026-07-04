@@ -46,6 +46,7 @@ const newNodeType = ref("hitl_approval");
 const centerTab = ref("workspace");
 const runResult = ref(null);
 const trace = ref(null);
+const liveNodeStatuses = ref({});
 const result = ref(null);
 const status = ref("idle");
 const error = ref("");
@@ -128,6 +129,7 @@ const actionLabels = {
 const traceStatusLabels = {
   completed: "已完成",
   executing: "运行中",
+  repairing: "自修复中",
   waiting: "等待中",
   idle: "未运行",
   pending: "待执行",
@@ -477,6 +479,7 @@ async function runThread() {
   await withBusy("running", async () => {
     result.value = null;
     trace.value = null;
+    liveNodeStatuses.value = {};
     runResult.value = null;
     userSelectedNodeId.value = "";
     await streamWorkflow(`/api/workflows/${workflowId}/threads/stream`, {
@@ -496,6 +499,7 @@ async function resumeThread(action) {
   }
   await withBusy(`resume-${action}`, async () => {
     userSelectedNodeId.value = "";
+    liveNodeStatuses.value = {};
     runResult.value = {
       ...runResult.value,
       waiting: null,
@@ -522,6 +526,10 @@ function streamWorkflow(path, payload) {
           if (message.type === "started") return;
           if (message.type === "trace") {
             applyWorkflowTrace(message.trace);
+            return;
+          }
+          if (message.type === "node_status") {
+            applyWorkflowNodeStatus(message);
             return;
           }
           if (message.type === "result") {
@@ -613,6 +621,7 @@ function fallbackWorkflowRequest(path, payload) {
 function applyWorkflowTrace(nextTrace) {
   if (!nextTrace) return;
   trace.value = nextTrace;
+  clearTerminalLiveNodeStatuses(nextTrace.nodes ?? []);
   runResult.value = {
     ...(runResult.value ?? {}),
     workflow_id: nextTrace.workflow_id,
@@ -622,10 +631,26 @@ function applyWorkflowTrace(nextTrace) {
   };
 }
 
+function applyWorkflowNodeStatus(message) {
+  const nodeId = typeof message?.node_id === "string" ? message.node_id.trim() : "";
+  const liveStatus = typeof message?.status === "string" ? message.status.trim() : "";
+  if (!nodeId || !liveStatus) {
+    throw new Error("工作流节点状态消息缺少 node_id 或 status");
+  }
+  liveNodeStatuses.value = {
+    ...liveNodeStatuses.value,
+    [nodeId]: liveStatus,
+  };
+  if (!userSelectedNodeId.value) {
+    selectedNodeId.value = nodeId;
+  }
+}
+
 function applyWorkflowResult(nextResult) {
   runResult.value = nextResult;
   trace.value = nextResult.trace;
   result.value = nextResult.output;
+  liveNodeStatuses.value = {};
 }
 
 async function refreshTrace() {
@@ -739,10 +764,22 @@ function onNodeClick(event) {
 }
 
 function nodeStatus(nodeId) {
+  const liveStatus = liveNodeStatuses.value[nodeId];
+  if (liveStatus) return liveStatus;
   if (currentExecutingNodeId.value === nodeId) return "executing";
   if (waitingNodeId.value === nodeId) return "waiting";
   if (completedIds.value.has(nodeId)) return "completed";
   return "idle";
+}
+
+function clearTerminalLiveNodeStatuses(nodes) {
+  const next = { ...liveNodeStatuses.value };
+  for (const node of nodes) {
+    if (node.status === "completed" || node.status === "waiting") {
+      delete next[node.node_id];
+    }
+  }
+  liveNodeStatuses.value = next;
 }
 
 function nodeTone(type) {
@@ -885,6 +922,7 @@ function handleApiTargetChanged() {
   }
   runResult.value = null;
   trace.value = null;
+  liveNodeStatuses.value = {};
   result.value = null;
   error.value = "";
   status.value = "idle";
@@ -1578,6 +1616,13 @@ textarea {
   color: var(--color-heading);
 }
 
+.timeline-node.status-repairing {
+  animation: timelineBreathing 1.45s ease-in-out infinite;
+  background: rgba(245, 158, 11, 0.13);
+  box-shadow: inset 3px 0 0 var(--color-warning), 0 0 22px rgba(245, 158, 11, 0.18);
+  color: var(--color-heading);
+}
+
 .timeline-track {
   align-items: center;
   display: flex;
@@ -1617,6 +1662,11 @@ textarea {
 .timeline-node.status-executing .timeline-dot::after {
   animation: nodePulse 1.45s ease-out infinite;
   background: rgba(14, 165, 233, 0.34);
+}
+
+.timeline-node.status-repairing .timeline-dot::after {
+  animation: nodePulse 1.45s ease-out infinite;
+  background: rgba(245, 158, 11, 0.34);
 }
 
 .timeline-copy {
@@ -1676,6 +1726,12 @@ textarea {
   background: var(--color-accent-soft);
   border-color: var(--color-accent);
   color: var(--color-accent);
+}
+
+.timeline-node.status-repairing .timeline-status {
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning);
+  color: var(--color-warning);
 }
 
 .main-stage {
@@ -1989,6 +2045,12 @@ textarea {
 }
 
 .status-badge.waiting {
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
+.status-badge.repairing {
   background: var(--color-warning-soft);
   border-color: var(--color-warning);
   color: var(--color-warning);
@@ -2368,6 +2430,12 @@ textarea {
   box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.15), 0 0 30px rgba(14, 165, 233, 0.22);
 }
 
+.workflow-node.status-repairing {
+  animation: nodeBreathing 1.45s ease-in-out infinite;
+  border-color: var(--color-warning);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.13), 0 0 30px rgba(245, 158, 11, 0.18);
+}
+
 .node-content {
   display: grid;
   gap: 5px;
@@ -2410,6 +2478,11 @@ textarea {
 
 .node-status[data-status="waiting"],
 .trace-list span[data-status="waiting"] {
+  background: var(--color-warning);
+}
+
+.node-status[data-status="repairing"],
+.trace-list span[data-status="repairing"] {
   background: var(--color-warning);
 }
 

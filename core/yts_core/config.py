@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
@@ -54,6 +55,9 @@ _LEGACY_ENV_MAP = {
     "YTS_LANGGRAPH_CHECKPOINT_POSTGRES_DSN": ("langgraph", "checkpoint_postgres_dsn"),
     "YTS_LOGGING_LEVEL": ("logging", "level"),
     "YTS_LOGGING_FORMAT": ("logging", "format"),
+    "YTS_LOGGING_DIR": ("logging", "dir"),
+    "YTS_LOGGING_BACKEND_FILE": ("logging", "backend_file"),
+    "YTS_LOGGING_FRONTEND_FILE": ("logging", "frontend_file"),
     "YTS_SERVER_ALLOWED_ORIGINS": ("server", "allowed_origins"),
 }
 
@@ -146,6 +150,9 @@ class LangGraphSettings(BaseModel):
 class LoggingSettings(BaseModel):
     level: str = "INFO"
     format: str = "auto"
+    dir: str = Field(default="run", min_length=1)
+    backend_file: str = Field(default="yts-server-{profile}.log", min_length=1)
+    frontend_file: str = Field(default="yts-frontend-{profile}.log", min_length=1)
 
 
 class ServerSettings(BaseModel):
@@ -375,8 +382,28 @@ class Settings(BaseSettings):
         return self.logging.format
 
     @property
+    def logging_dir(self) -> str:
+        return self.logging.dir
+
+    @property
+    def logging_backend_file(self) -> str:
+        return self.logging.backend_file
+
+    @property
+    def logging_frontend_file(self) -> str:
+        return self.logging.frontend_file
+
+    @property
     def server_allowed_origins(self) -> list[str]:
         return self.server.allowed_origins
+
+
+def settings_from_env_mapping(mapping: Mapping[str, Any]) -> Settings:
+    profile_value = _mapping_value(mapping, "YTS_PROFILE")
+    profile = Profile(profile_value) if profile_value else Profile.CLOUD
+    values = _deep_merge(_profile_defaults(profile), _legacy_settings_from_mapping(mapping))
+    values["profile"] = profile
+    return Settings.model_validate(values)
 
 
 @lru_cache(maxsize=1)
@@ -536,7 +563,21 @@ def _coerce_legacy_settings(values: dict[str, Any]) -> dict[str, Any]:
     _move(coerced, "server_allowed_origins", "server", "allowed_origins")
     _move(coerced, "logging_level", "logging", "level")
     _move(coerced, "logging_format", "logging", "format")
+    _move(coerced, "logging_dir", "logging", "dir")
+    _move(coerced, "logging_backend_file", "logging", "backend_file")
+    _move(coerced, "logging_frontend_file", "logging", "frontend_file")
     return coerced
+
+
+def _deep_merge(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(left)
+    for key, value in right.items():
+        existing = merged.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(existing, value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _legacy_env_settings_source() -> dict[str, Any]:

@@ -277,6 +277,28 @@ def test_music_stream_generation_uses_global_api_target() -> None:
     assert "WS_BASES[target] || WS_BASES.local" not in stream_player
 
 
+def test_music_progress_copy_does_not_duplicate_loop_mode_label() -> None:
+    music = read_source("pages/MusicPage.vue")
+    progress_copy_block = music.split('<div class="progress-copy">', 1)[1].split("</div>", 1)[0]
+    mode_button_block = music.split('<button class="mode-button"', 1)[1].split("</button>", 1)[0]
+
+    assert "activeLoopMode.label" not in progress_copy_block
+    assert progress_copy_block.count("<span>") == 2
+    assert "activeLoopMode.label" in mode_button_block
+
+
+def test_music_player_places_track_identity_in_bottom_transport_bar() -> None:
+    music = read_source("pages/MusicPage.vue")
+
+    assert 'class="player-meta"' not in music
+    assert 'class="transport-bar"' in music
+    assert 'class="track-summary"' in music
+    assert '<strong>{{ currentTrack?.title || "暂无歌曲" }}</strong>' in music
+    assert '<small>{{ currentTrack?.artist || "从播放列表选择一首歌" }}</small>' in music
+    assert music.index('class="progress-panel"') < music.index('class="transport-bar"')
+    assert music.index('class="track-summary"') < music.index('class="compact-controls"')
+
+
 def test_creation_page_uses_dark_theme_instead_of_broad_light_surfaces() -> None:
     source = read_source("pages/CreationPage.vue")
 
@@ -469,8 +491,32 @@ def test_assets_page_uses_concise_heading_and_aligned_list_columns() -> None:
     assert "justify-items: start;" in asset_list_head_rule_only
     assert ".asset-list-head span:last-child" in assets
     assert "justify-self: end;" in assets
-    assert "border-radius: 6px;" in asset_row_rule
+    assert "position: relative;" in asset_row_rule
+    assert "border-radius: 0;" in asset_row_rule
     assert "font-variant-numeric: tabular-nums;" in asset_time_rule
+
+
+def test_assets_page_uses_deep_sea_night_watch_visual_system() -> None:
+    assets = read_source("pages/AssetsPage.vue")
+    page_rule = assets.split(".page {", 1)[1].split("}", 1)[0]
+    asset_library_rule = assets.split(".asset-library {", 1)[1].split("}", 1)[0]
+    selected_row_rule = assets.split(".asset-row:hover,\n.asset-row:focus-visible,\n.asset-row.selected {", 1)[
+        1
+    ].split("}", 1)[0]
+    detail_section_rule = assets.split(".detail-section {", 1)[1].split("}", 1)[0]
+    asset_detail_drawer_rule = assets.split(".asset-detail-drawer {", 1)[1].split("}", 1)[0]
+
+    assert "linear-gradient(110deg, rgba(34, 211, 238, 0.07), transparent 34%)" in page_rule
+    assert "background: transparent;" in asset_library_rule
+    assert "box-shadow: none;" in asset_library_rule
+    assert (
+        "background: linear-gradient(90deg, rgba(14, 165, 233, 0.18), rgba(20, 184, 166, 0.08) 58%, transparent);"
+        in selected_row_rule
+    )
+    assert "border: 0;" in detail_section_rule
+    assert "box-shadow: inset 0 1px 0 rgba(125, 211, 252, 0.1);" in detail_section_rule
+    assert "border-left: 0;" in asset_detail_drawer_rule
+    assert "inset 1px 0 0 rgba(125, 211, 252, 0.08)" in asset_detail_drawer_rule
 
 
 def test_assets_page_uses_same_list_detail_pattern_for_image_and_audio_assets() -> None:
@@ -519,11 +565,11 @@ def test_assets_page_supports_copying_generated_song_fields_without_framed_tabs(
         assert f"copyAssetText('{label}'" in assets
     assert "border:" not in asset_tabs_rule
     assert "cursor: pointer;" in asset_tab_button_rule
-    assert "background: rgba(14, 165, 233, 0.1);" in asset_tab_hover_rule
-    assert "box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.2);" in asset_tab_hover_rule
+    assert "background: rgba(34, 211, 238, 0.11);" in asset_tab_hover_rule
+    assert "box-shadow: 0 10px 24px rgba(2, 8, 20, 0.18);" in asset_tab_hover_rule
     assert "transform: translateY(-1px);" in asset_tab_hover_rule
     assert "outline: 2px solid rgba(14, 165, 233, 0.42);" in asset_tab_hover_rule
-    assert "background: rgba(14, 165, 233, 0.18);" in asset_tab_active_hover_rule
+    assert "background: rgba(14, 165, 233, 0.24);" in asset_tab_active_hover_rule
     assert "border:" not in asset_library_rule
     assert "position: fixed;" in asset_drawer_layer_rule
     assert "inset: 0;" in asset_drawer_layer_rule
@@ -535,7 +581,7 @@ def test_assets_page_supports_copying_generated_song_fields_without_framed_tabs(
     assert "height: 100vh;" in asset_detail_drawer_rule
     assert "border-radius: 0;" in asset_detail_drawer_rule
     assert "color-scheme: dark;" in asset_detail_drawer_rule
-    assert "background: linear-gradient(180deg, #12304c 0%, #0e253d 100%);" in asset_detail_drawer_rule
+    assert "background: linear-gradient(180deg, #163955 0%, #0b2135 100%);" in asset_detail_drawer_rule
     assert "#f8fbff" not in assets
     assert "#edf6fc" not in assets
     assert "white-space: pre-wrap;" in lyric_text_rule
@@ -556,7 +602,110 @@ def test_creation_page_can_save_final_delivery_to_song_assets() -> None:
 def test_music_page_is_the_default_player_surface() -> None:
     music = read_source("pages/MusicPage.vue")
 
-    for text in ["音乐播放器", "播放队列", "导入", "暂无歌曲"]:
+    for text in ["播放队列", "导入", "暂无歌曲"]:
         assert text in music
+    assert '<header class="music-topbar">' not in music
+    assert '<div class="title-stack">' not in music
+    assert "<h1>音乐播放器</h1>" not in music
     assert "usePlayerStore" in music
     assert "usePlaylistStore" in music
+
+
+def test_music_page_prioritizes_minimal_wave_player_without_lyrics() -> None:
+    music = read_source("pages/MusicPage.vue")
+
+    for token in [
+        "music-studio",
+        "minimal-player",
+        "player-stage",
+        "hero-wave",
+        "turntable",
+        "record-disc",
+        "waveform-rail",
+        "progress-track",
+        "compact-controls",
+        "loopModes",
+        "cycleLoopMode",
+        "播放模式",
+        "循环播放",
+        "单曲循环",
+        "随机播放",
+    ]:
+        assert token in music
+    for removed_surface in [
+        "session-panel",
+        "stream-card",
+        "mix-card",
+        "time-ruler",
+        "播放参数",
+        "查看播放队列",
+        "查看播放历史",
+    ]:
+        assert removed_surface not in music
+    assert "歌词" not in music
+    assert "lyric" not in music.lower()
+
+
+def test_music_page_wave_surface_has_no_panel_frame_and_fades_into_background() -> None:
+    music = read_source("pages/MusicPage.vue")
+    player_rule = music.split(".minimal-player {", 1)[1].split("}", 1)[0]
+    wave_rule = music.split(".hero-wave {", 1)[1].split("}", 1)[0]
+    wave_glow_rule = music.split(".hero-wave::before {", 1)[1].split("}", 1)[0]
+
+    assert "background: transparent;" in player_rule
+    assert "border: 0;" in player_rule
+    assert "border-radius: 0;" in player_rule
+    assert "box-shadow: none;" in player_rule
+    assert "background: transparent;" in wave_rule
+    assert "border: 0;" in wave_rule
+    assert "border-radius: 0;" in wave_rule
+    assert "-webkit-mask-image:" in wave_rule
+    assert "mask-image:" in wave_rule
+    assert "radial-gradient(ellipse at center" in wave_glow_rule
+    assert "repeating-linear-gradient" in wave_glow_rule
+
+
+def test_music_page_uses_right_drawer_for_queue_and_history() -> None:
+    music = read_source("pages/MusicPage.vue")
+
+    for token in [
+        "playlistDrawerOpen",
+        'playlistDrawerOpen = ref(false)',
+        "drawerMode",
+        "drawer-panel",
+        "drawer-tab",
+        "drawerTracks",
+        "playHistory",
+        "recordHistory",
+        "showDrawer",
+        "播放历史",
+        "播放列表",
+    ]:
+        assert token in music
+    assert 'class="drawer-backdrop"' not in music
+    assert "right: 0;" in music
+    assert "transform: translateX(0);" in music
+
+
+def test_music_page_uses_edge_progress_and_vertical_side_actions_without_large_frames() -> None:
+    music = read_source("pages/MusicPage.vue")
+    side_actions_block = music.split('<div class="side-actions"', 1)[1].split("</div>", 1)[0]
+    side_actions_rule = music.split(".side-actions {", 1)[1].split("}", 1)[0]
+    progress_rule = music.split(".progress-panel {", 1)[1].split("}", 1)[0]
+    minimal_player_rule = music.split(".minimal-player {", 1)[1].split("}", 1)[0]
+    hero_wave_rule = music.split(".hero-wave {", 1)[1].split("}", 1)[0]
+
+    assert 'class="side-actions"' in music
+    assert 'title="播放队列"' in side_actions_block
+    assert "@click=\"showDrawer('queue')\"" in side_actions_block
+    assert "<ListMusic :size=\"17\" />" in side_actions_block
+    assert 'class="drawer-peek"' not in music
+    assert "ChevronLeft" not in music
+    assert "flex-direction: column;" in side_actions_rule
+    assert "right: 14px;" in side_actions_rule
+    assert "top: 50%;" in side_actions_rule
+    assert "width: calc(100% + var(--stage-x-pad) + var(--stage-x-pad));" in progress_rule
+    assert "max-width: none;" in progress_rule
+    assert "margin-inline:" in progress_rule
+    assert "border: 0;" in minimal_player_rule
+    assert "border: 0;" in hero_wave_rule

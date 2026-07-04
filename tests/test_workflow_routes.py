@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
+from copy import deepcopy
 
 import pytest
 from conftest import reset_cached_db_engine
@@ -267,6 +268,58 @@ def test_workflow_run_stream_pushes_node_trace_chunks(monkeypatch) -> None:
     ]
 
 
+def test_workflow_run_stream_pushes_repair_status_chunk(monkeypatch) -> None:
+    checkpointer = InMemorySaver()
+    backend = FakeRouteBackend()
+    broken_generation = deepcopy(backend.payloads["generate_lyrics"])
+    broken_generation["lyric_prompt"] = broken_generation["lyric_prompt"].replace(
+        "[Chorus]\n"
+        "雨落旧窗前\n"
+        "雨落旧窗前\n",
+        "[Chorus]\n"
+        "午后的城慢慢暗下来\n"
+        "旧照片在雨里发亮\n",
+    )
+    backend.payloads["generate_lyrics"] = broken_generation
+    backend.repair_payloads["generate_lyrics"] = [
+        deepcopy(FakeRouteBackend().payloads["generate_lyrics"])
+    ]
+    monkeypatch.setattr(
+        workflow_route, "build_langgraph_checkpointer", lambda settings: checkpointer
+    )
+    monkeypatch.setattr(workflow_route, "make_backend", lambda: backend)
+
+    with TestClient(create_app()) as client:
+        with client.websocket_connect(
+            "/api/workflows/pro_creation_hitl_v1/threads/stream"
+        ) as websocket:
+            websocket.send_json(
+                {
+                    "type": "run",
+                    "thread_id": "stream-repair-thread",
+                    "user_prompt": "下雨的午后，大雨倾盆，思念远方的故人",
+                    "node_config": {},
+                }
+            )
+            messages = _receive_until_terminal(websocket)
+
+    status_messages = [message for message in messages if message["type"] == "node_status"]
+    assert status_messages
+    assert status_messages[0]["node_id"] == "generate_lyrics"
+    assert status_messages[0]["status"] == "repairing"
+    assert status_messages[0]["attempt"] == 1
+    assert "generation.lyric_prompt section [Chorus] must repeat selected_hook" in status_messages[
+        0
+    ]["detail"]
+    terminal = messages[-1]
+    assert terminal["type"] == "result"
+    by_id = {
+        node["node_id"]: node
+        for node in terminal["result"]["trace"]["nodes"]
+    }
+    assert by_id["generate_lyrics"]["metrics"]["repair_attempt_count"] == 1
+
+
 def test_cloud_workflow_run_stream_returns_auth_error_without_asgi_crash(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -356,15 +409,24 @@ class FakeRouteBackend:
     def __init__(self) -> None:
         from test_creation_graph_pro import _PAYLOADS
 
-        self.payloads = _PAYLOADS
+        self.payloads = deepcopy(_PAYLOADS)
+        self.repair_payloads: dict[str, list[dict]] = {}
 
     async def generate_text(
         self, messages, *, model=None, fallbacks=None, response_format=None
     ) -> TextResult:
         import json
 
-        marker = "YTS_PRO_STAGE:"
         content = messages[-1]["content"]
+        repair_marker = "YTS_PRO_STAGE_REPAIR:"
+        if repair_marker in content:
+            stage = content.split(repair_marker, 1)[1].splitlines()[0].strip()
+            payloads = self.repair_payloads.get(stage)
+            payload = payloads.pop(0) if payloads else self.payloads[stage]
+            return TextResult(
+                text=json.dumps(payload, ensure_ascii=False), provider="fake", model="fake"
+            )
+        marker = "YTS_PRO_STAGE:"
         stage = content.split(marker, 1)[1].splitlines()[0].strip()
         return TextResult(
             text=json.dumps(self.payloads[stage], ensure_ascii=False), provider="fake", model="fake"

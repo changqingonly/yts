@@ -307,9 +307,13 @@ onMounted(loadAssets);
 
 <style scoped>
 .page {
+  background:
+    linear-gradient(110deg, rgba(34, 211, 238, 0.07), transparent 34%),
+    linear-gradient(180deg, rgba(8, 25, 42, 0.2) 0%, rgba(9, 35, 50, 0.1) 42%, rgba(4, 16, 31, 0) 100%);
   display: grid;
-  gap: 16px;
-  padding: 24px 28px;
+  gap: 18px;
+  min-height: 100%;
+  padding: 26px 30px;
 }
 
 .page-header {
@@ -325,6 +329,7 @@ h2 {
 
 h1 {
   font-size: 26px;
+  line-height: 1.08;
 }
 
 .asset-toolbar {
@@ -336,7 +341,7 @@ h1 {
 .asset-tabs {
   background: transparent;
   display: flex;
-  gap: 6px;
+  gap: 10px;
   padding: 0;
 }
 
@@ -344,39 +349,41 @@ h1 {
   align-items: center;
   background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--color-muted-strong);
   cursor: pointer;
   display: inline-flex;
   font: inherit;
   font-weight: 800;
   gap: 6px;
-  min-height: 32px;
-  padding: 0 10px;
+  min-height: 34px;
+  padding: 0 12px;
   transition:
     background 160ms ease,
+    box-shadow 160ms ease,
     color 160ms ease,
     transform 160ms ease;
 }
 
 .asset-tabs button:hover,
 .asset-tabs button:focus-visible {
-  background: rgba(14, 165, 233, 0.1);
-  box-shadow: inset 0 0 0 1px rgba(14, 165, 233, 0.2);
-  color: var(--color-accent);
+  background: rgba(34, 211, 238, 0.11);
+  box-shadow: 0 10px 24px rgba(2, 8, 20, 0.18);
+  color: #9cecff;
   outline: 2px solid rgba(14, 165, 233, 0.42);
   outline-offset: 2px;
   transform: translateY(-1px);
 }
 
 .asset-tabs button.active {
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.28), rgba(20, 184, 166, 0.16));
+  box-shadow: 0 14px 30px rgba(2, 8, 20, 0.22);
+  color: #7dd3fc;
 }
 
 .asset-tabs button.active:hover,
 .asset-tabs button.active:focus-visible {
-  background: rgba(14, 165, 233, 0.18);
+  background: rgba(14, 165, 233, 0.24);
 }
 
 .asset-workbench {
@@ -390,12 +397,13 @@ h1 {
   --asset-list-columns: minmax(180px, 0.78fr) minmax(280px, 1.42fr) 118px;
 
   align-content: start;
-  background: var(--color-panel);
-  border-radius: 8px;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
   display: grid;
-  gap: 14px;
+  gap: 16px;
   min-height: 520px;
-  padding: 16px;
+  padding: 8px 0 24px;
 }
 
 .library-head,
@@ -408,7 +416,7 @@ h1 {
 }
 
 .library-head {
-  padding-bottom: 12px;
+  padding: 0 4px 8px;
 }
 
 .library-head > div {
@@ -422,7 +430,9 @@ h1 {
 }
 
 .library-head h2 {
+  color: #e7f5ff;
   font-size: 18px;
+  letter-spacing: 0;
 }
 
 .drawer-head span,
@@ -438,9 +448,9 @@ h1 {
 }
 
 .library-head strong {
-  background: var(--color-accent-soft);
+  background: rgba(20, 184, 166, 0.12);
   border-radius: 999px;
-  color: var(--color-accent);
+  color: #7dd3fc;
   font-size: 12px;
   padding: 6px 10px;
   white-space: nowrap;
@@ -455,11 +465,11 @@ h1 {
 
 .asset-list-head {
   align-items: center;
-  color: var(--color-muted);
+  color: #7898b4;
   font-size: 12px;
   font-weight: 900;
   justify-items: start;
-  padding: 0 10px;
+  padding: 0 14px;
 }
 
 .asset-list-head span:last-child {
@@ -469,19 +479,20 @@ h1 {
 
 .asset-list {
   display: grid;
-  gap: 4px;
+  gap: 0;
 }
 
 .asset-row {
   align-items: center;
-  background: rgba(9, 28, 48, 0.72);
+  background: transparent;
   border: 0;
-  border-radius: 6px;
+  border-radius: 0;
   color: var(--color-text);
   cursor: pointer;
   font: inherit;
-  min-height: 50px;
-  padding: 9px 10px;
+  min-height: 56px;
+  padding: 10px 14px;
+  position: relative;
   text-align: left;
   transition:
     background 160ms ease,
@@ -489,11 +500,21 @@ h1 {
     transform 160ms ease;
 }
 
+.asset-row::after {
+  background: linear-gradient(90deg, rgba(125, 211, 252, 0.08), transparent 76%);
+  bottom: 0;
+  content: "";
+  height: 1px;
+  left: 14px;
+  position: absolute;
+  right: 14px;
+}
+
 .asset-row:hover,
 .asset-row:focus-visible,
 .asset-row.selected {
-  background: rgba(14, 165, 233, 0.13);
-  box-shadow: inset 3px 0 0 var(--color-accent);
+  background: linear-gradient(90deg, rgba(14, 165, 233, 0.18), rgba(20, 184, 166, 0.08) 58%, transparent);
+  box-shadow: inset 3px 0 0 var(--color-accent), 0 14px 32px rgba(2, 8, 20, 0.16);
   outline: 0;
   transform: translateX(2px);
 }
@@ -539,18 +560,20 @@ h1 {
 
 .asset-detail-drawer {
   align-content: start;
-  background: linear-gradient(180deg, #12304c 0%, #0e253d 100%);
-  border-left: 1px solid #2b5579;
+  background: linear-gradient(180deg, #163955 0%, #0b2135 100%);
+  border-left: 0;
   border-radius: 0;
   bottom: 0;
-  box-shadow: -20px 0 48px rgba(1, 8, 18, 0.34);
+  box-shadow:
+    -28px 0 70px rgba(1, 8, 18, 0.42),
+    inset 1px 0 0 rgba(125, 211, 252, 0.08);
   color: #dcebf8;
   color-scheme: dark;
   display: grid;
-  gap: 14px;
+  gap: 16px;
   height: 100vh;
   overflow: auto;
-  padding: 24px 22px 28px;
+  padding: 26px 24px 30px;
   pointer-events: auto;
   position: absolute;
   right: 0;
@@ -559,12 +582,13 @@ h1 {
 }
 
 .drawer-head {
-  padding-bottom: 8px;
+  padding-bottom: 10px;
 }
 
 .drawer-head h2 {
   color: #f0f7ff;
   font-size: 24px;
+  line-height: 1.15;
   overflow-wrap: anywhere;
 }
 
@@ -578,10 +602,10 @@ h1 {
 .copy-field,
 .drawer-close {
   align-items: center;
-  background: rgba(14, 165, 233, 0.14);
+  background: rgba(14, 165, 233, 0.18);
   border: 0;
   border-radius: 999px;
-  color: #7dd3fc;
+  color: #a5f3fc;
   cursor: pointer;
   display: inline-flex;
   flex: 0 0 auto;
@@ -596,7 +620,7 @@ h1 {
 .copy-title:hover,
 .copy-field:hover,
 .drawer-close:hover {
-  background: rgba(14, 165, 233, 0.24);
+  background: rgba(20, 184, 166, 0.24);
   color: #e0f2fe;
 }
 
@@ -608,12 +632,13 @@ h1 {
 }
 
 .detail-section {
-  background: rgba(13, 35, 57, 0.82);
-  border: 1px solid rgba(125, 211, 252, 0.16);
-  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(12, 35, 55, 0.86), rgba(8, 25, 42, 0.76));
+  border: 0;
+  border-radius: 10px;
+  box-shadow: inset 0 1px 0 rgba(125, 211, 252, 0.1);
   display: grid;
   gap: 8px;
-  padding: 14px;
+  padding: 15px;
 }
 
 .detail-section p,
@@ -631,7 +656,7 @@ h3 {
 }
 
 .preview-block {
-  background: rgba(12, 31, 52, 0.92);
+  background: linear-gradient(180deg, rgba(10, 31, 50, 0.9), rgba(7, 22, 37, 0.82));
 }
 
 .prompt-text {
@@ -658,8 +683,9 @@ h3 {
 
 .asset-empty {
   align-self: center;
-  background: var(--color-panel-strong);
-  border: 1px dashed var(--color-border);
+  background: linear-gradient(180deg, rgba(15, 46, 70, 0.48), rgba(8, 24, 39, 0.4));
+  border: 0;
+  box-shadow: inset 0 1px 0 rgba(125, 211, 252, 0.1);
   color: var(--color-muted-strong);
   display: grid;
   gap: 8px;
