@@ -207,6 +207,80 @@ def test_reorder_playlist_items_rewrites_continuous_positions() -> None:
         ]
 
 
+def test_playlist_append_rejects_when_item_limit_exceeded() -> None:
+    audio_bytes = wav_bytes()
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(client, "limit@example.com", "Password123")[
+            "access_token"
+        ]
+        headers = {"Authorization": f"Bearer {token}"}
+        content_hash = client.post(
+            "/api/music/upload",
+            headers=headers,
+            files={"file": ("rain.wav", audio_bytes, "audio/wav")},
+        ).json()["content_hash"]
+        playlist_id = client.post(
+            "/api/music/playlists/default",
+            headers=headers,
+            json={"scope": "cloud"},
+        ).json()["id"]
+        payload = {
+            "items": [
+                {
+                    "content_hash": content_hash,
+                    "title_alias": f"song-{index}",
+                    "artist_alias": "",
+                    "device_id": "device-a",
+                }
+                for index in range(2001)
+            ]
+        }
+
+        response = client.post(f"/api/music/playlists/{playlist_id}/items", headers=headers, json=payload)
+        assert response.status_code == 400
+        assert response.json()["code"] == "playlist_item_limit_exceeded"
+
+
+def test_playlist_append_requires_current_user_song_owner() -> None:
+    audio_bytes = wav_bytes()
+    with TestClient(create_app()) as client:
+        owner_token = register_via_test_crypto(client, "owner@example.com", "Password123")[
+            "access_token"
+        ]
+        owner_headers = {"Authorization": f"Bearer {owner_token}"}
+        content_hash = client.post(
+            "/api/music/upload",
+            headers=owner_headers,
+            files={"file": ("rain.wav", audio_bytes, "audio/wav")},
+        ).json()["content_hash"]
+
+        other_token = register_via_test_crypto(client, "other@example.com", "Password123")[
+            "access_token"
+        ]
+        other_headers = {"Authorization": f"Bearer {other_token}"}
+        playlist_id = client.post(
+            "/api/music/playlists/default",
+            headers=other_headers,
+            json={"scope": "cloud"},
+        ).json()["id"]
+        response = client.post(
+            f"/api/music/playlists/{playlist_id}/items",
+            headers=other_headers,
+            json={
+                "items": [
+                    {
+                        "content_hash": content_hash,
+                        "title_alias": "borrowed",
+                        "artist_alias": "",
+                        "device_id": "device-b",
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 400
+        assert response.json()["code"] == "song_owner_required"
+
+
 def test_playlist_sync_accepts_remote_song_and_rejects_unowned_local_file() -> None:
     with TestClient(create_app()) as client:
         token = register_via_test_crypto(client, "music@example.com", "Password123")[
