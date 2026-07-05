@@ -25,6 +25,10 @@ def read_source(relative_path: str) -> str:
     return (FRONTEND / relative_path).read_text(encoding="utf-8")
 
 
+def read_frontend_file(relative_path: str) -> str:
+    return Path("desktop/frontend", relative_path).read_text(encoding="utf-8")
+
+
 def test_app_shell_router_and_default_music_route_are_defined() -> None:
     app = read_source("App.vue")
     router = read_source("router/index.js")
@@ -277,26 +281,115 @@ def test_music_stream_generation_uses_global_api_target() -> None:
     assert "WS_BASES[target] || WS_BASES.local" not in stream_player
 
 
+def test_music_service_uses_playlist_and_song_upload_contracts() -> None:
+    service = read_source("services/music.js")
+    store = read_source("stores/playlist.js")
+
+    for token in [
+        "uploadSong",
+        'uploadForm("/api/music/upload"',
+        "listPlaylists",
+        "requestJson(`/api/music/playlists",
+        "ensureDefaultPlaylist",
+        'requestJson("/api/music/playlists/default"',
+        "appendPlaylistItems",
+        "requestJson(`/api/music/playlists/${playlistId}/items`",
+        "reorderPlaylistItems",
+        "requestJson(`/api/music/playlists/${playlistId}/items/reorder`",
+    ]:
+        assert token in service
+
+    for token in [
+        "playlists: []",
+        "currentPlaylistId",
+        "playlistItems",
+        "ensureDefault",
+        "loadItems",
+        "appendItems",
+        "item_count",
+        "meta_song",
+    ]:
+        assert token in store
+
+
 def test_music_progress_copy_does_not_duplicate_loop_mode_label() -> None:
+    player = read_source("components/YtsAudioPlayer.vue")
+    mode_button_block = player.split('<button class="mode-button"', 1)[1].split("</button>", 1)[0]
+
+    assert 'class="progress-copy"' not in player
+    assert "loopLabel" in mode_button_block
+
+
+def test_music_player_places_track_identity_inside_open_source_player_shell() -> None:
     music = read_source("pages/MusicPage.vue")
-    progress_copy_block = music.split('<div class="progress-copy">', 1)[1].split("</div>", 1)[0]
-    mode_button_block = music.split('<button class="mode-button"', 1)[1].split("</button>", 1)[0]
-
-    assert "activeLoopMode.label" not in progress_copy_block
-    assert progress_copy_block.count("<span>") == 2
-    assert "activeLoopMode.label" in mode_button_block
-
-
-def test_music_player_places_track_identity_in_bottom_transport_bar() -> None:
-    music = read_source("pages/MusicPage.vue")
+    player = read_source("components/YtsAudioPlayer.vue")
 
     assert 'class="player-meta"' not in music
-    assert 'class="transport-bar"' in music
-    assert 'class="track-summary"' in music
-    assert '<strong>{{ currentTrack?.title || "暂无歌曲" }}</strong>' in music
-    assert '<small>{{ currentTrack?.artist || "从播放列表选择一首歌" }}</small>' in music
-    assert music.index('class="progress-panel"') < music.index('class="transport-bar"')
-    assert music.index('class="track-summary"') < music.index('class="compact-controls"')
+    assert 'class="transport-bar"' not in music
+    assert 'class="track-summary"' in player
+    assert ':track="currentTrack"' in music
+    assert 'trackTitle' in player
+    assert 'trackArtist' in player
+    assert player.index('class="track-summary"') < player.index("<media-controller")
+
+
+def test_music_player_uses_open_source_media_components_instead_of_hand_rolled_controls() -> None:
+    package_json = read_frontend_file("package.json")
+    music = read_source("pages/MusicPage.vue")
+    player = read_source("components/YtsAudioPlayer.vue")
+
+    assert '"media-chrome"' in package_json
+    assert '"wavesurfer.js"' in package_json
+    assert 'import "media-chrome";' in player
+    assert 'import WaveSurfer from "wavesurfer.js";' in player
+    for custom_element in [
+        "<media-controller",
+        "<media-play-button",
+        "<media-time-range",
+        "<media-time-display",
+        "<media-duration-display",
+        "<media-mute-button",
+        "<media-volume-range",
+    ]:
+        assert custom_element in player
+    assert 'ref="audioRef"' in player
+    assert 'ref="waveformRef"' in player
+    assert "WaveSurfer.create" in player
+    assert "YtsAudioPlayer" in music
+    assert "<YtsAudioPlayer" in music
+    for hand_rolled_token in [
+        "waveBars",
+        "progressPercent",
+        "elapsedSeconds",
+        "totalSeconds",
+        "waveform-rail",
+        "compact-controls",
+        "primary-play",
+        "progress-track",
+        "waveBreath",
+    ]:
+        assert hand_rolled_token not in music
+
+
+def test_music_player_control_layout_is_balanced_and_keeps_queue_in_side_actions() -> None:
+    music = read_source("pages/MusicPage.vue")
+    player = read_source("components/YtsAudioPlayer.vue")
+    root_rule = player.split(".yts-audio-player {", 1)[1].split("}", 1)[0]
+    title_rule = player.split(".track-summary strong {", 1)[1].split("}", 1)[0]
+    controls_rule = player.split(".media-controls {", 1)[1].split("}", 1)[0]
+
+    for class_name in ["transport-group", "timeline-group", "utility-group"]:
+        assert class_name in player
+    assert player.index('class="transport-group"') < player.index('class="timeline-group"')
+    assert player.index('class="timeline-group"') < player.index('class="utility-group"')
+    assert "<ListMusic" not in player
+    assert '"queue"' not in player
+    assert '@queue="showDrawer' not in music
+    assert "grid-template-rows: auto minmax(220px, 1fr) auto;" in root_rule
+    assert "font-size: 48px;" in title_rule
+    assert "grid-template-columns: max-content minmax(280px, 1fr) max-content;" in controls_rule
+    assert "max-width: min(1180px, 82vw);" in controls_rule
+    assert "margin-inline: auto;" in controls_rule
 
 
 def test_creation_page_uses_dark_theme_instead_of_broad_light_surfaces() -> None:
@@ -613,25 +706,28 @@ def test_music_page_is_the_default_player_surface() -> None:
 
 def test_music_page_prioritizes_minimal_wave_player_without_lyrics() -> None:
     music = read_source("pages/MusicPage.vue")
+    player = read_source("components/YtsAudioPlayer.vue")
 
     for token in [
         "music-studio",
         "minimal-player",
         "player-stage",
-        "hero-wave",
-        "turntable",
-        "record-disc",
-        "waveform-rail",
-        "progress-track",
-        "compact-controls",
+        "YtsAudioPlayer",
         "loopModes",
         "cycleLoopMode",
-        "播放模式",
         "循环播放",
         "单曲循环",
         "随机播放",
     ]:
         assert token in music
+    for token in [
+        "hero-wave",
+        "media-controller",
+        "media-control-bar",
+        "waveformRef",
+        "播放模式",
+    ]:
+        assert token in player
     for removed_surface in [
         "session-panel",
         "stream-card",
@@ -648,9 +744,10 @@ def test_music_page_prioritizes_minimal_wave_player_without_lyrics() -> None:
 
 def test_music_page_wave_surface_has_no_panel_frame_and_fades_into_background() -> None:
     music = read_source("pages/MusicPage.vue")
+    player = read_source("components/YtsAudioPlayer.vue")
     player_rule = music.split(".minimal-player {", 1)[1].split("}", 1)[0]
-    wave_rule = music.split(".hero-wave {", 1)[1].split("}", 1)[0]
-    wave_glow_rule = music.split(".hero-wave::before {", 1)[1].split("}", 1)[0]
+    wave_rule = player.split(".hero-wave {", 1)[1].split("}", 1)[0]
+    wave_glow_rule = player.split(".hero-wave::before {", 1)[1].split("}", 1)[0]
 
     assert "background: transparent;" in player_rule
     assert "border: 0;" in player_rule
@@ -663,6 +760,8 @@ def test_music_page_wave_surface_has_no_panel_frame_and_fades_into_background() 
     assert "mask-image:" in wave_rule
     assert "radial-gradient(ellipse at center" in wave_glow_rule
     assert "repeating-linear-gradient" in wave_glow_rule
+    assert 'cursorColor: "transparent"' in player
+    assert "cursorWidth: 0" in player
 
 
 def test_music_page_uses_right_drawer_for_queue_and_history() -> None:
@@ -691,9 +790,9 @@ def test_music_page_uses_edge_progress_and_vertical_side_actions_without_large_f
     music = read_source("pages/MusicPage.vue")
     side_actions_block = music.split('<div class="side-actions"', 1)[1].split("</div>", 1)[0]
     side_actions_rule = music.split(".side-actions {", 1)[1].split("}", 1)[0]
-    progress_rule = music.split(".progress-panel {", 1)[1].split("}", 1)[0]
     minimal_player_rule = music.split(".minimal-player {", 1)[1].split("}", 1)[0]
-    hero_wave_rule = music.split(".hero-wave {", 1)[1].split("}", 1)[0]
+    player = read_source("components/YtsAudioPlayer.vue")
+    media_shell_rule = player.split(".media-shell {", 1)[1].split("}", 1)[0]
 
     assert 'class="side-actions"' in music
     assert 'title="播放队列"' in side_actions_block
@@ -704,8 +803,6 @@ def test_music_page_uses_edge_progress_and_vertical_side_actions_without_large_f
     assert "flex-direction: column;" in side_actions_rule
     assert "right: 14px;" in side_actions_rule
     assert "top: 50%;" in side_actions_rule
-    assert "width: calc(100% + var(--stage-x-pad) + var(--stage-x-pad));" in progress_rule
-    assert "max-width: none;" in progress_rule
-    assert "margin-inline:" in progress_rule
     assert "border: 0;" in minimal_player_rule
-    assert "border: 0;" in hero_wave_rule
+    assert "border: 0;" in media_shell_rule
+    assert "box-shadow: none;" in media_shell_rule
