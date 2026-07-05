@@ -159,15 +159,6 @@ export async function requestBlob(path, options = {}) {
   });
 }
 
-export async function healthCheck(target = selectedApiTarget()) {
-  try {
-    const response = await requestJsonOverHttp("/health", { target, auth: false });
-    return response?.status === "ok";
-  } catch {
-    return false;
-  }
-}
-
 export function openJsonStream(path, payload, handlers = {}, options = {}) {
   const requestTarget = options.target ?? selectedApiTarget();
   const token = localStorage.getItem("yts-access-token") || "";

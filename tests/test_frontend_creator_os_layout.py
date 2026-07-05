@@ -210,8 +210,7 @@ def test_app_shell_api_target_switch_lives_above_settings_navigation() -> None:
     assert "environment.options" in shell
     assert "environment.target" in shell
     assert "environment.setTarget(item.value)" in shell
-    assert "environment.checkHealth(environment.target)" in shell
-    assert "void environment.checkHealth(item.value)" in shell
+    assert "environment.checkHealth" not in shell
     assert "environment.checkAllHealth()" not in shell
     assert "environment.targetHealth(item.value)" in shell
     assert 'class="global-target-switch"' in bottom_nav_block

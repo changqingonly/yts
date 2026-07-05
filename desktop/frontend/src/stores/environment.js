@@ -5,7 +5,6 @@ import {
   selectedApiTarget,
   setSelectedApiTarget,
 } from "../services/environment";
-import { healthCheck } from "../services/transport";
 
 export const useEnvironmentStore = defineStore("environment", {
   state: () => ({
@@ -28,11 +27,6 @@ export const useEnvironmentStore = defineStore("environment", {
     },
     targetHealth(target) {
       return this.health[target] ?? "unknown";
-    },
-    async checkHealth(target = this.target) {
-      this.health[target] = "checking";
-      this.health[target] = (await healthCheck(target)) ? "online" : "offline";
-      return this.health[target];
     },
     syncFromStorage() {
       this.target = selectedApiTarget();

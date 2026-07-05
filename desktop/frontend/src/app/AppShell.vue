@@ -27,13 +27,11 @@ function handleAuthExpired() {
 
 function switchEnvironmentTarget(item) {
   environment.setTarget(item.value);
-  void environment.checkHealth(item.value);
 }
 
 onMounted(() => {
   window.addEventListener("yts-auth-expired", handleAuthExpired);
   environment.attach();
-  void environment.checkHealth(environment.target);
   auth.hydrate();
 });
 onUnmounted(() => {
