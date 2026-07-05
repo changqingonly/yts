@@ -6,9 +6,9 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Date,
     DateTime,
-    Float,
     ForeignKey,
     Integer,
     String,
@@ -192,13 +192,40 @@ class SongAsset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class MetaSong(Base):
+    __tablename__ = "meta_song"
+
+    content_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    mime: Mapped[str] = mapped_column(String(128))
+    file_format: Mapped[str] = mapped_column(String(32))
+    duration_ms: Mapped[int] = mapped_column(Integer)
+    sample_rate_hz: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bit_rate_bps: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    channels: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    codec_name: Mapped[str] = mapped_column(String(128))
+    codec_profile: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    container_format: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    extracted_at_ms: Mapped[int] = mapped_column(BigInteger)
+    extractor_name: Mapped[str] = mapped_column(String(64))
+    extractor_version: Mapped[str] = mapped_column(String(64))
+    created_at_ms: Mapped[int] = mapped_column(BigInteger)
+    updated_at_ms: Mapped[int] = mapped_column(BigInteger)
+
+
 class MusicPlaylist(Base):
     __tablename__ = "music_playlist"
 
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     user_uuid: Mapped[str] = mapped_column(String(64), index=True)
     name: Mapped[str] = mapped_column(String(255))
+    scope: Mapped[str] = mapped_column(String(32), index=True, default="cloud")
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    item_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at_ms: Mapped[int] = mapped_column(BigInteger)
     updated_at_ms: Mapped[int] = mapped_column(BigInteger)
+    deleted_at_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    op_clock: Mapped[int] = mapped_column(BigInteger, default=0)
 
 
 class MusicPlaylistItem(Base):
@@ -207,19 +234,21 @@ class MusicPlaylistItem(Base):
     id: Mapped[str] = mapped_column(String(128), primary_key=True)
     user_uuid: Mapped[str] = mapped_column(String(64), index=True)
     playlist_id: Mapped[str] = mapped_column(String(128), index=True)
-    source: Mapped[str] = mapped_column(String(64))
-    source_ref: Mapped[str] = mapped_column(Text)
-    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    artist: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    cover_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    position: Mapped[float] = mapped_column(Float)
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    title_alias: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    artist_alias: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    position: Mapped[int] = mapped_column(Integer)
     added_at_ms: Mapped[int] = mapped_column(BigInteger)
     updated_at_ms: Mapped[int] = mapped_column(BigInteger)
     deleted_at_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     op_clock: Mapped[int] = mapped_column(BigInteger)
     device_id: Mapped[str] = mapped_column(String(128))
-    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    artist: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cover_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     mime: Mapped[str | None] = mapped_column(String(128), nullable=True)
 

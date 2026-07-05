@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import io
+import wave
 from collections.abc import Iterator
 
 import pytest
@@ -23,6 +25,56 @@ def isolated_sqlite_db(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[No
     reset_cached_db_engine()
     yield
     reset_cached_db_engine()
+
+
+def wav_bytes(duration_seconds: float = 0.25, sample_rate: int = 8000) -> bytes:
+    buffer = io.BytesIO()
+    frame_count = int(duration_seconds * sample_rate)
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
+        wav.writeframes(b"\x00\x00" * frame_count)
+    return buffer.getvalue()
+
+
+def test_upload_song_extracts_meta_song_and_reuses_content_hash() -> None:
+    audio_bytes = wav_bytes()
+    expected_hash = hashlib.sha256(audio_bytes).hexdigest()
+
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(client, "meta@example.com", "Password123")[
+            "access_token"
+        ]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        first = client.post(
+            "/api/music/upload",
+            headers=headers,
+            files={"file": ("rain.wav", audio_bytes, "audio/wav")},
+        )
+        assert first.status_code == 200, first.text
+        body = first.json()
+        assert body["content_hash"] == expected_hash
+        assert body["filename"] == "rain.wav"
+        assert body["size_bytes"] == len(audio_bytes)
+        assert body["deduplicated"] is False
+        assert body["meta_song"]["content_hash"] == expected_hash
+        assert body["meta_song"]["file_format"] == "wav"
+        assert body["meta_song"]["duration_ms"] in range(200, 350)
+        assert body["meta_song"]["sample_rate_hz"] == 8000
+        assert body["meta_song"]["channels"] == 1
+        assert body["meta_song"]["codec_name"] == "pcm_s16le"
+
+        second = client.post(
+            "/api/music/upload",
+            headers=headers,
+            files={"file": ("rain-copy.wav", audio_bytes, "audio/wav")},
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["content_hash"] == expected_hash
+        assert second.json()["deduplicated"] is True
+        assert second.json()["meta_song"] == body["meta_song"]
 
 
 def test_playlist_sync_accepts_remote_song_and_rejects_unowned_local_file() -> None:
