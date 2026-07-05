@@ -45,6 +45,21 @@ def _upgrade_music_schema(connection) -> None:
                 "artist_alias": "VARCHAR(255)",
             },
         )
+        _upgrade_music_playlist_item_legacy_columns(connection)
+        connection.execute(
+            text(
+                "UPDATE music_playlist_item "
+                "SET title_alias = title "
+                "WHERE title_alias IS NULL AND title IS NOT NULL"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE music_playlist_item "
+                "SET artist_alias = artist "
+                "WHERE artist_alias IS NULL AND artist IS NOT NULL"
+            )
+        )
     if {"music_playlist", "music_playlist_item"}.issubset(table_names):
         connection.execute(
             text(
@@ -63,3 +78,20 @@ def _add_missing_columns(connection, table_name: str, columns: dict[str, str]) -
     for name, ddl in columns.items():
         if name not in existing_columns:
             connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {name} {ddl}"))
+
+
+def _upgrade_music_playlist_item_legacy_columns(connection) -> None:
+    if connection.dialect.name == "postgresql":
+        columns = {column["name"]: column for column in inspect(connection).get_columns("music_playlist_item")}
+        connection.execute(text("ALTER TABLE music_playlist_item ALTER COLUMN source DROP NOT NULL"))
+        connection.execute(
+            text("ALTER TABLE music_playlist_item ALTER COLUMN source_ref DROP NOT NULL")
+        )
+        position_type = str(columns["position"]["type"]).upper()
+        if "INTEGER" not in position_type:
+            connection.execute(
+                text(
+                    "ALTER TABLE music_playlist_item "
+                    "ALTER COLUMN position TYPE INTEGER USING ROUND(position)::INTEGER"
+                )
+            )
