@@ -1,79 +1,56 @@
 <script setup>
-import { computed, onMounted, ref } from "vue";
-import {
-  Disc3,
-  History,
-  ListMusic,
-  Pause,
-  Play,
-  Radio,
-  RefreshCw,
-  Repeat1,
-  Repeat2,
-  Shuffle,
-  SkipBack,
-  SkipForward,
-  Square,
-  Upload,
-  X,
-} from "@lucide/vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { History, ListMusic, Radio, RefreshCw, Square, Upload, X } from "@lucide/vue";
+import MusicImportDrawer from "../components/MusicImportDrawer.vue";
+import YtsAudioPlayer from "../components/YtsAudioPlayer.vue";
 import { usePlayerStore } from "../stores/player";
 import { usePlaylistStore } from "../stores/playlist";
-import { uploadLocalImport } from "../services/music";
+import { useEnvironmentStore } from "../stores/environment";
 import { selectedApiTarget } from "../services/http";
 
 const player = usePlayerStore();
 const playlist = usePlaylistStore();
+const environment = useEnvironmentStore();
 const error = ref("");
-const importing = ref(false);
 const streamPrompt = ref("夏夜骑行的轻快电子乐");
 const playlistDrawerOpen = ref(false);
+const importDrawerOpen = ref(false);
 const drawerMode = ref("queue");
 const loopMode = ref("queue");
 const playHistory = ref([]);
 
 const loopModes = [
-  { key: "queue", label: "循环播放", icon: Repeat2 },
-  { key: "single", label: "单曲循环", icon: Repeat1 },
-  { key: "shuffle", label: "随机播放", icon: Shuffle },
-];
-
-const waveBars = [
-  34, 50, 68, 44, 82, 58, 76, 92, 48, 70, 86, 54, 78, 64, 96, 52, 74, 88, 60, 80, 42, 72, 90, 56,
-  84, 46, 68, 94, 62, 78, 50, 86, 58, 72, 40, 66, 82, 54, 76, 48, 88, 60, 70, 44,
+  { key: "queue", label: "循环播放" },
+  { key: "single", label: "单曲循环" },
+  { key: "shuffle", label: "随机播放" },
 ];
 
 const tracks = computed(() =>
   playlist.activeItems.map((item) => ({
     id: item.id,
-    title: item.title || "未命名歌曲",
-    artist: item.artist || "未知艺人",
-    source: item.source,
-    url: item.source_ref,
+    title: item.title_alias || "未命名歌曲",
+    artist: item.artist_alias || "未知艺人",
+    contentHash: item.content_hash,
+    metaSong: item.meta_song,
+    url: playableTrackUrl(item),
   })),
 );
 
 const currentTrack = computed(() => player.currentTrack || tracks.value[0] || null);
 const activeLoopMode = computed(() => loopModes.find((item) => item.key === loopMode.value) || loopModes[0]);
-const totalSeconds = computed(() => {
-  if (!currentTrack.value) return 0;
-  return Math.max(0, Math.round(player.duration || 224 + player.currentIndex * 11));
-});
-const elapsedSeconds = computed(() => {
-  if (!currentTrack.value) return 0;
-  const seededProgress = player.isPlaying ? 72 + player.currentIndex * 7 : player.currentTime;
-  return Math.min(totalSeconds.value, Math.max(0, Math.round(player.currentTime || seededProgress || 0)));
-});
-const progressPercent = computed(() => {
-  if (!totalSeconds.value) return 0;
-  return Math.round((elapsedSeconds.value / totalSeconds.value) * 100);
-});
 const drawerTracks = computed(() => (drawerMode.value === "history" ? playHistory.value : tracks.value));
+
+function playableTrackUrl(item) {
+  if (!item.content_hash) {
+    throw new Error("playlist item requires content_hash");
+  }
+  return `/api/music/file/${encodeURIComponent(item.content_hash)}`;
+}
 
 async function refreshPlaylist() {
   error.value = "";
   try {
-    await playlist.sync();
+    await playlist.hydrate({ scope: environment.target });
     player.setQueue(tracks.value);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -87,32 +64,6 @@ async function startStreamPreview() {
   }
   try {
     await player.streamGenerate({ prompt: streamPrompt.value, seconds: 8, target: selectedApiTarget(), channels: 2 });
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
-  }
-}
-
-async function onImportFile(event) {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  importing.value = true;
-  error.value = "";
-  try {
-    await uploadLocalImport({ file, mime: file.type, filename: file.name });
-    await refreshPlaylist();
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    importing.value = false;
-    event.target.value = "";
-  }
-}
-
-function togglePlay() {
-  error.value = "";
-  try {
-    player.togglePlay();
-    if (player.isPlaying) recordHistory(currentTrack.value);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -159,6 +110,37 @@ function showDrawer(mode = drawerMode.value) {
   playlistDrawerOpen.value = true;
 }
 
+function handleAudioPlay() {
+  player.setPlaying(true);
+  recordHistory(currentTrack.value);
+}
+
+function handleAudioPause() {
+  player.setPlaying(false);
+}
+
+function handleAudioEnded() {
+  if (loopMode.value === "single") return;
+  if (tracks.value.length > 1) {
+    nextTrack();
+  } else {
+    player.setPlaying(false);
+  }
+}
+
+function handleTimeUpdate(currentTime) {
+  player.setPlaybackClock({ currentTime });
+}
+
+function handleDurationChange(duration) {
+  player.setPlaybackClock({ duration });
+}
+
+function handleAudioError(message) {
+  error.value = message;
+  player.setPlaying(false);
+}
+
 function recordHistory(track) {
   if (!track) return;
   const playedAt = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -168,14 +150,14 @@ function recordHistory(track) {
   ].slice(0, 12);
 }
 
-function formatTime(value) {
-  const total = Math.max(0, Math.round(Number(value) || 0));
-  const minutes = String(Math.floor(total / 60)).padStart(2, "0");
-  const seconds = String(total % 60).padStart(2, "0");
-  return `${minutes}:${seconds}`;
-}
+onMounted(async () => {
+  environment.attach();
+  await refreshPlaylist();
+});
 
-onMounted(refreshPlaylist);
+onBeforeUnmount(() => {
+  environment.detach();
+});
 </script>
 
 <template>
@@ -193,10 +175,9 @@ onMounted(refreshPlaylist);
         <Square v-if="player.isStreaming" :size="17" />
         <Radio v-else :size="17" />
       </button>
-      <label class="import-button" title="导入" aria-label="导入">
+      <button type="button" title="导入" aria-label="导入" @click="importDrawerOpen = true">
         <Upload :size="17" />
-        <input accept="audio/*" type="file" @change="onImportFile" />
-      </label>
+      </button>
       <button type="button" title="播放队列" aria-label="播放队列" @click="showDrawer('queue')">
         <ListMusic :size="17" />
       </button>
@@ -209,62 +190,30 @@ onMounted(refreshPlaylist);
 
     <article class="player-stage minimal-player">
       <div class="stage-glow"></div>
-      <div class="visual-core">
-        <div class="waveform-rail hero-wave" aria-hidden="true">
-          <i
-            v-for="(height, index) in waveBars"
-            :key="`wave-${index}`"
-            :style="{ '--bar-height': `${height}%`, '--bar-delay': `${index * 30}ms` }"
-          ></i>
-        </div>
-
-        <div :class="['turntable', { spinning: player.isPlaying }]">
-          <div class="record-disc">
-            <span class="record-ring outer"></span>
-            <span class="record-ring inner"></span>
-            <span class="record-label"><Disc3 :size="30" /></span>
-          </div>
-          <div class="tonearm"></div>
-        </div>
-      </div>
-
-      <div class="progress-panel">
-        <div class="progress-copy">
-          <span>{{ formatTime(elapsedSeconds) }}</span>
-          <span>{{ totalSeconds ? formatTime(totalSeconds) : "--:--" }}</span>
-        </div>
-        <div class="progress-track" aria-label="播放进度">
-          <span :style="{ width: `${progressPercent}%` }"></span>
-        </div>
-      </div>
-
-      <div class="transport-bar">
-        <div class="track-summary">
-          <strong>{{ currentTrack?.title || "暂无歌曲" }}</strong>
-          <small>{{ currentTrack?.artist || "从播放列表选择一首歌" }}</small>
-        </div>
-        <div class="compact-controls" aria-label="播放器控制">
-          <button class="icon-button" type="button" :disabled="!tracks.length" title="上一首" @click="previousTrack">
-            <SkipBack :size="19" />
-          </button>
-          <button class="primary-play" type="button" :disabled="!currentTrack" @click="togglePlay">
-            <Pause v-if="player.isPlaying" :size="24" />
-            <Play v-else :size="24" />
-            <span>{{ player.isPlaying ? "暂停" : "播放" }}</span>
-          </button>
-          <button class="icon-button" type="button" :disabled="!tracks.length" title="下一首" @click="nextTrack">
-            <SkipForward :size="19" />
-          </button>
-          <button class="mode-button" type="button" title="播放模式" aria-label="播放模式" @click="cycleLoopMode">
-            <component :is="activeLoopMode.icon" :size="19" />
-            <span>{{ activeLoopMode.label }}</span>
-          </button>
-          <button class="icon-button" type="button" title="播放列表" aria-label="播放列表" @click="showDrawer('queue')">
-            <ListMusic :size="19" />
-          </button>
-        </div>
-      </div>
+      <YtsAudioPlayer
+        class="player-surface"
+        :loop-label="activeLoopMode.label"
+        :loop-mode="loopMode"
+        :playing="player.isPlaying"
+        :track="currentTrack"
+        @cycle-loop="cycleLoopMode"
+        @duration-change="handleDurationChange"
+        @ended="handleAudioEnded"
+        @next="nextTrack"
+        @pause="handleAudioPause"
+        @play="handleAudioPlay"
+        @play-error="handleAudioError"
+        @previous="previousTrack"
+        @time-update="handleTimeUpdate"
+      />
     </article>
+
+    <MusicImportDrawer
+      :open="importDrawerOpen"
+      :target="environment.target"
+      @close="importDrawerOpen = false"
+      @imported="refreshPlaylist"
+    />
 
     <aside :class="['drawer-panel', { open: playlistDrawerOpen }]" aria-label="播放列表与历史">
       <header class="drawer-header">
@@ -354,8 +303,6 @@ onMounted(refreshPlaylist);
 
 .side-actions button,
 .import-button,
-.icon-button,
-.mode-button,
 .drawer-collapse {
   align-items: center;
   background: rgba(9, 25, 43, 0.58);
@@ -385,7 +332,7 @@ onMounted(refreshPlaylist);
   align-content: center;
   display: grid;
   gap: 24px;
-  grid-template-rows: minmax(300px, 1fr) max-content max-content;
+  grid-template-rows: minmax(0, 1fr);
   inset: 20px 86px 22px 28px;
   overflow: hidden;
   padding: 34px var(--stage-x-pad);
@@ -406,250 +353,8 @@ onMounted(refreshPlaylist);
   position: absolute;
 }
 
-.visual-core {
-  align-items: center;
-  display: grid;
-  isolation: isolate;
-  justify-items: center;
+.player-surface {
   min-height: 0;
-  position: relative;
-  z-index: 1;
-}
-
-.waveform-rail {
-  align-items: center;
-  display: flex;
-  gap: clamp(5px, 0.55vw, 9px);
-  justify-content: center;
-  overflow: hidden;
-}
-
-.hero-wave {
-  -webkit-mask-image: radial-gradient(ellipse at center, #000 42%, rgba(0, 0, 0, 0.72) 66%, transparent 100%);
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  height: clamp(250px, 44vh, 430px);
-  mask-image: radial-gradient(ellipse at center, #000 42%, rgba(0, 0, 0, 0.72) 66%, transparent 100%);
-  max-width: 1040px;
-  padding: 38px clamp(22px, 5vw, 72px);
-  position: relative;
-  width: min(76vw, 1120px);
-}
-
-.hero-wave::before {
-  background:
-    radial-gradient(ellipse at center, rgba(34, 211, 238, 0.12), rgba(8, 47, 73, 0.05) 44%, transparent 72%),
-    repeating-linear-gradient(90deg, rgba(125, 211, 252, 0.04) 0 1px, transparent 1px 23px);
-  content: "";
-  inset: 0;
-  pointer-events: none;
-  position: absolute;
-}
-
-.waveform-rail i {
-  animation: waveBreath 1.8s ease-in-out infinite;
-  animation-delay: var(--bar-delay);
-  background: linear-gradient(180deg, rgba(34, 211, 238, 0.96), rgba(52, 211, 153, 0.32));
-  border-radius: 999px;
-  display: block;
-  height: var(--bar-height);
-  min-height: 26px;
-  opacity: 0.82;
-  position: relative;
-  width: clamp(7px, 0.58vw, 11px);
-  z-index: 1;
-}
-
-.turntable {
-  align-items: center;
-  aspect-ratio: 1;
-  background: radial-gradient(circle at 50% 48%, rgba(20, 184, 166, 0.18), rgba(4, 11, 21, 0.72) 62%);
-  border: 1px solid rgba(125, 211, 252, 0.12);
-  border-radius: 50%;
-  box-shadow: 0 20px 60px rgba(0, 8, 20, 0.38), inset 0 0 0 1px rgba(255, 255, 255, 0.035);
-  display: grid;
-  justify-items: center;
-  max-width: 300px;
-  min-width: 210px;
-  padding: 24px;
-  position: absolute;
-  right: max(4vw, 42px);
-  width: 23vw;
-  z-index: 2;
-}
-
-.record-disc {
-  align-items: center;
-  aspect-ratio: 1;
-  background:
-    radial-gradient(circle at center, #123955 0 9%, #071426 10% 26%, #0c1e33 27% 28%, #050b14 29% 100%);
-  border: 1px solid rgba(125, 211, 252, 0.2);
-  border-radius: 50%;
-  display: grid;
-  justify-items: center;
-  position: relative;
-  width: 82%;
-}
-
-.turntable.spinning .record-disc {
-  animation: recordSpin 9s linear infinite;
-}
-
-.record-ring {
-  border: 1px solid rgba(138, 164, 189, 0.16);
-  border-radius: 50%;
-  position: absolute;
-}
-
-.record-ring.outer {
-  inset: 17%;
-}
-
-.record-ring.inner {
-  inset: 34%;
-}
-
-.record-label {
-  align-items: center;
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.38), rgba(52, 211, 153, 0.22));
-  border-radius: 50%;
-  color: var(--color-heading);
-  display: inline-flex;
-  height: 64px;
-  justify-content: center;
-  width: 64px;
-}
-
-.tonearm {
-  background: linear-gradient(180deg, rgba(216, 231, 245, 0.62), rgba(125, 211, 252, 0.18));
-  border-radius: 999px;
-  height: 45%;
-  position: absolute;
-  right: 23%;
-  top: 14%;
-  transform: rotate(30deg);
-  transform-origin: top center;
-  width: 7px;
-}
-
-.progress-panel {
-  display: grid;
-  gap: 10px;
-  justify-self: stretch;
-  margin-inline: calc(0px - var(--stage-x-pad));
-  max-width: none;
-  position: relative;
-  width: calc(100% + var(--stage-x-pad) + var(--stage-x-pad));
-  z-index: 1;
-}
-
-.progress-copy {
-  align-items: center;
-  color: var(--color-muted);
-  display: flex;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  justify-content: space-between;
-  padding-inline: var(--stage-x-pad);
-}
-
-.progress-track {
-  background: rgba(138, 164, 189, 0.16);
-  border-radius: 999px;
-  height: 9px;
-  overflow: hidden;
-}
-
-.progress-track span {
-  background: linear-gradient(90deg, var(--color-brand-cyan), var(--color-brand-green));
-  border-radius: inherit;
-  box-shadow: 0 0 18px rgba(34, 211, 238, 0.35);
-  display: block;
-  height: 100%;
-}
-
-.transport-bar {
-  align-items: center;
-  display: grid;
-  gap: 18px;
-  grid-template-columns: minmax(220px, 1fr) max-content;
-  position: relative;
-  z-index: 1;
-}
-
-.track-summary {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  text-align: left;
-}
-
-.track-summary strong {
-  color: var(--color-heading);
-  font-size: clamp(24px, 2.6vw, 38px);
-  letter-spacing: 0;
-  line-height: 1.05;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.track-summary small {
-  color: var(--color-muted-strong);
-  font-size: 14px;
-  font-weight: 780;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.compact-controls {
-  align-items: center;
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-  position: relative;
-  z-index: 1;
-}
-
-.icon-button {
-  height: 44px;
-  width: 44px;
-}
-
-.primary-play {
-  align-items: center;
-  background: linear-gradient(135deg, var(--color-accent-strong), #0f766e);
-  border: 0;
-  border-radius: 8px;
-  color: var(--color-heading);
-  cursor: pointer;
-  display: inline-flex;
-  font: inherit;
-  font-weight: 900;
-  gap: 8px;
-  justify-content: center;
-  min-height: 50px;
-  min-width: 126px;
-  padding: 0 22px;
-}
-
-.mode-button {
-  gap: 8px;
-  height: 44px;
-  min-width: 126px;
-  padding: 0 12px;
-}
-
-.mode-button span {
-  color: var(--color-muted-strong);
-  font-size: 13px;
-}
-
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.44;
 }
 
 .drawer-panel {
@@ -792,38 +497,12 @@ button:disabled {
   z-index: 5;
 }
 
-@keyframes recordSpin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes waveBreath {
-  0%,
-  100% {
-    transform: scaleY(0.68);
-  }
-  50% {
-    transform: scaleY(1.08);
-  }
-}
-
 @media (max-width: 960px) {
   .player-stage {
     --stage-x-pad: 24px;
 
     inset: 18px 68px 20px 20px;
     padding: 24px;
-  }
-
-  .hero-wave {
-    width: min(82vw, 760px);
-  }
-
-  .turntable {
-    max-width: 240px;
-    min-width: 180px;
-    right: 24px;
   }
 
   .side-actions {
@@ -841,22 +520,6 @@ button:disabled {
     inset: 18px 16px 18px;
   }
 
-  .visual-core {
-    align-content: center;
-    gap: 16px;
-  }
-
-  .turntable {
-    position: relative;
-    right: auto;
-    width: min(58vw, 220px);
-  }
-
-  .hero-wave {
-    height: 220px;
-    width: 100%;
-  }
-
   .side-actions {
     flex-direction: row;
     right: 16px;
@@ -864,26 +527,9 @@ button:disabled {
     transform: none;
   }
 
-  .compact-controls {
-    flex-wrap: wrap;
-    justify-content: flex-start;
-  }
-
-  .transport-bar {
-    align-items: start;
-    grid-template-columns: 1fr;
-  }
-
   .drawer-panel {
     max-width: calc(100vw - 69px);
     width: calc(100vw - 69px);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .record-disc,
-  .waveform-rail i {
-    animation: none !important;
   }
 }
 </style>

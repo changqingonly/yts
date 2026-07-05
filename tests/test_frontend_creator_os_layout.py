@@ -334,6 +334,24 @@ def test_music_import_drawer_supports_batch_status_and_capacity_warning() -> Non
         assert token in drawer
 
 
+def test_music_page_uses_import_drawer_and_meta_song_tracks() -> None:
+    music = read_source("pages/MusicPage.vue")
+    for token in [
+        "MusicImportDrawer",
+        "importDrawerOpen",
+        '@click="importDrawerOpen = true"',
+        ':open="importDrawerOpen"',
+        '@close="importDrawerOpen = false"',
+        "playlist.hydrate",
+        "item.title_alias",
+        "item.meta_song",
+        "`/api/music/file/${encodeURIComponent(item.content_hash)}`",
+    ]:
+        assert token in music
+    assert "uploadLocalImport" not in music
+    assert "onImportFile" not in music
+
+
 def test_music_progress_copy_does_not_duplicate_loop_mode_label() -> None:
     player = read_source("components/YtsAudioPlayer.vue")
     mode_button_block = player.split('<button class="mode-button"', 1)[1].split("</button>", 1)[0]
