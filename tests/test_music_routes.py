@@ -91,6 +91,122 @@ def test_upload_song_rejects_empty_file() -> None:
         assert response.json()["code"] == "empty_file"
 
 
+def test_default_playlist_append_allows_duplicate_content_hash_and_assigns_positions() -> None:
+    audio_bytes = wav_bytes()
+    expected_hash = hashlib.sha256(audio_bytes).hexdigest()
+
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(client, "playlist@example.com", "Password123")[
+            "access_token"
+        ]
+        headers = {"Authorization": f"Bearer {token}"}
+        upload = client.post(
+            "/api/music/upload",
+            headers=headers,
+            files={"file": ("rain.wav", audio_bytes, "audio/wav")},
+        )
+        assert upload.status_code == 200, upload.text
+
+        default_playlist = client.post(
+            "/api/music/playlists/default",
+            headers=headers,
+            json={"scope": "cloud"},
+        )
+        assert default_playlist.status_code == 200, default_playlist.text
+        playlist_id = default_playlist.json()["id"]
+
+        appended = client.post(
+            f"/api/music/playlists/{playlist_id}/items",
+            headers=headers,
+            json={
+                "items": [
+                    {
+                        "content_hash": expected_hash,
+                        "title_alias": "雨声 A",
+                        "artist_alias": "",
+                        "device_id": "device-a",
+                    },
+                    {
+                        "content_hash": expected_hash,
+                        "title_alias": "雨声 B",
+                        "artist_alias": "me",
+                        "device_id": "device-a",
+                    },
+                ]
+            },
+        )
+        assert appended.status_code == 200, appended.text
+        items = appended.json()["items"]
+        assert [item["position"] for item in items] == [1, 2]
+        assert items[0]["content_hash"] == expected_hash
+        assert items[1]["content_hash"] == expected_hash
+        assert items[0]["title_alias"] == "雨声 A"
+        assert items[0]["meta_song"]["content_hash"] == expected_hash
+
+        listed = client.get(f"/api/music/playlists/{playlist_id}/items", headers=headers)
+        assert listed.status_code == 200, listed.text
+        assert [item["position"] for item in listed.json()["items"]] == [1, 2]
+        assert listed.json()["playlist"]["item_count"] == 2
+
+
+def test_reorder_playlist_items_rewrites_continuous_positions() -> None:
+    audio_bytes = wav_bytes()
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(client, "reorder@example.com", "Password123")[
+            "access_token"
+        ]
+        headers = {"Authorization": f"Bearer {token}"}
+        content_hash = client.post(
+            "/api/music/upload",
+            headers=headers,
+            files={"file": ("rain.wav", audio_bytes, "audio/wav")},
+        ).json()["content_hash"]
+        playlist_id = client.post(
+            "/api/music/playlists/default",
+            headers=headers,
+            json={"scope": "cloud"},
+        ).json()["id"]
+        appended = client.post(
+            f"/api/music/playlists/{playlist_id}/items",
+            headers=headers,
+            json={
+                "items": [
+                    {
+                        "content_hash": content_hash,
+                        "title_alias": "一",
+                        "artist_alias": "",
+                        "device_id": "d",
+                    },
+                    {
+                        "content_hash": content_hash,
+                        "title_alias": "二",
+                        "artist_alias": "",
+                        "device_id": "d",
+                    },
+                    {
+                        "content_hash": content_hash,
+                        "title_alias": "三",
+                        "artist_alias": "",
+                        "device_id": "d",
+                    },
+                ]
+            },
+        ).json()["items"]
+        ordered_ids = [appended[2]["id"], appended[0]["id"], appended[1]["id"]]
+
+        reordered = client.post(
+            f"/api/music/playlists/{playlist_id}/items/reorder",
+            headers=headers,
+            json={"ordered_item_ids": ordered_ids},
+        )
+        assert reordered.status_code == 200, reordered.text
+        assert [(item["id"], item["position"]) for item in reordered.json()["items"]] == [
+            (ordered_ids[0], 1),
+            (ordered_ids[1], 2),
+            (ordered_ids[2], 3),
+        ]
+
+
 def test_playlist_sync_accepts_remote_song_and_rejects_unowned_local_file() -> None:
     with TestClient(create_app()) as client:
         token = register_via_test_crypto(client, "music@example.com", "Password123")[

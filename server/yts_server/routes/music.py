@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..domains import music as music_domain
+from ..domains import playlists as playlists_domain
 from .dependencies import CurrentUser, DbSession
 
 router = APIRouter(prefix="/music", tags=["music"])
@@ -34,6 +35,30 @@ class PlaylistUploadRequest(BaseModel):
 
 class PlaylistSyncRequest(BaseModel):
     uploads: list[PlaylistUploadRequest] = []
+
+
+class PlaylistDefaultRequest(BaseModel):
+    scope: str = "cloud"
+
+
+class PlaylistCreateRequest(BaseModel):
+    name: str
+    scope: str = "cloud"
+
+
+class PlaylistItemAppendRequestItem(BaseModel):
+    content_hash: str
+    title_alias: str
+    artist_alias: str | None = None
+    device_id: str
+
+
+class PlaylistItemAppendRequest(BaseModel):
+    items: list[PlaylistItemAppendRequestItem]
+
+
+class PlaylistReorderRequest(BaseModel):
+    ordered_item_ids: list[str]
 
 
 @router.post("/playlist/sync")
@@ -74,6 +99,85 @@ async def sync_playlist(
     )
     await session.commit()
     return response
+
+
+@router.post("/playlists/default")
+async def default_playlist(
+    req: PlaylistDefaultRequest, user: CurrentUser, session: DbSession
+) -> dict:
+    playlist = await playlists_domain.ensure_default_playlist(
+        session, user_uuid=user.user_uuid, scope=req.scope
+    )
+    await session.commit()
+    response = playlists_domain.playlist_response(playlist)
+    return {"playlist": response, **response}
+
+
+@router.get("/playlists")
+async def playlists(user: CurrentUser, session: DbSession, scope: str | None = None) -> dict:
+    rows = await playlists_domain.list_playlists(session, user_uuid=user.user_uuid, scope=scope)
+    return {"playlists": [playlists_domain.playlist_response(item) for item in rows]}
+
+
+@router.post("/playlists")
+async def create_playlist(
+    req: PlaylistCreateRequest, user: CurrentUser, session: DbSession
+) -> dict:
+    playlist = await playlists_domain.create_playlist(
+        session, user_uuid=user.user_uuid, scope=req.scope, name=req.name
+    )
+    await session.commit()
+    return playlists_domain.playlist_response(playlist)
+
+
+@router.get("/playlists/{playlist_id}/items")
+async def playlist_items(playlist_id: str, user: CurrentUser, session: DbSession) -> dict:
+    playlist, items = await playlists_domain.list_playlist_items(
+        session, user_uuid=user.user_uuid, playlist_id=playlist_id
+    )
+    return await playlists_domain.playlist_items_response(session, playlist=playlist, items=items)
+
+
+@router.post("/playlists/{playlist_id}/items")
+async def append_playlist_items(
+    playlist_id: str,
+    req: PlaylistItemAppendRequest,
+    user: CurrentUser,
+    session: DbSession,
+) -> dict:
+    playlist, items = await playlists_domain.append_playlist_items(
+        session,
+        user_uuid=user.user_uuid,
+        playlist_id=playlist_id,
+        items=[
+            playlists_domain.PlaylistItemInput(
+                content_hash=item.content_hash,
+                title_alias=item.title_alias,
+                artist_alias=item.artist_alias,
+                device_id=item.device_id,
+            )
+            for item in req.items
+        ],
+    )
+    await session.commit()
+    return await playlists_domain.playlist_items_response(session, playlist=playlist, items=items)
+
+
+@router.post("/playlists/{playlist_id}/items/reorder")
+async def reorder_playlist_items(
+    playlist_id: str,
+    req: PlaylistReorderRequest,
+    user: CurrentUser,
+    session: DbSession,
+) -> dict:
+    playlist, items = await playlists_domain.reorder_playlist_items(
+        session,
+        user_uuid=user.user_uuid,
+        playlist_id=playlist_id,
+        ordered_item_ids=req.ordered_item_ids,
+    )
+    await session.commit()
+    return await playlists_domain.playlist_items_response(session, playlist=playlist, items=items)
 
 
 @router.post("/upload")
