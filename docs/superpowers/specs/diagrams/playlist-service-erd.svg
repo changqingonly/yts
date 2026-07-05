@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 760" width="1280" height="760">
+  <style>
+    text { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+    .title { font-size: 24px; font-weight: 700; fill: #111827; }
+    .subtitle { font-size: 13px; fill: #6b7280; }
+    .entity-title { font-size: 15px; font-weight: 700; fill: #111827; }
+    .attr { font-size: 12px; fill: #374151; }
+    .pk { font-size: 12px; fill: #111827; font-weight: 700; }
+    .rel { font-size: 12px; fill: #4b5563; }
+    .card { fill: #ffffff; stroke: #d1d5db; stroke-width: 1.5; }
+  </style>
+  <defs>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#16a34a"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#9333ea"/>
+    </marker>
+    <marker id="arrow-gray" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#6b7280"/>
+    </marker>
+  </defs>
+  <rect width="1280" height="760" fill="#ffffff"/>
+  <text x="60" y="46" class="title">Playlist Service Entity Relationship</text>
+  <text x="60" y="70" class="subtitle">Public song facts are separated from user playlist aliases and ordering.</text>
+  <rect x="888" y="30" width="160" height="34" rx="17" fill="#eff6ff" stroke="#bfdbfe"/>
+  <text x="968" y="52" text-anchor="middle" font-size="12" font-weight="700" fill="#374151">Public resource</text>
+  <rect x="75" y="382" width="160" height="34" rx="17" fill="#f0fdf4" stroke="#bbf7d0"/>
+  <text x="155" y="404" text-anchor="middle" font-size="12" font-weight="700" fill="#374151">User assets</text>
+  <rect x="455" y="52" width="160" height="34" rx="17" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="535" y="74" text-anchor="middle" font-size="12" font-weight="700" fill="#374151">Access bridge</text>
+  <path d="M 310,173 L 370,173 L 370,179 L 430,179" fill="none" stroke="#2563eb" stroke-width="1.7" marker-end="url(#arrow-blue)"/>
+  <rect x="294" y="161" width="144" height="22" rx="11" fill="#ffffff" opacity="0.96"/>
+  <text x="366" y="176" text-anchor="middle" class="rel">owns access</text>
+  <text x="318" y="165" text-anchor="start" class="rel">1</text>
+  <text x="422" y="171" text-anchor="end" class="rel">N</text>
+  <path d="M 700,179 L 775,179 L 775,202 L 850,202" fill="none" stroke="#2563eb" stroke-width="1.7" marker-end="url(#arrow-blue)"/>
+  <rect x="688" y="175" width="144" height="22" rx="11" fill="#ffffff" opacity="0.96"/>
+  <text x="760" y="190" text-anchor="middle" class="rel">grants file use</text>
+  <text x="708" y="171" text-anchor="start" class="rel">N</text>
+  <text x="842" y="194" text-anchor="end" class="rel">1</text>
+  <path d="M 185,246 L 185,338 L 200,338 L 200,430" fill="none" stroke="#16a34a" stroke-width="1.7" marker-end="url(#arrow-green)"/>
+  <rect x="116" y="323" width="144" height="22" rx="11" fill="#ffffff" opacity="0.96"/>
+  <text x="188" y="338" text-anchor="middle" class="rel">owns playlists</text>
+  <text x="185" y="238" text-anchor="middle" class="rel">1</text>
+  <text x="200" y="422" text-anchor="middle" class="rel">N</text>
+  <path d="M 340,545 L 400,545 L 400,550 L 475,550" fill="none" stroke="#16a34a" stroke-width="1.7" marker-end="url(#arrow-green)"/>
+  <rect x="334" y="493" width="144" height="22" rx="11" fill="#ffffff" opacity="0.96"/>
+  <text x="406" y="508" text-anchor="middle" class="rel">contains ordered items</text>
+  <text x="350" y="532" text-anchor="start" class="rel">1</text>
+  <text x="456" y="565" text-anchor="end" class="rel">0..2000</text>
+  <path d="M 805,550 L 835,550 L 835,360 L 950,360 L 950,334" fill="none" stroke="#9333ea" stroke-width="1.7" marker-end="url(#arrow-purple)"/>
+  <rect x="823" y="348" width="144" height="22" rx="11" fill="#ffffff" opacity="0.96"/>
+  <text x="895" y="363" text-anchor="middle" class="rel">aliases public song</text>
+  <text x="813" y="542" text-anchor="start" class="rel">N</text>
+  <text x="958" y="344" text-anchor="middle" class="rel">1</text>
+  <path d="M 1015,334 L 1015,394 L 1045,394 L 1045,455" fill="none" stroke="#6b7280" stroke-width="1.7" marker-end="url(#arrow-gray)"/>
+  <rect x="963" y="377" width="144" height="22" rx="11" fill="#ffffff" opacity="0.96"/>
+  <text x="1035" y="392" text-anchor="middle" class="rel">stored as bytes</text>
+  <text x="1015" y="326" text-anchor="middle" class="rel">1</text>
+  <text x="1045" y="447" text-anchor="middle" class="rel">1</text>
+  <g id="UserAccount">
+    <rect x="60" y="100" width="250" height="146" rx="8" class="card"/>
+    <rect x="60" y="100" width="250" height="38" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <path d="M 60,138 L 310,138" stroke="#d1d5db" stroke-width="1"/>
+    <text x="74" y="124" class="entity-title">UserAccount</text>
+    <text x="74" y="162" class="pk">PK uuid</text>
+    <text x="74" y="184" class="attr">username</text>
+    <text x="74" y="206" class="attr">email</text>
+  </g>
+  <g id="SongOwner">
+    <rect x="430" y="92" width="270" height="174" rx="8" class="card"/>
+    <rect x="430" y="92" width="270" height="38" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <path d="M 430,130 L 700,130" stroke="#d1d5db" stroke-width="1"/>
+    <text x="444" y="116" class="entity-title">SongOwner</text>
+    <text x="444" y="154" class="pk">PK id</text>
+    <text x="444" y="176" class="attr">FK user_uuid</text>
+    <text x="444" y="198" class="attr">FK content_hash</text>
+    <text x="444" y="220" class="attr">created_at</text>
+  </g>
+  <g id="MetaSong">
+    <rect x="850" y="70" width="330" height="264" rx="8" class="card"/>
+    <rect x="850" y="70" width="330" height="38" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <path d="M 850,108 L 1180,108" stroke="#d1d5db" stroke-width="1"/>
+    <text x="864" y="94" class="entity-title">MetaSong</text>
+    <text x="864" y="132" class="pk">PK content_hash</text>
+    <text x="864" y="154" class="attr">duration_ms</text>
+    <text x="864" y="176" class="attr">file_format</text>
+    <text x="864" y="198" class="attr">size_bytes</text>
+    <text x="864" y="220" class="attr">sample_rate_hz</text>
+    <text x="864" y="242" class="attr">bit_rate_bps</text>
+    <text x="864" y="264" class="attr">channels</text>
+    <text x="864" y="286" class="attr">codec_name</text>
+  </g>
+  <g id="MusicPlaylist">
+    <rect x="60" y="430" width="280" height="230" rx="8" class="card"/>
+    <rect x="60" y="430" width="280" height="38" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <path d="M 60,468 L 340,468" stroke="#d1d5db" stroke-width="1"/>
+    <text x="74" y="454" class="entity-title">MusicPlaylist</text>
+    <text x="74" y="492" class="pk">PK id</text>
+    <text x="74" y="514" class="attr">FK user_uuid</text>
+    <text x="74" y="536" class="attr">name</text>
+    <text x="74" y="558" class="attr">scope cloud|local</text>
+    <text x="74" y="580" class="attr">item_count &lt;= 2000</text>
+    <text x="74" y="602" class="attr">is_default</text>
+    <text x="74" y="624" class="attr">op_clock</text>
+  </g>
+  <g id="MusicPlaylistItem">
+    <rect x="475" y="410" width="330" height="280" rx="8" class="card"/>
+    <rect x="475" y="410" width="330" height="38" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <path d="M 475,448 L 805,448" stroke="#d1d5db" stroke-width="1"/>
+    <text x="489" y="434" class="entity-title">MusicPlaylistItem</text>
+    <text x="489" y="472" class="pk">PK id</text>
+    <text x="489" y="494" class="attr">FK playlist_id</text>
+    <text x="489" y="516" class="attr">FK content_hash</text>
+    <text x="489" y="538" class="attr">title_alias</text>
+    <text x="489" y="560" class="attr">artist_alias</text>
+    <text x="489" y="582" class="attr">position 1..N</text>
+    <text x="489" y="604" class="attr">added_at_ms</text>
+    <text x="489" y="626" class="attr">op_clock</text>
+  </g>
+  <g id="SongBlob">
+    <rect x="910" y="455" width="270" height="188" rx="8" class="card"/>
+    <rect x="910" y="455" width="270" height="38" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.2"/>
+    <path d="M 910,493 L 1180,493" stroke="#d1d5db" stroke-width="1"/>
+    <text x="924" y="479" class="entity-title">SongBlob</text>
+    <text x="924" y="517" class="pk">PK content_hash</text>
+    <text x="924" y="539" class="attr">path</text>
+    <text x="924" y="561" class="attr">size_bytes</text>
+    <text x="924" y="583" class="attr">mime</text>
+    <text x="924" y="605" class="attr">created_at</text>
+  </g>
+  <line x1="60" y1="710" x2="96" y2="710" stroke="#2563eb" stroke-width="1.7" marker-end="url(#arrow-blue)"/>
+  <text x="106" y="714" class="rel">ownership/access</text>
+  <line x1="330" y1="710" x2="366" y2="710" stroke="#16a34a" stroke-width="1.7" marker-end="url(#arrow-green)"/>
+  <text x="376" y="714" class="rel">playlist containment</text>
+  <line x1="600" y1="710" x2="636" y2="710" stroke="#9333ea" stroke-width="1.7" marker-end="url(#arrow-purple)"/>
+  <text x="646" y="714" class="rel">alias reference</text>
+  <line x1="870" y1="710" x2="906" y2="710" stroke="#6b7280" stroke-width="1.7" marker-end="url(#arrow-gray)"/>
+  <text x="916" y="714" class="rel">file storage</text>
+</svg>

@@ -25,6 +25,81 @@
 
 ## 核心领域模型
 
+### 实体关系图
+
+![Playlist Service ERD](diagrams/playlist-service-erd.svg)
+
+```mermaid
+erDiagram
+  USER_ACCOUNT ||--o{ MUSIC_PLAYLIST : owns
+  USER_ACCOUNT ||--o{ SONG_OWNER : owns_access
+  SONG_OWNER }o--|| META_SONG : grants_file_use
+  META_SONG ||--|| SONG_BLOB : stored_as
+  MUSIC_PLAYLIST ||--o{ MUSIC_PLAYLIST_ITEM : contains_0_to_2000
+  MUSIC_PLAYLIST_ITEM }o--|| META_SONG : aliases_public_song
+
+  USER_ACCOUNT {
+    string uuid PK
+    string username
+    string email
+  }
+
+  META_SONG {
+    string content_hash PK
+    int duration_ms
+    string file_format
+    int size_bytes
+    int sample_rate_hz
+    int bit_rate_bps
+    int channels
+    string codec_name
+  }
+
+  SONG_BLOB {
+    string content_hash PK
+    string path
+    int size_bytes
+    string mime
+    datetime created_at
+  }
+
+  SONG_OWNER {
+    int id PK
+    string user_uuid FK
+    string content_hash FK
+    datetime created_at
+  }
+
+  MUSIC_PLAYLIST {
+    string id PK
+    string user_uuid FK
+    string name
+    string scope
+    int item_count
+    bool is_default
+    int op_clock
+  }
+
+  MUSIC_PLAYLIST_ITEM {
+    string id PK
+    string playlist_id FK
+    string content_hash FK
+    string title_alias
+    string artist_alias
+    int position
+    int added_at_ms
+    int op_clock
+  }
+```
+
+关系说明：
+
+- `meta_song` 是公共事实层，用 `content_hash` 唯一标识同一份音频文件内容。
+- `song_blob` 保存文件实体，和 `meta_song` 通过同一个 `content_hash` 对齐。
+- `song_owner` 表示某个用户拥有某个 `content_hash` 的访问和加入歌单权限。
+- `music_playlist` 是用户个人歌单资产，一个歌单最多包含 2000 个非删除 item。
+- `music_playlist_item` 是用户对 `meta_song` 的个人别名和排序位置；同一个歌单里允许多个 item 引用同一个 `content_hash`。
+
 ### MetaSong
 
 新增 `meta_song` 表。它属于平台公共资源层，不归属于某个用户。它只保存文件和音频本身的客观事实，不保存用户自定义歌名、歌单位置或个人管理状态。
