@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..config import Settings, get_settings
 from ..llm.client import complete_text
 from .port import TextResult
 
@@ -9,11 +10,15 @@ from .port import TextResult
 class CloudInference:
     name = "cloud-litellm"
 
+    def __init__(self, settings: Settings | None = None) -> None:
+        self._settings = settings or get_settings()
+
     async def generate_text(
         self, messages, *, model=None, fallbacks=None, response_format=None
     ) -> TextResult:
         return await complete_text(
             messages,
+            settings=self._settings,
             model=model,
             fallbacks=fallbacks,
             response_format=response_format,

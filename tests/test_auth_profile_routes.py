@@ -33,7 +33,7 @@ def test_health_still_works_with_error_handlers() -> None:
 
 
 def test_health_exposes_inference_config_without_secret(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("YTS_INFERENCE_BACKEND", "openai")
+    monkeypatch.setenv("YTS_INFERENCE_BACKEND", "cloud")
     monkeypatch.setenv("YTS_DEEPSEEK_API_KEY", "sk-deepseek-health-secret")
     monkeypatch.setenv("YTS_DEEPSEEK_TEXT_MODEL", "deepseek/deepseek-chat")
     monkeypatch.setenv("YTS_DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
@@ -55,7 +55,7 @@ def test_health_exposes_inference_config_without_secret(monkeypatch: pytest.Monk
 
     assert response.status_code == 200
     body = response.json()
-    assert body["inference_backend"] == "openai"
+    assert body["inference_backend"] == "cloud"
     assert body["openai_text_model"] == "gpt-4.1-mini"
     assert body["default_text_model"]
     assert body["model_fallbacks"]

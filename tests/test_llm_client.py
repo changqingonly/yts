@@ -7,7 +7,7 @@ import types
 import httpx
 import pytest
 from yts_core.config import Settings, reload_settings
-from yts_core.llm.client import complete_openai_text, complete_text
+from yts_core.llm.client import complete_text
 
 
 @pytest.mark.asyncio
@@ -89,7 +89,7 @@ async def test_complete_text_routes_deepseek_v4_model_to_deepseek_provider(monke
 
 
 @pytest.mark.asyncio
-async def test_complete_openai_text_passes_configured_key_base_url_and_model(monkeypatch) -> None:
+async def test_complete_text_passes_openai_config_to_litellm(monkeypatch) -> None:
     observed = {}
     litellm = types.ModuleType("litellm")
 
@@ -99,25 +99,33 @@ async def test_complete_openai_text_passes_configured_key_base_url_and_model(mon
 
     litellm.acompletion = fake_acompletion
     monkeypatch.setitem(sys.modules, "litellm", litellm)
-
-    result = await complete_openai_text(
-        [{"role": "user", "content": "hello"}],
-        settings=Settings(
-            openai_api_key="sk-configured",
-            openai_text_model="gpt-4.1-mini",
-            openai_base_url="https://api.openai.example/v1",
-        ),
-        response_format={"type": "json_object"},
+    settings = Settings(
+        default_text_model="openai/gpt-4.1-mini",
+        openai_api_key="sk-openai-configured",
+        openai_base_url="https://api.openai.example/v1",
+        openai_request_timeout_seconds=45,
+        openai_max_retries=0,
     )
+
+    result = await complete_text([{"role": "user", "content": "hello"}], settings=settings)
 
     assert result.text == "ok"
     assert result.provider == "openai"
-    assert result.model == "gpt-4.1-mini"
-    assert observed["model"] == "gpt-4.1-mini"
-    assert observed["api_key"] == "sk-configured"
+    assert observed["model"] == "openai/gpt-4.1-mini"
     assert observed["custom_llm_provider"] == "openai"
+    assert observed["api_key"] == "sk-openai-configured"
     assert observed["base_url"] == "https://api.openai.example/v1"
-    assert observed["response_format"] == {"type": "json_object"}
+    assert observed["timeout"] == 45
+    assert observed["max_retries"] == 0
+
+
+@pytest.mark.asyncio
+async def test_complete_text_fails_for_openai_model_when_api_key_is_missing() -> None:
+    with pytest.raises(ValueError, match="openai_api_key must be configured"):
+        await complete_text(
+            [{"role": "user", "content": "hello"}],
+            settings=Settings(default_text_model="gpt-5.5", openai_api_key=""),
+        )
 
 
 @pytest.mark.asyncio
@@ -171,7 +179,7 @@ async def test_litellm_preserves_base_url_domain_port(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_complete_openai_text_reuses_shared_litellm_event_loop(monkeypatch) -> None:
+async def test_complete_text_reuses_shared_litellm_event_loop(monkeypatch) -> None:
     loops = []
     litellm = types.ModuleType("litellm")
 
@@ -182,13 +190,14 @@ async def test_complete_openai_text_reuses_shared_litellm_event_loop(monkeypatch
     litellm.acompletion = fake_acompletion
     monkeypatch.setitem(sys.modules, "litellm", litellm)
     settings = Settings(
+        default_text_model="gpt-4.1-mini",
         openai_api_key="sk-configured",
         openai_text_model="gpt-4.1-mini",
         openai_base_url="https://api.openai.example/v1",
     )
 
-    await complete_openai_text([{"role": "user", "content": "hello"}], settings=settings)
-    await complete_openai_text([{"role": "user", "content": "again"}], settings=settings)
+    await complete_text([{"role": "user", "content": "hello"}], settings=settings)
+    await complete_text([{"role": "user", "content": "again"}], settings=settings)
 
     assert len(loops) == 2
     assert loops[0] is loops[1]
@@ -197,16 +206,7 @@ async def test_complete_openai_text_reuses_shared_litellm_event_loop(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_complete_openai_text_fails_when_api_key_is_missing() -> None:
-    with pytest.raises(ValueError, match="openai_api_key must be configured"):
-        await complete_openai_text(
-            [{"role": "user", "content": "hello"}],
-            settings=Settings(openai_api_key=""),
-        )
-
-
-@pytest.mark.asyncio
-async def test_complete_openai_text_rewrites_html_gateway_response_error(monkeypatch) -> None:
+async def test_complete_text_rewrites_openai_html_gateway_response_error(monkeypatch) -> None:
     litellm = types.ModuleType("litellm")
 
     async def fake_acompletion(**_kwargs):
@@ -219,9 +219,10 @@ async def test_complete_openai_text_rewrites_html_gateway_response_error(monkeyp
     monkeypatch.setitem(sys.modules, "litellm", litellm)
 
     with pytest.raises(ValueError) as exc_info:
-        await complete_openai_text(
+        await complete_text(
             [{"role": "user", "content": "hello"}],
             settings=Settings(
+                default_text_model="gpt-4.1-mini",
                 openai_api_key="sk-configured",
                 openai_text_model="gpt-4.1-mini",
                 openai_base_url="https://api.example.test",
@@ -238,7 +239,7 @@ async def test_complete_openai_text_rewrites_html_gateway_response_error(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_complete_openai_text_timeout_error_does_not_claim_html_gateway(monkeypatch) -> None:
+async def test_complete_text_timeout_error_does_not_claim_html_gateway(monkeypatch) -> None:
     litellm = types.ModuleType("litellm")
 
     class Timeout(Exception):
@@ -251,9 +252,10 @@ async def test_complete_openai_text_timeout_error_does_not_claim_html_gateway(mo
     monkeypatch.setitem(sys.modules, "litellm", litellm)
 
     with pytest.raises(ValueError) as exc_info:
-        await complete_openai_text(
+        await complete_text(
             [{"role": "user", "content": "hello"}],
             settings=Settings(
+                default_text_model="gpt-5.5",
                 openai_api_key="sk-configured",
                 openai_text_model="gpt-5.5",
                 openai_base_url="https://api.example.test/v1",
@@ -267,7 +269,7 @@ async def test_complete_openai_text_timeout_error_does_not_claim_html_gateway(mo
 
 
 @pytest.mark.asyncio
-async def test_complete_openai_text_reports_html_gateway_timeout(monkeypatch) -> None:
+async def test_complete_text_reports_openai_html_gateway_timeout(monkeypatch) -> None:
     litellm = types.ModuleType("litellm")
 
     async def fake_acompletion(**_kwargs):
@@ -280,9 +282,10 @@ async def test_complete_openai_text_reports_html_gateway_timeout(monkeypatch) ->
     monkeypatch.setitem(sys.modules, "litellm", litellm)
 
     with pytest.raises(ValueError) as exc_info:
-        await complete_openai_text(
+        await complete_text(
             [{"role": "user", "content": "hello"}],
             settings=Settings(
+                default_text_model="gpt-5.5",
                 openai_api_key="sk-configured",
                 openai_text_model="gpt-5.5",
                 openai_base_url="https://api.example.test:8088/v1",
@@ -295,7 +298,7 @@ async def test_complete_openai_text_reports_html_gateway_timeout(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_complete_openai_text_passes_configured_timeout(monkeypatch) -> None:
+async def test_complete_text_passes_configured_openai_timeout(monkeypatch) -> None:
     observed = {}
     litellm = types.ModuleType("litellm")
 
@@ -306,9 +309,10 @@ async def test_complete_openai_text_passes_configured_timeout(monkeypatch) -> No
     litellm.acompletion = fake_acompletion
     monkeypatch.setitem(sys.modules, "litellm", litellm)
 
-    await complete_openai_text(
+    await complete_text(
         [{"role": "user", "content": "hello"}],
         settings=Settings(
+            default_text_model="gpt-5.5",
             openai_api_key="sk-configured",
             openai_text_model="gpt-5.5",
             openai_base_url="https://api.example.test/v1",
@@ -320,7 +324,7 @@ async def test_complete_openai_text_passes_configured_timeout(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_complete_openai_text_disables_openai_sdk_retries_by_default(monkeypatch) -> None:
+async def test_complete_text_disables_openai_sdk_retries_by_default(monkeypatch) -> None:
     observed = {}
     litellm = types.ModuleType("litellm")
 
@@ -331,9 +335,10 @@ async def test_complete_openai_text_disables_openai_sdk_retries_by_default(monke
     litellm.acompletion = fake_acompletion
     monkeypatch.setitem(sys.modules, "litellm", litellm)
 
-    await complete_openai_text(
+    await complete_text(
         [{"role": "user", "content": "hello"}],
         settings=Settings(
+            default_text_model="gpt-5.5",
             openai_api_key="sk-configured",
             openai_text_model="gpt-5.5",
             openai_base_url="https://api.example.test:8088/v1",

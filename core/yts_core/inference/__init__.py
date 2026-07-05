@@ -1,8 +1,8 @@
 """推理端口与适配器。core 只依赖 InferenceBackend 协议;具体后端按配置注入。
 
-- echo  :EchoBackend(确定性,默认)
-- cloud :CloudInference(LiteLLM 云模型)
-- candle:CandleInference(经 Rust 进程的 Candle,文本/图片/语音/音乐)
+产品配置只暴露 local/cloud:
+- local:CandleInference(经 Rust 进程的 Candle,文本/图片/语音/音乐)
+- cloud:CloudInference(LiteLLM 云模型)
 """
 
 from __future__ import annotations

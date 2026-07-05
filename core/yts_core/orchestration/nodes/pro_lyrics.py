@@ -761,7 +761,7 @@ async def _generate_validated_json_object(
         repair_payload, repair_provider, repair_llm_call = await _repair_json_object(
             backend,
             stage,
-            original_payload=payload,
+            original_input=payload,
             invalid_output=invalid_output,
             validation_error=last_error,
             attempt=attempt,
@@ -794,7 +794,7 @@ async def _repair_json_object(
     backend,
     stage: str,
     *,
-    original_payload: dict[str, Any],
+    original_input: dict[str, Any],
     invalid_output: dict[str, Any],
     validation_error: BaseException,
     attempt: int,
@@ -804,7 +804,7 @@ async def _repair_json_object(
         "stage": stage,
         "attempt": attempt,
         "validation_error": str(validation_error),
-        "original_input": original_payload,
+        "original_input": original_input,
         "invalid_output": invalid_output,
         "output_schema": stage_output_schema(stage),
     }

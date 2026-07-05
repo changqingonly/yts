@@ -327,8 +327,10 @@ function readDeviceId() {
 }
 
 .task-stack {
+  align-content: start;
   display: grid;
   gap: 10px;
+  grid-auto-rows: max-content;
   min-height: 0;
   overflow-y: auto;
   padding-right: 2px;

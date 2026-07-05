@@ -56,29 +56,30 @@ Web 前端 `http://127.0.0.1:1420/`。任一步失败都会非零退出,不做�
 不会重复安装 Python/Node 环境。
 
 ## 推理后端切换(YTS_INFERENCE_BACKEND)
-- `echo`(默认):确定性、无依赖,用于验证编排链路。
-- `cloud`:LiteLLM 云模型(需 provider 凭据,如 `YTS_DEFAULT_TEXT_MODEL` + key)。
-- `openai`:OpenAI-compatible 文本模型,服务端和本地 sidecar 都支持。配置写入 `conf/{profile}.env` 或环境变量:
+- `local`:本地 Rust Candle,经 `YTS_CANDLE_BASE_URL` 调用本地推理服务。
+- `cloud`:LiteLLM 云模型,provider 由 `YTS_DEFAULT_TEXT_MODEL`、fallbacks 和对应 key/base_url 决定。
+
+OpenAI-compatible 或 DeepSeek 都属于 `cloud` 路由,不要把 provider 名写进 `YTS_INFERENCE_BACKEND`:
 ```bash
-cp conf/local.example.env conf/local.env
-# 编辑 conf/local.env:
-# YTS_INFERENCE_BACKEND=openai
+# 编辑 conf/local.env 或 conf/cloud.env:
+# YTS_INFERENCE_BACKEND=cloud
 # YTS_OPENAI_API_KEY=sk-...
 # YTS_OPENAI_TEXT_MODEL=gpt-4.1-mini
 # YTS_OPENAI_BASE_URL=        # 可选,兼容代理或私有网关时填写
+# YTS_DEFAULT_TEXT_MODEL=openai/gpt-4.1-mini
 # YTS_AUTH_JWT_SECRET=dev-yts-auth-secret-that-is-long-enough-for-hs256
 
 # 云端 profile 使用:
-# cp conf/cloud.example.env conf/cloud.env
 # YTS_PROFILE=cloud
 ```
 `conf/*.env` 是 Python 侧唯一的本地配置入口,已覆盖日志、数据库、鉴权、存储、CORS、
 LangGraph checkpoint、LiteLLM/OpenAI/Candle 文本模型,以及图片/音频/音乐模型槽位。
-- `candle`:本地 Rust Candle。需先起 candle-server:
+
+本地 Candle 需先起 candle-server:
 ```bash
 bash scripts/dev_candle.sh           # Rust candle-server(:8799),首次下载 TinyLlama GGUF
-# 在 conf/{profile}.env 中设置 YTS_INFERENCE_BACKEND=candle 后:
-./servctl restart --profile cloud    # write_lyrics 等节点改走本地 Candle
+# 在 conf/{profile}.env 中设置 YTS_INFERENCE_BACKEND=local 后:
+./servctl restart --profile local    # write_lyrics 等节点改走本地 Candle
 ```
 
 ## 现状(本轮脚手架)

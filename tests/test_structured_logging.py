@@ -131,18 +131,16 @@ def test_pro_lyrics_and_llm_client_log_llm_boundaries_without_full_payloads() ->
     assert "import structlog" in client
     assert "logger = structlog.get_logger(__name__)" in client
     for event in [
-        '"llm.openai.requested"',
-        '"llm.openai.completed"',
-        '"llm.openai.failed"',
         '"llm.litellm.requested"',
         '"llm.litellm.completed"',
+        '"llm.litellm.failed"',
     ]:
         assert event in client
     for field in [
         "message_count=len(messages)",
-        "base_url_configured=bool(base_url)",
         "duration_ms=duration_ms",
         "error_type=type(exc).__name__",
     ]:
         assert field in client
+    assert '"llm.openai.' not in client
     assert "api_key=api_key" not in client

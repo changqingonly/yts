@@ -75,7 +75,7 @@ class DatabaseSettings(BaseModel):
 
 
 class InferenceSettings(BaseModel):
-    backend: str = "echo"
+    backend: str = "cloud"
     default_text_model: str = "deepseek/deepseek-chat"
     model_fallbacks: list[str] = Field(default_factory=lambda: ["openai/qwen-max"])
 
@@ -469,7 +469,7 @@ def _profile_defaults(profile: Profile) -> dict[str, Any]:
         return {
             "profile": Profile.CLOUD,
             "database": {"url": "postgresql+asyncpg://localhost/yts"},
-            "inference": {"backend": "echo"},
+            "inference": {"backend": "cloud"},
             "features": {"allow_custom_skills": False, "billing_enabled": True},
             "observability": {"phoenix_enabled": False},
         }
@@ -477,7 +477,7 @@ def _profile_defaults(profile: Profile) -> dict[str, Any]:
         return {
             "profile": Profile.LOCAL,
             "database": {"url": "sqlite+aiosqlite:///./yts_local.db"},
-            "inference": {"backend": "openai"},
+            "inference": {"backend": "local"},
             "features": {"allow_custom_skills": True, "billing_enabled": False},
             "observability": {"phoenix_enabled": False},
         }

@@ -22,7 +22,7 @@ DEFAULT_FRONTEND_PORT = 1420
 DEFAULT_HEALTH_TIMEOUT_SECONDS = 30.0
 RUN_DIR_NAME = "run"
 REMOVED_CONFIG_ENV_NAMES = ("YTS_CONFIG_FILE", "YTS_CONFIG_HOME")
-SUPPORTED_INFERENCE_BACKENDS = ("echo", "cloud", "openai", "candle", "pro-fixture")
+SUPPORTED_INFERENCE_BACKENDS = ("local", "cloud")
 SKIP_STARTUP_DB_BOOTSTRAP_ENV = "YTS_SKIP_STARTUP_DB_BOOTSTRAP"
 
 
@@ -112,7 +112,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 frontend_port=args.frontend_port,
             )
         elif args.command == "status":
-            print(status(root, args.profile))
+            print(
+                status(
+                    root,
+                    args.profile,
+                    host=args.host,
+                    port=args.port,
+                    frontend_host=args.frontend_host,
+                    frontend_port=args.frontend_port,
+                )
+            )
         else:
             parser.error(f"unsupported command: {args.command}")
     except ServctlError as exc:
@@ -159,7 +168,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     status_parser = subparsers.add_parser("status", help="show FastAPI and web frontend status")
-    status_parser.add_argument("--profile", default="cloud", choices=["cloud", "local"])
+    _add_server_args(status_parser)
+    _add_frontend_args(status_parser)
     return parser
 
 
@@ -212,23 +222,31 @@ def start(
     frontend_port: int = DEFAULT_FRONTEND_PORT,
     start_backend_func: Callable[..., None] | None = None,
     start_frontend_func: Callable[..., None] | None = None,
-    stop_backend_func: Callable[[Path, str], None] | None = None,
+    check_frontend_func: Callable[..., FrontendProcessConfig] | None = None,
+    stop_backend_func: Callable[..., None] | None = None,
     progress: ProgressReporter | None = None,
 ) -> None:
     start_backend_func = start_backend_func or start_server
+    using_default_start_frontend = start_frontend_func is None
     start_frontend_func = start_frontend_func or start_frontend
+    check_frontend_func = check_frontend_func or check_frontend_start_preconditions
     stop_backend_func = stop_backend_func or stop_server
     backend_kwargs = {"host": host, "port": port, "reload": reload}
     frontend_kwargs = {"host": frontend_host, "port": frontend_port}
+    frontend_check_kwargs = {"host": frontend_host, "port": frontend_port}
     if progress is not None:
         backend_kwargs["progress"] = progress
         frontend_kwargs["progress"] = progress
+        frontend_check_kwargs["progress"] = progress
+    check_frontend_func(root, profile, **frontend_check_kwargs)
+    if using_default_start_frontend:
+        frontend_kwargs["check_preconditions"] = False
     start_backend_func(root, profile, **backend_kwargs)
     try:
         start_frontend_func(root, profile, **frontend_kwargs)
     except Exception:
         _report_progress(progress, "frontend failed; stopping backend")
-        stop_backend_func(root, profile)
+        stop_backend_func(root, profile, host=host, port=port)
         raise
 
 
@@ -306,6 +324,7 @@ def start_frontend(
     wait_ready: Callable[[str, int, float], None] | None = None,
     is_process_running: Callable[[int], bool] | None = None,
     terminate_process: Callable[[int], None] | None = None,
+    check_preconditions: bool = True,
     progress: ProgressReporter | None = None,
 ) -> None:
     spawn = spawn or spawn_frontend_process
@@ -313,19 +332,17 @@ def start_frontend(
     is_process_running = is_process_running or _process_exists
     terminate_process = terminate_process or _terminate_process
     config = _frontend_process_config(root, profile, host=host, port=port)
-    index_path = config.frontend_dir / "dist" / "index.html"
     _report_progress(progress, f"preparing frontend log: {config.log_path.name}")
     _prepare_log_file(config.log_path)
-    _report_progress(progress, f"checking frontend build: {index_path}")
-    _require_file(
-        index_path,
-        f"missing frontend build: {index_path}; run ./servctl deploy --profile {profile}",
-    )
-    existing_pid = _read_pid(config.pid_path)
-    if existing_pid is not None and is_process_running(existing_pid):
-        raise ServctlError(f"frontend already running for profile {profile}: pid {existing_pid}")
-
-    _ensure_port_available(host, port, "frontend")
+    if check_preconditions:
+        check_frontend_start_preconditions(
+            root,
+            profile,
+            host=host,
+            port=port,
+            is_process_running=is_process_running,
+            progress=progress,
+        )
     frontend_url = _http_url(host, port)
     _report_progress(progress, f"starting frontend listener: {frontend_url}")
     pid = spawn(config)
@@ -338,6 +355,30 @@ def start_frontend(
             config.pid_path.unlink()
         raise
     _report_progress(progress, f"frontend ready: {frontend_url}")
+
+
+def check_frontend_start_preconditions(
+    root: Path,
+    profile: str,
+    *,
+    host: str = DEFAULT_FRONTEND_HOST,
+    port: int = DEFAULT_FRONTEND_PORT,
+    is_process_running: Callable[[int], bool] | None = None,
+    progress: ProgressReporter | None = None,
+) -> FrontendProcessConfig:
+    is_process_running = is_process_running or _process_exists
+    config = _frontend_process_config(root, profile, host=host, port=port)
+    index_path = config.frontend_dir / "dist" / "index.html"
+    _report_progress(progress, f"checking frontend build: {index_path}")
+    _require_file(
+        index_path,
+        f"missing frontend build: {index_path}; run ./servctl deploy --profile {profile}",
+    )
+    existing_pid = _read_pid(config.pid_path)
+    if existing_pid is not None and is_process_running(existing_pid):
+        raise ServctlError(f"frontend already running for profile {profile}: pid {existing_pid}")
+    _ensure_port_available(host, port, "frontend")
+    return config
 
 
 def stop_frontend(
@@ -429,12 +470,19 @@ def status_server(
     root: Path,
     profile: str,
     *,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
     is_process_running_func: Callable[[int], bool] | None = None,
+    is_port_in_use_func: Callable[[str, int, str], bool] | None = None,
 ) -> str:
     return _status_pid_file_process(
         _pid_path(root, profile),
+        "backend",
         profile,
+        host=host,
+        port=port,
         is_process_running_func=is_process_running_func,
+        is_port_in_use_func=is_port_in_use_func,
     )
 
 
@@ -442,12 +490,19 @@ def status_frontend(
     root: Path,
     profile: str,
     *,
+    host: str = DEFAULT_FRONTEND_HOST,
+    port: int = DEFAULT_FRONTEND_PORT,
     is_process_running_func: Callable[[int], bool] | None = None,
+    is_port_in_use_func: Callable[[str, int, str], bool] | None = None,
 ) -> str:
     return _status_pid_file_process(
         _frontend_pid_path(root, profile),
+        "frontend",
         profile,
+        host=host,
+        port=port,
         is_process_running_func=is_process_running_func,
+        is_port_in_use_func=is_port_in_use_func,
     )
 
 
@@ -455,13 +510,28 @@ def status(
     root: Path,
     profile: str,
     *,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    frontend_host: str = DEFAULT_FRONTEND_HOST,
+    frontend_port: int = DEFAULT_FRONTEND_PORT,
     is_process_running_func: Callable[[int], bool] | None = None,
+    is_port_in_use_func: Callable[[str, int, str], bool] | None = None,
 ) -> str:
     backend = status_server(
-        root, profile, is_process_running_func=is_process_running_func
+        root,
+        profile,
+        host=host,
+        port=port,
+        is_process_running_func=is_process_running_func,
+        is_port_in_use_func=is_port_in_use_func,
     )
     frontend = status_frontend(
-        root, profile, is_process_running_func=is_process_running_func
+        root,
+        profile,
+        host=frontend_host,
+        port=frontend_port,
+        is_process_running_func=is_process_running_func,
+        is_port_in_use_func=is_port_in_use_func,
     )
     return f"backend: {backend}\nfrontend: {frontend}"
 
@@ -493,6 +563,7 @@ def spawn_server_process(config: ServerProcessConfig) -> int:
         command,
         cwd=config.root,
         env=config.env,
+        stdin=subprocess.DEVNULL,
         stdout=log_file,
         stderr=subprocess.STDOUT,
         start_new_session=True,
@@ -519,6 +590,7 @@ def spawn_frontend_process(config: FrontendProcessConfig) -> int:
         command,
         cwd=config.frontend_dir,
         env=config.env,
+        stdin=subprocess.DEVNULL,
         stdout=log_file,
         stderr=subprocess.STDOUT,
         start_new_session=True,
@@ -611,11 +683,26 @@ def validate_profile_config(root: Path, profile: str) -> None:
                 "YTS_DEEPSEEK_API_KEY must be configured when "
                 "YTS_INFERENCE_BACKEND=cloud and YTS_DEFAULT_TEXT_MODEL uses DeepSeek"
             )
+    if backend == "cloud" and _is_openai_compatible_model(default_text_model):
+        if not env.get("YTS_OPENAI_API_KEY", "").strip():
+            raise ServctlError(
+                "YTS_OPENAI_API_KEY must be configured when "
+                "YTS_INFERENCE_BACKEND=cloud and YTS_DEFAULT_TEXT_MODEL uses OpenAI-compatible"
+            )
 
 
 def _process_exists(pid: int) -> bool:
     if pid <= 0:
         return False
+    try:
+        waited_pid, _ = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        pass
+    else:
+        if waited_pid == pid:
+            return False
+        if waited_pid == 0:
+            return True
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -627,6 +714,10 @@ def _process_exists(pid: int) -> bool:
 
 def _is_deepseek_model(model: str) -> bool:
     return model.startswith("deepseek/") or model.startswith("deepseek-")
+
+
+def _is_openai_compatible_model(model: str) -> bool:
+    return model.startswith("openai/") or model.startswith(("gpt-", "chatgpt-", "o1", "o3", "o4"))
 
 
 def _terminate_process(pid: int) -> None:
@@ -656,16 +747,26 @@ def _prepare_log_file(path: Path) -> None:
 
 
 def _ensure_port_available(host: str, port: int, process_name: str) -> None:
-    probe_host = _probe_host(host)
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(0.2)
-        result = sock.connect_ex((probe_host, port))
-    if result == 0:
+    if _is_port_in_use(host, port, process_name):
         raise ServctlError(f"{process_name} port is already in use: {host}:{port}")
+
+
+def _is_port_in_use(host: str, port: int, process_name: str) -> bool:
+    result = _probe_port(host, port)
+    if result == 0:
+        return True
     if result != errno.ECONNREFUSED:
         raise ServctlError(
             f"{process_name} port probe failed for {host}:{port}: errno {result}"
         )
+    return False
+
+
+def _probe_port(host: str, port: int) -> int:
+    probe_host = _probe_host(host)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        return sock.connect_ex((probe_host, port))
 
 
 def _probe_host(host: str) -> str:
@@ -824,10 +925,7 @@ async def main():
         async with engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
         backend = make_backend(settings)
-        if settings.inference_backend == "pro-fixture":
-            messages = [{"role": "user", "content": "YTS_PRO_STAGE: parse_intent"}]
-        else:
-            messages = [{"role": "user", "content": "Return the word ok."}]
+        messages = [{"role": "user", "content": "Return the word ok."}]
         try:
             result = await backend.generate_text(messages)
         except Exception as exc:
@@ -951,16 +1049,31 @@ def _stop_pid_file_process(
 
 def _status_pid_file_process(
     pid_path: Path,
+    process_name: str,
     profile: str,
     *,
+    host: str,
+    port: int,
     is_process_running_func: Callable[[int], bool] | None,
+    is_port_in_use_func: Callable[[str, int, str], bool] | None,
 ) -> str:
     is_process_running_func = is_process_running_func or _process_exists
+    is_port_in_use_func = is_port_in_use_func or _is_port_in_use
     pid = _read_pid(pid_path)
     if pid is None:
+        if is_port_in_use_func(host, port, process_name):
+            return (
+                f"unmanaged port in use: profile={profile} port={host}:{port} "
+                f"pid_file={pid_path}"
+            )
         return f"stopped: profile={profile} pid_file={pid_path}"
     if is_process_running_func(pid):
         return f"running: profile={profile} pid={pid}"
+    if is_port_in_use_func(host, port, process_name):
+        return (
+            f"stale pid and unmanaged port in use: profile={profile} pid={pid} "
+            f"port={host}:{port} pid_file={pid_path}"
+        )
     return f"stale pid: profile={profile} pid={pid} pid_file={pid_path}"
 
 

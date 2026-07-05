@@ -26,11 +26,12 @@ _LITELLM_LOOP_THREAD: Thread | None = None
 async def complete_text(
     messages: list[dict],
     *,
+    settings: Settings | None = None,
     model: str | None = None,
     fallbacks: list[str] | None = None,
     response_format: dict | None = None,
 ) -> TextResult:
-    settings = get_settings()
+    settings = settings or get_settings()
     model = model or settings.default_text_model
     fallbacks = fallbacks if fallbacks is not None else settings.model_fallbacks
 
@@ -45,25 +46,32 @@ async def complete_text(
         message_count=len(messages),
         response_format=bool(response_format),
     )
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "fallbacks": fallbacks,
+        "response_format": response_format,
+    }
+    kwargs.update(_provider_kwargs(model, settings))
     try:
-        kwargs = {
-            "model": model,
-            "messages": messages,
-            "fallbacks": fallbacks,
-            "response_format": response_format,
-        }
-        kwargs.update(_provider_kwargs(model, settings))
         resp = await _run_litellm_acompletion(
             litellm,
             kwargs,
         )
     except Exception as exc:
+        duration_ms = _elapsed_ms(started_at)
         logger.exception(
             "llm.litellm.failed",
             model=model,
             error_type=type(exc).__name__,
-            duration_ms=_elapsed_ms(started_at),
+            duration_ms=duration_ms,
         )
+        if _is_openai_compatible_model(model):
+            _raise_openai_text_error(
+                exc,
+                base_url=settings.openai_base_url.strip(),
+                model=model,
+            )
         raise
     text = resp["choices"][0]["message"]["content"]
     used = resp.get("model", model)
@@ -94,6 +102,20 @@ def _provider_kwargs(model: str, settings: Settings) -> dict[str, Any]:
         if base_url:
             kwargs["base_url"] = base_url
         return kwargs
+    if _is_openai_compatible_model(model):
+        api_key = settings.openai_api_key.strip()
+        if not api_key:
+            raise ValueError("openai_api_key must be configured for OpenAI text inference")
+        kwargs = {
+            "api_key": api_key,
+            "custom_llm_provider": "openai",
+            "timeout": settings.openai_request_timeout_seconds,
+            "max_retries": settings.openai_max_retries,
+        }
+        base_url = settings.openai_base_url.strip()
+        if base_url:
+            kwargs["base_url"] = base_url
+        return kwargs
     return {}
 
 
@@ -101,75 +123,16 @@ def _is_deepseek_model(model: str) -> bool:
     return model.startswith("deepseek/") or model.startswith("deepseek-")
 
 
+def _is_openai_compatible_model(model: str) -> bool:
+    return model.startswith("openai/") or model.startswith(("gpt-", "chatgpt-", "o1", "o3", "o4"))
+
+
 def _provider_name(model: str) -> str:
     if _is_deepseek_model(model):
         return "deepseek"
+    if _is_openai_compatible_model(model):
+        return "openai"
     return model.split("/")[0]
-
-
-async def complete_openai_text(
-    messages: list[dict],
-    *,
-    settings: Settings | None = None,
-    model: str | None = None,
-    response_format: dict | None = None,
-) -> TextResult:
-    settings = settings or get_settings()
-    api_key = settings.openai_api_key.strip()
-    if not api_key:
-        raise ValueError("openai_api_key must be configured for OpenAI text inference")
-    selected_model = model or settings.openai_text_model.strip()
-    if not selected_model:
-        raise ValueError("openai_text_model must be configured for OpenAI text inference")
-
-    import litellm
-
-    kwargs = {
-        "model": selected_model,
-        "messages": messages,
-        "api_key": api_key,
-        "custom_llm_provider": "openai",
-        "response_format": response_format,
-        "timeout": settings.openai_request_timeout_seconds,
-        "max_retries": settings.openai_max_retries,
-    }
-    base_url = settings.openai_base_url.strip()
-    if base_url:
-        kwargs["base_url"] = base_url
-    started_at = perf_counter()
-    logger.info(
-        "llm.openai.requested",
-        model=selected_model,
-        message_count=len(messages),
-        response_format=bool(response_format),
-        base_url_configured=bool(base_url),
-        timeout_seconds=settings.openai_request_timeout_seconds,
-        max_retries=settings.openai_max_retries,
-    )
-    try:
-        resp = await _run_litellm_acompletion(litellm, kwargs)
-    except Exception as exc:
-        logger.exception(
-            "llm.openai.failed",
-            model=selected_model,
-            base_url_configured=bool(base_url),
-            error_type=type(exc).__name__,
-            gateway_error=_looks_like_html_gateway_response(str(exc)),
-            duration_ms=_elapsed_ms(started_at),
-        )
-        _raise_openai_text_error(exc, base_url=base_url, model=selected_model)
-    text = resp["choices"][0]["message"]["content"]
-    used = resp.get("model", selected_model)
-    duration_ms = _elapsed_ms(started_at)
-    logger.info(
-        "llm.openai.completed",
-        model=used,
-        provider="openai",
-        response_chars=len(text),
-        duration_ms=duration_ms,
-        base_url_configured=bool(base_url),
-    )
-    return TextResult(text=text, provider="openai", model=used)
 
 
 async def _run_litellm_acompletion(litellm_module, kwargs: dict[str, Any]):

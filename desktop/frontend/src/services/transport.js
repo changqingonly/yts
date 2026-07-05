@@ -42,6 +42,7 @@ export async function requestJsonOverWebSocket(path, options = {}) {
   const token = localStorage.getItem("yts-access-token") || "";
   const { target, auth, headers: extraHeaders, body, method = "GET" } = options;
   const requestTarget = target ?? selectedApiTarget();
+  const baseUrl = apiBase(requestTarget);
   const headers = jsonHeaders({ token, auth, extraHeaders });
   const parsedBody = parseRequestBody(body);
   const messageId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -52,38 +53,110 @@ export async function requestJsonOverWebSocket(path, options = {}) {
     headers,
     body: parsedBody,
   });
-  return handleJsonResponse({ path, auth, status: response.status, statusText: "", body: response.body });
+  return handleJsonResponse({
+    path,
+    auth,
+    target: requestTarget,
+    baseUrl,
+    status: response.status,
+    statusText: "",
+    body: response.body,
+  });
 }
 
 export async function requestJsonOverHttp(path, options = {}) {
   const token = localStorage.getItem("yts-access-token") || "";
   const { target, auth, headers: extraHeaders, ...fetchOptions } = options;
   const requestTarget = target ?? selectedApiTarget();
+  const baseUrl = apiBase(requestTarget);
   const headers = jsonHeaders({ token, auth, extraHeaders });
-  const response = await fetch(`${apiBase(requestTarget)}${path}`, {
-    ...fetchOptions,
-    headers,
-  });
+  let response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      ...fetchOptions,
+      headers,
+    });
+  } catch (error) {
+    annotateRequestError(error, { path, target: requestTarget, baseUrl });
+    throw error;
+  }
   const body = await response.json().catch(() => null);
-  return handleJsonResponse({ path, auth, status: response.status, statusText: response.statusText, body });
+  return handleJsonResponse({
+    path,
+    auth,
+    target: requestTarget,
+    baseUrl,
+    status: response.status,
+    statusText: response.statusText,
+    body,
+  });
 }
 
 export async function uploadForm(path, formData, options = {}) {
   const token = localStorage.getItem("yts-access-token") || "";
   const { target, auth, headers: extraHeaders, ...fetchOptions } = options;
   const requestTarget = target ?? selectedApiTarget();
+  const baseUrl = apiBase(requestTarget);
   const headers = {
     ...(token && auth !== false ? { Authorization: `Bearer ${token}` } : {}),
     ...(extraHeaders ?? {}),
   };
-  const response = await fetch(`${apiBase(requestTarget)}${path}`, {
-    method: "POST",
-    ...fetchOptions,
-    headers,
-    body: formData,
-  });
+  let response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      ...fetchOptions,
+      headers,
+      body: formData,
+    });
+  } catch (error) {
+    annotateRequestError(error, { path, target: requestTarget, baseUrl });
+    throw error;
+  }
   const body = await response.json().catch(() => null);
-  return handleJsonResponse({ path, auth, status: response.status, statusText: response.statusText, body });
+  return handleJsonResponse({
+    path,
+    auth,
+    target: requestTarget,
+    baseUrl,
+    status: response.status,
+    statusText: response.statusText,
+    body,
+  });
+}
+
+export async function requestBlob(path, options = {}) {
+  const token = localStorage.getItem("yts-access-token") || "";
+  const { target, auth, headers: extraHeaders, ...fetchOptions } = options;
+  const requestTarget = target ?? selectedApiTarget();
+  const baseUrl = apiBase(requestTarget);
+  const headers = {
+    ...(token && auth !== false ? { Authorization: `Bearer ${token}` } : {}),
+    ...(extraHeaders ?? {}),
+  };
+  let response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      ...fetchOptions,
+      headers,
+    });
+  } catch (error) {
+    annotateRequestError(error, { path, target: requestTarget, baseUrl });
+    throw error;
+  }
+  if (response.status >= 200 && response.status < 300) {
+    return response.blob();
+  }
+  const body = await response.json().catch(() => null);
+  throw responseError({
+    path,
+    auth,
+    target: requestTarget,
+    baseUrl,
+    status: response.status,
+    statusText: response.statusText,
+    body,
+  });
 }
 
 export async function healthCheck(target = selectedApiTarget()) {
@@ -183,8 +256,12 @@ function parseRequestBody(body) {
   return body;
 }
 
-function handleJsonResponse({ path, auth, status, statusText, body }) {
+function handleJsonResponse({ path, auth, target, baseUrl, status, statusText, body }) {
   if (status >= 200 && status < 300) return body;
+  throw responseError({ path, auth, target, baseUrl, status, statusText, body });
+}
+
+function responseError({ path, auth, target, baseUrl, status, statusText, body }) {
   if (status === 401 && auth !== false) {
     localStorage.removeItem("yts-access-token");
     localStorage.removeItem("yts-user");
@@ -194,7 +271,18 @@ function handleJsonResponse({ path, auth, status, statusText, body }) {
   const error = new Error(detail);
   error.status = status;
   error.body = body;
-  throw error;
+  error.path = path;
+  error.target = target;
+  error.apiBase = baseUrl;
+  return error;
+}
+
+function annotateRequestError(error, { path, target, baseUrl }) {
+  if (error && typeof error === "object") {
+    error.path = path;
+    error.target = target;
+    error.apiBase = baseUrl;
+  }
 }
 
 function connectionError(message) {

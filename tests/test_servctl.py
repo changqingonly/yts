@@ -25,7 +25,7 @@ def _write_profile_config(root: Path, profile: str = "cloud") -> None:
         "\n".join(
             [
                 f"YTS_PROFILE={profile}",
-                "YTS_INFERENCE_BACKEND=echo",
+                "YTS_INFERENCE_BACKEND=cloud",
                 "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
                 "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
             ]
@@ -79,6 +79,10 @@ def test_load_profile_env_parses_values_without_shell_fallback(tmp_path: Path) -
     assert env["YTS_EMPTY"] == ""
 
 
+def test_servctl_product_inference_backends_are_local_and_cloud_only() -> None:
+    assert servctl.SUPPORTED_INFERENCE_BACKENDS == ("local", "cloud")
+
+
 def test_validate_profile_config_rejects_unsupported_inference_backend(tmp_path: Path) -> None:
     _write_profile_config(tmp_path)
     config_path = tmp_path / "conf" / "cloud.env"
@@ -95,6 +99,47 @@ def test_validate_profile_config_rejects_unsupported_inference_backend(tmp_path:
     )
 
     with pytest.raises(servctl.ServctlError, match="unsupported YTS_INFERENCE_BACKEND=deepseek"):
+        servctl.validate_profile_config(tmp_path, "cloud")
+
+
+def test_validate_profile_config_accepts_product_local_backend(tmp_path: Path) -> None:
+    _write_profile_config(tmp_path, "local")
+    config_path = tmp_path / "conf" / "local.env"
+    config_path.write_text(
+        "\n".join(
+            [
+                "YTS_PROFILE=local",
+                "YTS_INFERENCE_BACKEND=local",
+                "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
+                "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    servctl.validate_profile_config(tmp_path, "local")
+
+
+@pytest.mark.parametrize("backend", ["echo", "openai", "candle", "pro-fixture"])
+def test_validate_profile_config_rejects_removed_inference_backends(
+    tmp_path: Path,
+    backend: str,
+) -> None:
+    _write_profile_config(tmp_path)
+    config_path = tmp_path / "conf" / "cloud.env"
+    config_path.write_text(
+        "\n".join(
+            [
+                "YTS_PROFILE=cloud",
+                f"YTS_INFERENCE_BACKEND={backend}",
+                "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
+                "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(servctl.ServctlError, match=f"unsupported YTS_INFERENCE_BACKEND={backend}"):
         servctl.validate_profile_config(tmp_path, "cloud")
 
 
@@ -139,6 +184,31 @@ def test_validate_profile_config_rejects_missing_deepseek_key_for_v4_model(tmp_p
     )
 
     with pytest.raises(servctl.ServctlError, match="YTS_DEEPSEEK_API_KEY must be configured"):
+        servctl.validate_profile_config(tmp_path, "cloud")
+
+
+@pytest.mark.parametrize("model", ["openai/gpt-4.1-mini", "gpt-5.5"])
+def test_validate_profile_config_rejects_missing_openai_key_for_cloud_backend(
+    tmp_path: Path,
+    model: str,
+) -> None:
+    _write_profile_config(tmp_path)
+    config_path = tmp_path / "conf" / "cloud.env"
+    config_path.write_text(
+        "\n".join(
+            [
+                "YTS_PROFILE=cloud",
+                "YTS_INFERENCE_BACKEND=cloud",
+                f"YTS_DEFAULT_TEXT_MODEL={model}",
+                "YTS_OPENAI_API_KEY=",
+                "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
+                "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(servctl.ServctlError, match="YTS_OPENAI_API_KEY must be configured"):
         servctl.validate_profile_config(tmp_path, "cloud")
 
 
@@ -274,8 +344,9 @@ def test_start_server_prepares_log_before_preflight_and_port_bind(
 def test_preflight_python_code_uses_plain_message_dict_literals() -> None:
     code = servctl._preflight_python_code(port=8000, host="127.0.0.1")
 
-    assert 'messages = [{"role": "user", "content": "YTS_PRO_STAGE: parse_intent"}]' in code
     assert 'messages = [{"role": "user", "content": "Return the word ok."}]' in code
+    assert "YTS_PRO_STAGE" not in code
+    assert "pro-fixture" not in code
     assert "from yts_core.orchestration.checkpointing import setup_langgraph_checkpointer" in code
     assert "from yts_server.db.bootstrap import create_all_tables" in code
     assert "await create_all_tables()" in code
@@ -410,12 +481,38 @@ def test_start_runs_backend_then_frontend_preview(tmp_path: Path) -> None:
         start_frontend_func=lambda root, profile, **kwargs: calls.append(
             f"frontend:{profile}:{kwargs['host']}:{kwargs['port']}"
         ),
+        check_frontend_func=lambda root, profile, **kwargs: None,
     )
 
     assert calls == [
         "backend:cloud:127.0.0.1:8000:False",
         "frontend:cloud:127.0.0.1:1420",
     ]
+
+
+def test_start_checks_frontend_preconditions_before_backend(tmp_path: Path) -> None:
+    _write_profile_config(tmp_path)
+    calls: list[str] = []
+
+    def check_frontend(root: Path, profile: str, **kwargs) -> None:
+        calls.append(f"check-frontend:{profile}:{kwargs['host']}:{kwargs['port']}")
+        raise servctl.ServctlError("frontend port is already in use")
+
+    def start_backend(root: Path, profile: str, **kwargs) -> None:
+        calls.append(f"backend:{profile}")
+
+    with pytest.raises(servctl.ServctlError, match="frontend port is already in use"):
+        servctl.start(
+            tmp_path,
+            "cloud",
+            frontend_host="127.0.0.1",
+            frontend_port=1420,
+            check_frontend_func=check_frontend,
+            start_backend_func=start_backend,
+            start_frontend_func=lambda root, profile, **kwargs: calls.append("frontend"),
+        )
+
+    assert calls == ["check-frontend:cloud:127.0.0.1:1420"]
 
 
 def test_start_reports_backend_and_frontend_progress(tmp_path: Path) -> None:
@@ -477,10 +574,13 @@ def test_start_stops_backend_when_frontend_start_fails(tmp_path: Path) -> None:
                 f"backend:{profile}"
             ),
             start_frontend_func=fail_frontend,
-            stop_backend_func=lambda root, profile: calls.append(f"stop-backend:{profile}"),
+            check_frontend_func=lambda root, profile, **kwargs: None,
+            stop_backend_func=lambda root, profile, **kwargs: calls.append(
+                f"stop-backend:{profile}:{kwargs['host']}:{kwargs['port']}"
+            ),
         )
 
-    assert calls == ["backend:cloud", "frontend:cloud", "stop-backend:cloud"]
+    assert calls == ["backend:cloud", "frontend:cloud", "stop-backend:cloud:127.0.0.1:8000"]
 
 
 def test_start_frontend_requires_built_frontend_dist(tmp_path: Path) -> None:
@@ -536,6 +636,49 @@ def test_spawn_frontend_process_runs_vite_preview(
     ]
     assert captured["kwargs"]["cwd"] == config.frontend_dir
     assert captured["kwargs"]["env"] == config.env
+    assert captured["kwargs"]["stdin"] == subprocess.DEVNULL
+
+
+def test_spawn_server_process_detaches_stdin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = servctl.ServerProcessConfig(
+        root=tmp_path,
+        profile="cloud",
+        host="127.0.0.1",
+        port=8000,
+        reload=False,
+        env={"PATH": "/bin"},
+        pid_path=tmp_path / "run" / "yts-server-cloud.pid",
+        log_path=tmp_path / "run" / "yts-server-cloud.log",
+    )
+    captured: dict[str, object] = {}
+
+    class FakePopen:
+        pid = 12345
+
+        def __init__(self, command: list[str], **kwargs) -> None:
+            captured["command"] = command
+            captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(servctl.subprocess, "Popen", FakePopen)
+
+    pid = servctl.spawn_server_process(config)
+
+    assert pid == 12345
+    assert captured["command"] == [
+        "uv",
+        "run",
+        "uvicorn",
+        "yts_server.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000",
+    ]
+    assert captured["kwargs"]["cwd"] == config.root
+    assert captured["kwargs"]["env"] == config.env
+    assert captured["kwargs"]["stdin"] == subprocess.DEVNULL
 
 
 def test_start_fails_when_preflight_fails_and_does_not_spawn(tmp_path: Path) -> None:
@@ -779,6 +922,17 @@ def test_terminate_process_sends_sigterm_to_process_group(
     assert signals == [(67890, signal.SIGTERM)]
 
 
+def test_process_exists_reaps_exited_direct_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(servctl.os, "waitpid", lambda pid, flags: (pid, 0))
+    monkeypatch.setattr(
+        servctl.os,
+        "kill",
+        lambda pid, signal_number: pytest.fail("exited child must not be probed with kill"),
+    )
+
+    assert not servctl._process_exists(12345)
+
+
 def test_stop_stops_running_backend_when_frontend_was_never_started(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -807,11 +961,34 @@ def test_status_reports_backend_and_frontend(tmp_path: Path) -> None:
         tmp_path,
         "cloud",
         is_process_running_func=lambda pid: pid == 111,
+        is_port_in_use_func=lambda host, port, process_name: False,
     )
 
     assert output.splitlines() == [
         "backend: running: profile=cloud pid=111",
         f"frontend: stale pid: profile=cloud pid=222 pid_file={run_dir / 'yts-frontend-cloud.pid'}",
+    ]
+
+
+def test_status_reports_unmanaged_frontend_port_when_pid_is_missing(tmp_path: Path) -> None:
+    backend_port = _unused_tcp_port()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as frontend_sock:
+        frontend_sock.bind(("127.0.0.1", 0))
+        frontend_sock.listen()
+        frontend_port = frontend_sock.getsockname()[1]
+
+        output = servctl.status(
+            tmp_path,
+            "cloud",
+            port=backend_port,
+            frontend_port=frontend_port,
+        )
+
+    assert output.splitlines() == [
+        f"backend: stopped: profile=cloud pid_file={tmp_path / 'run' / 'yts-server-cloud.pid'}",
+        "frontend: unmanaged port in use: "
+        f"profile=cloud port=127.0.0.1:{frontend_port} "
+        f"pid_file={tmp_path / 'run' / 'yts-frontend-cloud.pid'}",
     ]
 
 
@@ -888,7 +1065,7 @@ def test_cli_uses_short_servctl_commands(monkeypatch: pytest.MonkeyPatch, tmp_pa
             f"restart:{profile}:{kwargs['host']}:{kwargs['port']}:{kwargs['reload']}"
         ),
     )
-    monkeypatch.setattr(servctl, "status", lambda root, profile: f"running:{profile}")
+    monkeypatch.setattr(servctl, "status", lambda root, profile, **kwargs: f"running:{profile}")
 
     assert servctl.main(["install"]) == 0
     assert servctl.main(["deploy", "--profile", "cloud"]) == 0

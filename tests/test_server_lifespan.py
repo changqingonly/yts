@@ -13,7 +13,7 @@ def isolated_lifespan_settings(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Ite
     db_path = tmp_path / "lifespan.db"
     monkeypatch.setenv("YTS_PROFILE", "local")
     monkeypatch.setenv("YTS_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
-    monkeypatch.setenv("YTS_INFERENCE_BACKEND", "echo")
+    monkeypatch.setenv("YTS_INFERENCE_BACKEND", "local")
     reset_cached_db_engine()
     yield
     reset_cached_db_engine()

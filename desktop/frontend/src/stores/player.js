@@ -36,6 +36,15 @@ export const usePlayerStore = defineStore("player", {
       this.queue = Array.isArray(tracks) ? tracks : [];
       this.currentIndex = 0;
       this.isPlaying = false;
+      this.currentTime = 0;
+      this.duration = 0;
+    },
+    setPlaying(isPlaying) {
+      this.isPlaying = Boolean(isPlaying);
+    },
+    setPlaybackClock({ currentTime, duration } = {}) {
+      if (currentTime != null) this.currentTime = Math.max(0, Number(currentTime) || 0);
+      if (duration != null) this.duration = Math.max(0, Number(duration) || 0);
     },
     playAt(index) {
       if (index < 0 || index >= this.queue.length) {
@@ -43,6 +52,8 @@ export const usePlayerStore = defineStore("player", {
       }
       this.currentIndex = index;
       this.isPlaying = true;
+      this.currentTime = 0;
+      this.duration = 0;
     },
     togglePlay() {
       if (!this.currentTrack) {

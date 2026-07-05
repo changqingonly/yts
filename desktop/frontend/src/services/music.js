@@ -1,5 +1,5 @@
 import { requestJson } from "./http";
-import { uploadForm } from "./transport";
+import { requestBlob, uploadForm } from "./transport";
 
 export function syncPlaylist({ since = 0, limit = 500, uploads = [] } = {}) {
   const params = new URLSearchParams();
@@ -65,6 +65,13 @@ export function reorderPlaylistItems({ playlistId: rawPlaylistId, orderedItemIds
     method: "POST",
     body: JSON.stringify({ ordered_item_ids: orderedItemIds }),
   });
+}
+
+export async function loadSongObjectUrl({ contentHash: rawContentHash, target } = {}) {
+  if (!rawContentHash) throw new Error("loadSongObjectUrl requires contentHash");
+  const contentHash = encodeURIComponent(rawContentHash);
+  const blob = await requestBlob(`/api/music/file/${contentHash}`, { target });
+  return URL.createObjectURL(blob);
 }
 
 export async function uploadSong({ file, mime, filename } = {}) {

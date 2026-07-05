@@ -10,7 +10,7 @@ def test_settings_exposes_typed_config_sections() -> None:
         profile="cloud",
         database_url="sqlite+aiosqlite:///typed.db",
         database_echo=True,
-        inference_backend="openai",
+        inference_backend="cloud",
         default_text_model="openai/gpt-4.1",
         model_fallbacks=["openai/gpt-4.1-mini", "anthropic/claude-sonnet-4"],
         deepseek_api_key="sk-deepseek",
@@ -49,7 +49,7 @@ def test_settings_exposes_typed_config_sections() -> None:
 
     assert settings.database.url == "sqlite+aiosqlite:///typed.db"
     assert settings.database.echo is True
-    assert settings.inference.backend == "openai"
+    assert settings.inference.backend == "cloud"
     assert settings.inference.default_text_model == "openai/gpt-4.1"
     assert settings.inference.model_fallbacks == [
         "openai/gpt-4.1-mini",
@@ -116,20 +116,20 @@ def test_settings_exposes_typed_config_sections() -> None:
 
 
 def test_get_settings_is_cached_until_reloaded(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("YTS_INFERENCE_BACKEND", "echo")
+    monkeypatch.setenv("YTS_INFERENCE_BACKEND", "local")
     reload_settings()
 
     first = get_settings()
-    monkeypatch.setenv("YTS_INFERENCE_BACKEND", "openai")
+    monkeypatch.setenv("YTS_INFERENCE_BACKEND", "cloud")
     second = get_settings()
 
     assert second is first
-    assert second.inference_backend == "echo"
+    assert second.inference_backend == "local"
 
     reloaded = reload_settings()
 
     assert reloaded is get_settings()
-    assert reloaded.inference_backend == "openai"
+    assert reloaded.inference_backend == "cloud"
 
 
 def test_settings_reads_profile_config_file_and_env_override(
@@ -141,7 +141,7 @@ def test_settings_reads_profile_config_file_and_env_override(
     config_file.write_text(
         "\n".join(
             [
-                "YTS_INFERENCE_BACKEND=echo",
+                "YTS_INFERENCE_BACKEND=cloud",
                 "YTS_DEFAULT_TEXT_MODEL=deepseek/deepseek-chat",
                 "YTS_DEEPSEEK_API_KEY=sk-deepseek-file",
                 "YTS_DEEPSEEK_TEXT_MODEL=deepseek/deepseek-chat",
@@ -171,7 +171,7 @@ def test_settings_reads_profile_config_file_and_env_override(
 
     settings = reload_settings()
 
-    assert settings.inference_backend == "echo"
+    assert settings.inference_backend == "cloud"
     assert settings.default_text_model == "deepseek/deepseek-chat"
     assert settings.deepseek_api_key == "sk-deepseek-file"
     assert settings.deepseek_text_model == "deepseek/deepseek-chat"
@@ -202,7 +202,7 @@ def test_local_profile_settings_are_explicit_overrides() -> None:
 
     assert settings.profile == Profile.LOCAL
     assert settings.database.url == "sqlite+aiosqlite:///./yts_local.db"
-    assert settings.inference.backend == "openai"
+    assert settings.inference.backend == "local"
     assert settings.features.allow_custom_skills is True
     assert settings.features.billing_enabled is False
     assert settings.observability.phoenix_enabled is False
@@ -213,7 +213,7 @@ def test_cloud_profile_settings_are_explicit_overrides() -> None:
 
     assert settings.profile == Profile.CLOUD
     assert settings.database.url == "postgresql+asyncpg://localhost/yts"
-    assert settings.inference.backend == "echo"
+    assert settings.inference.backend == "cloud"
     assert settings.features.allow_custom_skills is False
     assert settings.features.billing_enabled is True
 
@@ -230,7 +230,7 @@ def test_get_settings_applies_local_profile_defaults(
 
     assert settings.profile == Profile.LOCAL
     assert settings.database.url == "sqlite+aiosqlite:///./yts_local.db"
-    assert settings.inference.backend == "openai"
+    assert settings.inference.backend == "local"
     assert settings.features.allow_custom_skills is True
     assert settings.features.billing_enabled is False
 
@@ -246,7 +246,7 @@ def test_get_settings_reads_default_local_profile_file(
             [
                 "YTS_OPENAI_API_KEY=sk-local-file",
                 "YTS_OPENAI_TEXT_MODEL=gpt-local-file",
-                "YTS_INFERENCE_BACKEND=pro-fixture",
+                "YTS_INFERENCE_BACKEND=cloud",
             ]
         ),
         encoding="utf-8",
@@ -259,7 +259,7 @@ def test_get_settings_reads_default_local_profile_file(
     assert settings.profile == Profile.LOCAL
     assert settings.openai_api_key == "sk-local-file"
     assert settings.openai_text_model == "gpt-local-file"
-    assert settings.inference_backend == "pro-fixture"
+    assert settings.inference_backend == "cloud"
 
 
 def test_get_settings_rejects_unknown_profile_config_dir(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -266,7 +266,7 @@ def test_music_stream_generation_uses_global_api_target() -> None:
     environment = read_source("services/environment.js")
     transport = read_source("services/transport.js")
 
-    assert 'import { selectedApiTarget } from "../services/http";' in music
+    assert "selectedApiTarget" in music
     assert "selectedApiTarget()" in music
     assert "streamTarget" not in music
     assert '<select v-model="streamTarget"' not in music
@@ -284,10 +284,13 @@ def test_music_stream_generation_uses_global_api_target() -> None:
 def test_music_service_uses_playlist_and_song_upload_contracts() -> None:
     service = read_source("services/music.js")
     store = read_source("stores/playlist.js")
+    transport = read_source("services/transport.js")
 
     for token in [
         "uploadSong",
         'uploadForm("/api/music/upload"',
+        "loadSongObjectUrl",
+        'requestBlob(`/api/music/file/${contentHash}`',
         "listPlaylists",
         "requestJson(`/api/music/playlists",
         "ensureDefaultPlaylist",
@@ -311,6 +314,24 @@ def test_music_service_uses_playlist_and_song_upload_contracts() -> None:
     ]:
         assert token in store
 
+    assert "export async function requestBlob(path, options = {})" in transport
+    assert "Authorization: `Bearer ${token}`" in transport
+    assert "URL.createObjectURL(blob)" in service
+
+
+def test_music_page_loads_authenticated_audio_blob_urls_before_queueing() -> None:
+    music = read_source("pages/MusicPage.vue")
+
+    assert 'import { loadSongObjectUrl } from "../services/music";' in music
+    assert "const trackUrlByHash = ref(new Map());" in music
+    assert "await loadPlayableTrackUrls(playlist.activeItems);" in music
+    assert "player.setQueue(tracks.value);" in music
+    assert music.index("await loadPlayableTrackUrls(playlist.activeItems);") < music.index(
+        "player.setQueue(tracks.value);"
+    )
+    assert "URL.revokeObjectURL" in music
+    assert "`/api/music/file/${encodeURIComponent(item.content_hash)}`" not in music
+
 
 def test_music_import_drawer_supports_batch_status_and_capacity_warning() -> None:
     drawer = read_source("components/MusicImportDrawer.vue")
@@ -333,6 +354,10 @@ def test_music_import_drawer_supports_batch_status_and_capacity_warning() -> Non
     ]:
         assert token in drawer
 
+    assert ".task-stack {" in drawer
+    assert "align-content: start;" in drawer
+    assert "grid-auto-rows: max-content;" in drawer
+
 
 def test_music_page_uses_import_drawer_and_meta_song_tracks() -> None:
     music = read_source("pages/MusicPage.vue")
@@ -345,11 +370,29 @@ def test_music_page_uses_import_drawer_and_meta_song_tracks() -> None:
         "playlist.hydrate",
         "item.title_alias",
         "item.meta_song",
-        "`/api/music/file/${encodeURIComponent(item.content_hash)}`",
+        "playableTrackUrl(item)",
     ]:
         assert token in music
     assert "uploadLocalImport" not in music
     assert "onImportFile" not in music
+
+
+def test_music_page_formats_playlist_load_errors_with_environment_and_endpoint() -> None:
+    music = read_source("pages/MusicPage.vue")
+    transport = read_source("services/transport.js")
+
+    assert 'import { apiBase, selectedApiTarget } from "../services/http";' in music
+    assert "function formatMusicLoadError(err)" in music
+    assert "播放列表加载失败" in music
+    assert "apiBase(environment.target)" in music
+    assert "err.path" in music
+    assert "err?.status === 404" in music
+    assert "当前环境" in music
+    assert "不是播放器布局错误" in music
+    assert "error.value = formatMusicLoadError(err);" in music
+    assert "error.path = path;" in transport
+    assert "error.target = target;" in transport
+    assert "error.apiBase = baseUrl;" in transport
 
 
 def test_music_progress_copy_does_not_duplicate_loop_mode_label() -> None:
@@ -360,9 +403,47 @@ def test_music_progress_copy_does_not_duplicate_loop_mode_label() -> None:
     assert "loopLabel" in mode_button_block
 
 
+def test_audio_player_uses_centered_time_progress_and_full_width_scrubber() -> None:
+    player = read_source("components/YtsAudioPlayer.vue")
+    template = player.split("<template>", 1)[1].split("</template>", 1)[0]
+    timeline_block = template.split('<div class="timeline-row"', 1)[1].split("</div>", 1)[0]
+
+    assert "currentTimeLabel" in player
+    assert "durationLabel" in player
+    assert 'class="time-progress"' in template
+    assert "时间进度：{{ currentTimeLabel }}/{{ durationLabel }}" in template
+    assert "<media-time-range></media-time-range>" in timeline_block
+    assert "<media-time-display" not in timeline_block
+    assert "<media-duration-display" not in timeline_block
+    assert "grid-template-rows: auto auto auto;" in player
+    assert "grid-template-columns: minmax(0, 1fr);" in player
+
+
+def test_audio_player_animates_waveform_while_playing() -> None:
+    player = read_source("components/YtsAudioPlayer.vue")
+
+    assert ':class="{ empty: !sourceUrl, playing }"' in player
+    assert ".yts-audio-player.playing .hero-wave::after" in player
+    assert ".yts-audio-player.playing .waveform-canvas" in player
+    assert "@keyframes waveform-shimmer" in player
+    assert "@keyframes waveform-breathe" in player
+    assert "@media (prefers-reduced-motion: reduce)" in player
+
+
+def test_audio_player_formats_media_errors_without_object_string() -> None:
+    player = read_source("components/YtsAudioPlayer.vue")
+
+    assert "function formatPlaybackError(err)" in player
+    assert "MEDIA_ERROR_MESSAGES" in player
+    assert "音频加载失败" in player
+    assert 'String(err)' not in player.split('wave.value.on("error"', 1)[1].split("});", 1)[0]
+
+
 def test_music_player_places_track_identity_inside_open_source_player_shell() -> None:
     music = read_source("pages/MusicPage.vue")
     player = read_source("components/YtsAudioPlayer.vue")
+    assert 'class="control-row"' in player
+    control_row_block = player.split('<div class="control-row"', 1)[1].split("</media-control-bar>", 1)[0]
 
     assert 'class="player-meta"' not in music
     assert 'class="transport-bar"' not in music
@@ -370,7 +451,9 @@ def test_music_player_places_track_identity_inside_open_source_player_shell() ->
     assert ':track="currentTrack"' in music
     assert 'trackTitle' in player
     assert 'trackArtist' in player
-    assert player.index('class="track-summary"') < player.index("<media-controller")
+    assert player.index('class="timeline-row"') < player.index('class="control-row"')
+    assert 'class="track-summary"' in control_row_block
+    assert control_row_block.index('class="track-summary"') < control_row_block.index('class="button-groups"')
 
 
 def test_music_player_uses_open_source_media_components_instead_of_hand_rolled_controls() -> None:
@@ -386,12 +469,13 @@ def test_music_player_uses_open_source_media_components_instead_of_hand_rolled_c
         "<media-controller",
         "<media-play-button",
         "<media-time-range",
-        "<media-time-display",
-        "<media-duration-display",
         "<media-mute-button",
         "<media-volume-range",
     ]:
         assert custom_element in player
+    assert 'class="time-progress"' in player
+    assert "<media-time-display" not in player.split("<template>", 1)[1].split("</template>", 1)[0]
+    assert "<media-duration-display" not in player.split("<template>", 1)[1].split("</template>", 1)[0]
     assert 'ref="audioRef"' in player
     assert 'ref="waveformRef"' in player
     assert "WaveSurfer.create" in player
@@ -411,25 +495,50 @@ def test_music_player_uses_open_source_media_components_instead_of_hand_rolled_c
         assert hand_rolled_token not in music
 
 
-def test_music_player_control_layout_is_balanced_and_keeps_queue_in_side_actions() -> None:
+def test_music_player_control_layout_uses_timeline_row_then_track_left_and_controls_right() -> None:
     music = read_source("pages/MusicPage.vue")
     player = read_source("components/YtsAudioPlayer.vue")
     root_rule = player.split(".yts-audio-player {", 1)[1].split("}", 1)[0]
-    title_rule = player.split(".track-summary strong {", 1)[1].split("}", 1)[0]
     controls_rule = player.split(".media-controls {", 1)[1].split("}", 1)[0]
+    timeline_rule = player.split(".timeline-row {", 1)[1].split("}", 1)[0]
+    assert 'class="timeline-row"' in player
+    assert 'class="control-row"' in player
+    assert 'class="button-groups"' in player
+    timeline_row_block = player.split('<div class="timeline-row"', 1)[1].split("</div>", 1)[0]
+    control_row_block = player.split('<div class="control-row"', 1)[1].split("</media-control-bar>", 1)[0]
+    control_row_rule = player.split(".control-row {", 1)[1].split("}", 1)[0]
+    button_groups_rule = player.split(".button-groups {", 1)[1].split("}", 1)[0]
+    track_rule = player.split(".track-summary {", 1)[1].split("}", 1)[0]
+    artist_rule = player.split(".track-summary small {", 1)[1].split("}", 1)[0]
 
-    for class_name in ["transport-group", "timeline-group", "utility-group"]:
+    for class_name in ["timeline-row", "control-row", "track-summary", "button-groups", "transport-group", "utility-group"]:
         assert class_name in player
-    assert player.index('class="transport-group"') < player.index('class="timeline-group"')
-    assert player.index('class="timeline-group"') < player.index('class="utility-group"')
+    assert player.index('class="time-progress"') < player.index('class="timeline-row"')
+    assert player.index('class="timeline-row"') < player.index('class="control-row"')
+    assert "<media-time-range" in timeline_row_block
+    assert "<media-time-display" not in timeline_row_block
+    assert "<media-duration-display" not in timeline_row_block
+    assert "transport-group" not in timeline_row_block
+    assert "utility-group" not in timeline_row_block
+    assert 'class="track-summary"' in control_row_block
+    assert 'class="button-groups"' in control_row_block
+    assert control_row_block.index('class="track-summary"') < control_row_block.index('class="button-groups"')
+    assert 'class="transport-group"' in control_row_block
+    assert 'class="utility-group"' in control_row_block
     assert "<ListMusic" not in player
     assert '"queue"' not in player
     assert '@queue="showDrawer' not in music
-    assert "grid-template-rows: auto minmax(220px, 1fr) auto;" in root_rule
-    assert "font-size: 48px;" in title_rule
-    assert "grid-template-columns: max-content minmax(280px, 1fr) max-content;" in controls_rule
-    assert "max-width: min(1180px, 82vw);" in controls_rule
+    assert "grid-template-rows: minmax(220px, 1fr) auto;" in root_rule
+    assert "grid-template-rows: auto auto auto;" in controls_rule
+    assert "max-width: none;" in controls_rule
     assert "margin-inline: auto;" in controls_rule
+    assert "margin-inline: calc(0px - var(--stage-x-pad, 0px));" in timeline_rule
+    assert "width: calc(100% + var(--stage-x-pad, 0px) + var(--stage-x-pad, 0px));" in timeline_rule
+    assert "grid-template-columns: minmax(180px, 1fr) max-content;" in control_row_rule
+    assert "justify-content: end;" in button_groups_rule
+    assert "justify-items: start;" in track_rule
+    assert "line-height: 1.2;" in track_rule
+    assert "line-height: 1.2;" in artist_rule
 
 
 def test_creation_page_uses_dark_theme_instead_of_broad_light_surfaces() -> None:

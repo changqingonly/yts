@@ -6,7 +6,8 @@ import YtsAudioPlayer from "../components/YtsAudioPlayer.vue";
 import { usePlayerStore } from "../stores/player";
 import { usePlaylistStore } from "../stores/playlist";
 import { useEnvironmentStore } from "../stores/environment";
-import { selectedApiTarget } from "../services/http";
+import { loadSongObjectUrl } from "../services/music";
+import { apiBase, selectedApiTarget } from "../services/http";
 
 const player = usePlayerStore();
 const playlist = usePlaylistStore();
@@ -18,6 +19,7 @@ const importDrawerOpen = ref(false);
 const drawerMode = ref("queue");
 const loopMode = ref("queue");
 const playHistory = ref([]);
+const trackUrlByHash = ref(new Map());
 
 const loopModes = [
   { key: "queue", label: "循环播放" },
@@ -44,17 +46,71 @@ function playableTrackUrl(item) {
   if (!item.content_hash) {
     throw new Error("playlist item requires content_hash");
   }
-  return `/api/music/file/${encodeURIComponent(item.content_hash)}`;
+  return trackUrlByHash.value.get(item.content_hash) || "";
 }
 
 async function refreshPlaylist() {
   error.value = "";
   try {
     await playlist.hydrate({ scope: environment.target });
+    await loadPlayableTrackUrls(playlist.activeItems);
     player.setQueue(tracks.value);
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    error.value = formatMusicLoadError(err);
   }
+}
+
+async function loadPlayableTrackUrls(items) {
+  const previousUrls = trackUrlByHash.value;
+  const nextUrls = new Map();
+  const createdUrls = [];
+  try {
+    for (const item of items) {
+      if (!item.content_hash) {
+        throw new Error("playlist item requires content_hash");
+      }
+      const existingUrl = previousUrls.get(item.content_hash);
+      if (existingUrl) {
+        nextUrls.set(item.content_hash, existingUrl);
+        continue;
+      }
+      const objectUrl = await loadSongObjectUrl({
+        contentHash: item.content_hash,
+        target: environment.target,
+      });
+      createdUrls.push(objectUrl);
+      nextUrls.set(item.content_hash, objectUrl);
+    }
+  } catch (err) {
+    revokePlayableTrackUrls(createdUrls);
+    throw err;
+  }
+  for (const [contentHash, objectUrl] of previousUrls) {
+    if (!nextUrls.has(contentHash)) {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+  trackUrlByHash.value = nextUrls;
+}
+
+function revokePlayableTrackUrls(urls = trackUrlByHash.value) {
+  for (const objectUrl of urls instanceof Map ? urls.values() : urls) {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function formatMusicLoadError(err) {
+  const rawMessage = err instanceof Error ? err.message : String(err);
+  const endpoint = err?.path ? `，接口 ${err.path}` : "";
+  const targetBase = apiBase(environment.target);
+  const status = err?.status ? `，状态 ${err.status}` : "";
+  if (err?.status === 404) {
+    return `播放列表加载失败：当前环境 ${environment.target} (${targetBase}) 未提供音乐接口${endpoint}，不是播放器布局错误。原始错误：${rawMessage}`;
+  }
+  if (rawMessage === "Failed to fetch") {
+    return `播放列表加载失败：无法连接当前环境 ${environment.target} (${targetBase})${endpoint}。请确认后端服务已启动。原始错误：${rawMessage}`;
+  }
+  return `播放列表加载失败：当前环境 ${environment.target} (${targetBase})${endpoint}${status}。原始错误：${rawMessage}`;
 }
 
 async function startStreamPreview() {
@@ -157,6 +213,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   environment.detach();
+  revokePlayableTrackUrls();
 });
 </script>
 
