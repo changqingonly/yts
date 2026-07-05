@@ -312,6 +312,28 @@ def test_music_service_uses_playlist_and_song_upload_contracts() -> None:
         assert token in store
 
 
+def test_music_import_drawer_supports_batch_status_and_capacity_warning() -> None:
+    drawer = read_source("components/MusicImportDrawer.vue")
+    for token in [
+        "导入本地歌曲",
+        "将导入到",
+        "currentTargetLabel",
+        "最多 2000 首",
+        "remainingCapacity",
+        "queued",
+        "uploading",
+        "uploaded",
+        "syncing",
+        "done",
+        "failed",
+        "retryImport",
+        "uploadSong",
+        "appendItems",
+        "multiple",
+    ]:
+        assert token in drawer
+
+
 def test_music_progress_copy_does_not_duplicate_loop_mode_label() -> None:
     player = read_source("components/YtsAudioPlayer.vue")
     mode_button_block = player.split('<button class="mode-button"', 1)[1].split("</button>", 1)[0]
