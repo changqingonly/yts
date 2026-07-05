@@ -228,17 +228,3 @@ async def serve_song_file(
         content_hash=content_hash,
     )
     return FileResponse(path)
-
-
-@router.get("/local_import/file/{content_hash}")
-async def serve_local_import(
-    content_hash: str,
-    user: CurrentUser,
-    session: DbSession,
-) -> FileResponse:
-    path = await music_domain.local_import_path_for_user(
-        session,
-        user_uuid=user.user_uuid,
-        content_hash=content_hash,
-    )
-    return FileResponse(path)

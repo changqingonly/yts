@@ -436,7 +436,7 @@ def test_local_import_upload_allows_owned_local_file_sync() -> None:
         assert synced.json()["changes"][0]["content_hash"] == expected_hash
 
         downloaded = client.get(
-            f"/api/music/local_import/file/{expected_hash}",
+            f"/api/music/file/{expected_hash}",
             headers=headers,
         )
         assert downloaded.status_code == 200
