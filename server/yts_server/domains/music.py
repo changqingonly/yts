@@ -64,45 +64,6 @@ async def sync_playlist(
     }
 
 
-async def store_local_import(
-    session: AsyncSession,
-    *,
-    user_uuid: str,
-    filename: str,
-    mime: str,
-    content: bytes,
-) -> dict:
-    if not content:
-        raise AppError.bad_request("empty_file", "local import file must not be empty", "file")
-    digest = hashlib.sha256(content).hexdigest()
-    storage_dir = Path(get_settings().local_import_storage_dir)
-    storage_dir.mkdir(parents=True, exist_ok=True)
-    target = storage_dir / digest
-    deduplicated = target.exists()
-    if not deduplicated:
-        target.write_bytes(content)
-
-    blob = await session.get(LocalImportBlob, digest)
-    if blob is None:
-        blob = LocalImportBlob(
-            hash=digest,
-            size_bytes=len(content),
-            mime=mime or "application/octet-stream",
-            path=str(target),
-        )
-        session.add(blob)
-
-    await _ensure_owner_row(session, user_uuid=user_uuid, content_hash=digest)
-    await session.flush()
-    return {
-        "content_hash": digest,
-        "size_bytes": len(content),
-        "mime": mime or "application/octet-stream",
-        "filename": filename,
-        "deduplicated": deduplicated,
-    }
-
-
 async def store_song_upload(
     session: AsyncSession,
     *,

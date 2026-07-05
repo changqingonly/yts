@@ -88,7 +88,8 @@ def test_frontend_shared_requests_follow_the_selected_api_target() -> None:
     assert "return stored ? assertApiTarget(stored) : DEFAULT_ENVIRONMENT_TARGET;" in environment_source
     assert "throw new Error(`Unsupported API target: ${target}`);" in environment_source
     assert 'from "./transport"' in http_source
-    assert "uploadForm(\"/api/music/local_import/upload\", form)" in music_service_source
+    assert "uploadForm(\"/api/music/upload\", form)" in music_service_source
+    assert "/api/music/local_import/upload" not in music_service_source
 
 
 def test_frontend_network_outlets_are_centralized_in_transport_service() -> None:

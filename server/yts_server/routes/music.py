@@ -198,24 +198,6 @@ async def upload_song(
     return response
 
 
-@router.post("/local_import/upload")
-async def upload_local_import(
-    user: CurrentUser,
-    session: DbSession,
-    file: Annotated[UploadFile, File()],
-) -> dict:
-    content = await file.read()
-    response = await music_domain.store_local_import(
-        session,
-        user_uuid=user.user_uuid,
-        filename=file.filename or "audio.bin",
-        mime=file.content_type or "application/octet-stream",
-        content=content,
-    )
-    await session.commit()
-    return response
-
-
 @router.get("/file/{content_hash}")
 async def serve_song_file(
     content_hash: str,

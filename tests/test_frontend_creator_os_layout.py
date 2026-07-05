@@ -301,6 +301,8 @@ def test_music_service_uses_playlist_and_song_upload_contracts() -> None:
         "requestJson(`/api/music/playlists/${playlistId}/items/reorder`",
     ]:
         assert token in service
+    assert "uploadLocalImport" not in service
+    assert "/api/music/local_import/upload" not in service
 
     for token in [
         "playlists: []",

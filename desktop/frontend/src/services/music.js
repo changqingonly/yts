@@ -11,17 +11,6 @@ export function syncPlaylist({ since = 0, limit = 500, uploads = [] } = {}) {
   });
 }
 
-export async function uploadLocalImport({ file, mime, filename } = {}) {
-  if (!file) {
-    throw new Error("uploadLocalImport requires file");
-  }
-  const form = new FormData();
-  form.append("file", file, filename || file.name || "audio.bin");
-  if (mime) form.append("mime", mime);
-  if (filename) form.append("filename", filename);
-  return uploadForm("/api/music/local_import/upload", form);
-}
-
 export function listPlaylists({ scope } = {}) {
   const params = new URLSearchParams();
   if (scope) params.set("scope", scope);

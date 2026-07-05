@@ -388,7 +388,7 @@ def test_playlist_sync_accepts_remote_song_and_rejects_unowned_local_file() -> N
 
 
 def test_local_import_upload_allows_owned_local_file_sync() -> None:
-    audio_bytes = b"fake audio bytes"
+    audio_bytes = wav_bytes()
     expected_hash = hashlib.sha256(audio_bytes).hexdigest()
 
     with TestClient(create_app()) as client:
@@ -398,7 +398,7 @@ def test_local_import_upload_allows_owned_local_file_sync() -> None:
         headers = {"Authorization": f"Bearer {token}"}
 
         uploaded = client.post(
-            "/api/music/local_import/upload",
+            "/api/music/upload",
             headers=headers,
             files={"file": ("rain.wav", audio_bytes, "audio/wav")},
         )
@@ -441,3 +441,16 @@ def test_local_import_upload_allows_owned_local_file_sync() -> None:
         )
         assert downloaded.status_code == 200
         assert downloaded.content == audio_bytes
+
+
+def test_legacy_local_import_upload_route_is_removed() -> None:
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(client, "removed-local-upload@example.com", "Password123")[
+            "access_token"
+        ]
+        response = client.post(
+            "/api/music/local_import/upload",
+            headers={"Authorization": f"Bearer {token}"},
+            files={"file": ("rain.wav", wav_bytes(), "audio/wav")},
+        )
+        assert response.status_code == 404
