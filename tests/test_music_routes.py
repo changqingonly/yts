@@ -77,6 +77,20 @@ def test_upload_song_extracts_meta_song_and_reuses_content_hash() -> None:
         assert second.json()["meta_song"] == body["meta_song"]
 
 
+def test_upload_song_rejects_empty_file() -> None:
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(client, "empty-song@example.com", "Password123")[
+            "access_token"
+        ]
+        response = client.post(
+            "/api/music/upload",
+            headers={"Authorization": f"Bearer {token}"},
+            files={"file": ("empty.wav", b"", "audio/wav")},
+        )
+        assert response.status_code == 400
+        assert response.json()["code"] == "empty_file"
+
+
 def test_playlist_sync_accepts_remote_song_and_rejects_unowned_local_file() -> None:
     with TestClient(create_app()) as client:
         token = register_via_test_crypto(client, "music@example.com", "Password123")[

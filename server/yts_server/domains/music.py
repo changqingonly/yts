@@ -10,8 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from yts_core.config import get_settings
 
-from ..db.models import LocalImportBlob, LocalImportOwner, MusicPlaylistItem
+from ..db.models import LocalImportBlob, LocalImportOwner, MetaSong, MusicPlaylistItem
 from ..errors import AppError
+from .audio_metadata import extract_audio_metadata
 
 VALID_SOURCES = {"remote_song", "local_file", "external_url"}
 SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -91,16 +92,7 @@ async def store_local_import(
         )
         session.add(blob)
 
-    existing_owner = (
-        await session.execute(
-            select(LocalImportOwner).where(
-                LocalImportOwner.hash == digest,
-                LocalImportOwner.user_uuid == user_uuid,
-            )
-        )
-    ).scalar_one_or_none()
-    if existing_owner is None:
-        session.add(LocalImportOwner(id=_new_i64_id(), hash=digest, user_uuid=user_uuid))
+    await _ensure_owner_row(session, user_uuid=user_uuid, content_hash=digest)
     await session.flush()
     return {
         "content_hash": digest,
@@ -108,6 +100,69 @@ async def store_local_import(
         "mime": mime or "application/octet-stream",
         "filename": filename,
         "deduplicated": deduplicated,
+    }
+
+
+async def store_song_upload(
+    session: AsyncSession,
+    *,
+    user_uuid: str,
+    filename: str,
+    mime: str,
+    content: bytes,
+) -> dict:
+    if not content:
+        raise AppError.bad_request("empty_file", "song upload file must not be empty", "file")
+    digest = hashlib.sha256(content).hexdigest()
+    storage_dir = Path(get_settings().local_import_storage_dir)
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    target = storage_dir / digest
+    deduplicated = target.exists()
+    if not deduplicated:
+        target.write_bytes(content)
+
+    blob = await session.get(LocalImportBlob, digest)
+    if blob is None:
+        blob = LocalImportBlob(
+            hash=digest,
+            size_bytes=len(content),
+            mime=mime or "application/octet-stream",
+            path=str(target),
+        )
+        session.add(blob)
+
+    await _ensure_owner_row(session, user_uuid=user_uuid, content_hash=digest)
+    meta_song = await session.get(MetaSong, digest)
+    if meta_song is None:
+        metadata = extract_audio_metadata(target, mime=mime, filename=filename)
+        now_ms = time.time_ns() // 1_000_000
+        meta_song = MetaSong(
+            content_hash=digest,
+            size_bytes=len(content),
+            mime=mime or "application/octet-stream",
+            file_format=metadata.file_format,
+            duration_ms=metadata.duration_ms,
+            sample_rate_hz=metadata.sample_rate_hz,
+            bit_rate_bps=metadata.bit_rate_bps,
+            channels=metadata.channels,
+            codec_name=metadata.codec_name,
+            codec_profile=metadata.codec_profile,
+            container_format=metadata.container_format,
+            extracted_at_ms=metadata.extracted_at_ms,
+            extractor_name=metadata.extractor_name,
+            extractor_version=metadata.extractor_version,
+            created_at_ms=now_ms,
+            updated_at_ms=now_ms,
+        )
+        session.add(meta_song)
+    await session.flush()
+    return {
+        "content_hash": digest,
+        "filename": filename,
+        "size_bytes": len(content),
+        "mime": mime or "application/octet-stream",
+        "deduplicated": deduplicated,
+        "meta_song": _meta_song_response(meta_song),
     }
 
 
@@ -126,6 +181,19 @@ async def local_import_path_for_user(
     if not path.exists():
         raise AppError.not_found("local_import_file_missing", "local import file not found")
     return path
+
+
+async def _ensure_owner_row(session: AsyncSession, *, user_uuid: str, content_hash: str) -> None:
+    existing_owner = (
+        await session.execute(
+            select(LocalImportOwner).where(
+                LocalImportOwner.hash == content_hash,
+                LocalImportOwner.user_uuid == user_uuid,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_owner is None:
+        session.add(LocalImportOwner(id=_new_i64_id(), hash=content_hash, user_uuid=user_uuid))
 
 
 async def _apply_upload(session: AsyncSession, user_uuid: str, upload: PlaylistUpload) -> dict:
@@ -266,6 +334,27 @@ def _playlist_item_response(item: MusicPlaylistItem) -> dict:
         "content_hash": item.content_hash,
         "size_bytes": item.size_bytes,
         "mime": item.mime,
+    }
+
+
+def _meta_song_response(song: MetaSong) -> dict:
+    return {
+        "content_hash": song.content_hash,
+        "size_bytes": song.size_bytes,
+        "mime": song.mime,
+        "file_format": song.file_format,
+        "duration_ms": song.duration_ms,
+        "sample_rate_hz": song.sample_rate_hz,
+        "bit_rate_bps": song.bit_rate_bps,
+        "channels": song.channels,
+        "codec_name": song.codec_name,
+        "codec_profile": song.codec_profile,
+        "container_format": song.container_format,
+        "extracted_at_ms": song.extracted_at_ms,
+        "extractor_name": song.extractor_name,
+        "extractor_version": song.extractor_version,
+        "created_at_ms": song.created_at_ms,
+        "updated_at_ms": song.updated_at_ms,
     }
 
 
