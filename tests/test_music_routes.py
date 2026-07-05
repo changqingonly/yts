@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
+import sqlite3
 import wave
 from collections.abc import Iterator
 
@@ -279,6 +281,59 @@ def test_playlist_append_requires_current_user_song_owner() -> None:
         )
         assert response.status_code == 400
         assert response.json()["code"] == "song_owner_required"
+
+
+def test_bootstrap_upgrades_existing_playlist_tables() -> None:
+    db_url = os.environ["YTS_DATABASE_URL"]
+    db_path = db_url.removeprefix("sqlite+aiosqlite:///")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE music_playlist (
+                id VARCHAR(128) PRIMARY KEY,
+                user_uuid VARCHAR(64) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                updated_at_ms BIGINT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE music_playlist_item (
+                id VARCHAR(128) PRIMARY KEY,
+                user_uuid VARCHAR(64) NOT NULL,
+                playlist_id VARCHAR(128) NOT NULL,
+                source VARCHAR(64) NOT NULL,
+                source_ref TEXT NOT NULL,
+                title VARCHAR(255),
+                artist VARCHAR(255),
+                duration_ms INTEGER,
+                cover_url VARCHAR(512),
+                position FLOAT NOT NULL,
+                added_at_ms BIGINT NOT NULL,
+                updated_at_ms BIGINT NOT NULL,
+                deleted_at_ms BIGINT,
+                op_clock BIGINT NOT NULL,
+                device_id VARCHAR(128) NOT NULL,
+                content_hash VARCHAR(64),
+                size_bytes BIGINT,
+                mime VARCHAR(128)
+            )
+            """
+        )
+
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(client, "upgrade@example.com", "Password123")[
+            "access_token"
+        ]
+        response = client.post(
+            "/api/music/playlists/default",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"scope": "cloud"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["scope"] == "cloud"
+        assert response.json()["item_count"] == 0
 
 
 def test_playlist_sync_accepts_remote_song_and_rejects_unowned_local_file() -> None:
