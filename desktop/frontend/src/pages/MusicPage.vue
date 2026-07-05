@@ -213,6 +213,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   environment.detach();
+  player.setQueue([]);
   revokePlayableTrackUrls();
 });
 </script>
