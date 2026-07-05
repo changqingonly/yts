@@ -210,12 +210,15 @@ def test_app_shell_api_target_switch_lives_above_settings_navigation() -> None:
     assert "environment.options" in shell
     assert "environment.target" in shell
     assert "environment.setTarget(item.value)" in shell
-    assert "environment.checkAllHealth()" in shell
+    assert "environment.checkHealth(environment.target)" in shell
+    assert "void environment.checkHealth(item.value)" in shell
+    assert "environment.checkAllHealth()" not in shell
     assert "environment.targetHealth(item.value)" in shell
     assert 'class="global-target-switch"' in bottom_nav_block
     assert 'aria-label="API 环境"' in bottom_nav_block
     assert 'v-for="item in environment.options"' in bottom_nav_block
     assert ':disabled="environment.switchLocked"' in bottom_nav_block
+    assert '@click="switchEnvironmentTarget(item)"' in bottom_nav_block
     assert "target-status-dot" in bottom_nav_block
     assert 'class="target-lock-note"' in bottom_nav_block
     assert bottom_nav_block.index('class="global-target-switch"') < bottom_nav_block.index(

@@ -25,10 +25,15 @@ function handleAuthExpired() {
   router.push({ name: "login", query: { redirect: route.fullPath } });
 }
 
+function switchEnvironmentTarget(item) {
+  environment.setTarget(item.value);
+  void environment.checkHealth(item.value);
+}
+
 onMounted(() => {
   window.addEventListener("yts-auth-expired", handleAuthExpired);
   environment.attach();
-  void environment.checkAllHealth();
+  void environment.checkHealth(environment.target);
   auth.hydrate();
 });
 onUnmounted(() => {
@@ -74,7 +79,7 @@ onUnmounted(() => {
             :disabled="environment.switchLocked"
             :title="environment.switchLocked ? '当前任务运行中，不能切换环境' : `切换到${item.label}`"
             type="button"
-            @click="environment.setTarget(item.value)"
+            @click="switchEnvironmentTarget(item)"
           >
             <component :is="targetIcons[item.value]" :size="14" />
             <span>{{ item.label }}</span>

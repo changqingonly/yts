@@ -34,9 +34,6 @@ export const useEnvironmentStore = defineStore("environment", {
       this.health[target] = (await healthCheck(target)) ? "online" : "offline";
       return this.health[target];
     },
-    async checkAllHealth() {
-      await Promise.all(this.options.map((item) => this.checkHealth(item.value)));
-    },
     syncFromStorage() {
       this.target = selectedApiTarget();
     },

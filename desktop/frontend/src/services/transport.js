@@ -161,7 +161,7 @@ export async function requestBlob(path, options = {}) {
 
 export async function healthCheck(target = selectedApiTarget()) {
   try {
-    const response = await requestJson("/health", { target, auth: false });
+    const response = await requestJsonOverHttp("/health", { target, auth: false });
     return response?.status === "ok";
   } catch {
     return false;
