@@ -1,6 +1,6 @@
 // 流式生成音频播放客户端(方案 B,来源无关)。契约见 desktop/STREAM_PROTOCOL.md。
 //
-// 连 WS(本地 candle-server / 云端 server 同契约)→ 解析 header → 把二进制 PCM 帧
+// 连 WS(本地 infer-gateway / 云端 server 同契约)→ 解析 header → 把二进制 PCM 帧
 // 灌进 AudioWorklet(pcm-player)→ 边生成边播。切 local/cloud 只换 base,不改逻辑。
 
 import { openBinaryStream } from "../services/transport";

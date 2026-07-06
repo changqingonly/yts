@@ -8,7 +8,7 @@ from yts_core.inference.cloud_adapter import CloudInference
 from yts_core.inference.gateway_adapter import GatewayInference
 
 
-def test_make_backend_maps_product_local_backend_to_candle() -> None:
+def test_make_backend_maps_product_local_backend_to_gateway() -> None:
     backend = make_backend(Settings(inference_backend="local"))
 
     assert isinstance(backend, GatewayInference)
@@ -70,7 +70,7 @@ def test_get_settings_rejects_missing_config_dir(monkeypatch, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_candle_inference_uses_configured_timeout_and_text_max_tokens(monkeypatch) -> None:
+async def test_gateway_inference_uses_configured_timeout_and_text_max_tokens(monkeypatch) -> None:
     observed = {}
 
     class FakeClient:

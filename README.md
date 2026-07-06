@@ -58,7 +58,7 @@ Web 前端 `http://127.0.0.1:1420/`。任一步失败都会非零退出,不做�
 ## 推理后端切换(YTS_INFERENCE_BACKEND)
 - `local`:本地 **GGML 推理网关**(`desktop/infer-gateway`,:8799),经 `YTS_GATEWAY_BASE_URL` 调用。
   四模态统一走 GGML 原生二进制:**文本→llama.cpp(`llama-server`,OpenAI 兼容)**、图片→stable-diffusion.cpp、音乐→acestep.cpp。
-  (历史:文本曾用 Candle 内嵌,已移除;网关目录/二进制名 `infer-gateway` 保留以兼容脚本。)
+  (历史:文本曾用 Candle 内嵌,现已移除,四模态统一到 GGML 网关。)
 - `cloud`:LiteLLM 云模型,provider 由 `YTS_DEFAULT_TEXT_MODEL`、fallbacks 和对应 key/base_url 决定。
 
 OpenAI-compatible 或 DeepSeek 都属于 `cloud` 路由,不要把 provider 名写进 `YTS_INFERENCE_BACKEND`:
@@ -75,7 +75,7 @@ OpenAI-compatible 或 DeepSeek 都属于 `cloud` 路由,不要把 provider 名�
 # YTS_PROFILE=cloud
 ```
 `conf/*.env` 是 Python 侧唯一的本地配置入口,已覆盖日志、数据库、鉴权、存储、CORS、
-LangGraph checkpoint、LiteLLM/OpenAI/Candle 文本模型,以及图片/音频/音乐模型槽位。
+LangGraph checkpoint、LiteLLM/OpenAI/本地网关文本模型,以及图片/音频/音乐模型槽位。
 
 本地推理需先准备各模态 GGML 二进制+模型(各一条命令,自动构建+下模型+生成配置):
 ```bash
@@ -88,5 +88,5 @@ bash scripts/dev_gateway.sh           # 起 GGML 网关(:8799),自动加载上�
 ```
 
 ## 现状(本轮脚手架)
-- ✅ 目录结构 / 依赖 / 配置 / 关键连线就位;服务端可启动(`/health` + creation stub);Tauri 可编译(Candle 依赖就绪,四模态为 stub)。
-- 🚧 stub / TODO:Candle 真实模型推理、creation 6 步完整业务、TCC 真实落账、Alembic 真实表、Phoenix 评估集、离线↔云同步、**Windows in-process(DIY Tauri+PyO3)**。
+- ✅ 目录结构 / 依赖 / 配置 / 关键连线就位;服务端可启动;Tauri 可编译;四模态经本地 GGML 网关(文本 llama.cpp / 图片 sd.cpp / 音乐 acestep.cpp)。
+- 🚧 TODO:语音(ASR/TTS)、creation 6 步完整业务、TCC 真实落账、Phoenix 评估集、离线↔云同步、**Windows in-process(DIY Tauri+PyO3)**。

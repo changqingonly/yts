@@ -17,7 +17,7 @@ class ExecutionSummary(BaseModel):
 
     provider: str | None = None
     model: str | None = None
-    backend: str = "stub"  # candle | cloud-litellm | stub
+    backend: str = "stub"  # gateway | cloud-litellm | echo | stub
     billed: bool = False
     prompt_pack: dict[str, str] = Field(default_factory=dict)
     stages: list[StageTrace] = Field(default_factory=list)

@@ -273,51 +273,62 @@ onBeforeUnmount(() => {
       @imported="refreshPlaylist"
     />
 
-    <aside :class="['drawer-panel', { open: playlistDrawerOpen }]" aria-label="播放列表与历史">
-      <header class="drawer-header">
-        <button class="drawer-collapse" type="button" title="收起" @click="playlistDrawerOpen = false">
-          <X :size="18" />
-        </button>
-        <div>
-          <p>播放管理</p>
-          <h2>{{ drawerMode === "history" ? "播放历史" : "播放列表" }}</h2>
+    <div v-if="playlistDrawerOpen" class="drawer-layer" role="presentation">
+      <button
+        class="drawer-scrim"
+        type="button"
+        aria-label="关闭播放列表面板"
+        @click="playlistDrawerOpen = false"
+      ></button>
+      <aside class="drawer-panel open" aria-label="播放列表与历史">
+        <header class="drawer-header">
+          <div class="drawer-title">
+            <span><ListMusic :size="18" /></span>
+            <div>
+              <p>播放管理</p>
+              <h2>{{ drawerMode === "history" ? "播放历史" : "播放列表" }}</h2>
+            </div>
+          </div>
+          <button class="drawer-collapse" type="button" title="关闭" @click="playlistDrawerOpen = false">
+            <X :size="18" />
+          </button>
+        </header>
+
+        <div class="drawer-tabs" role="tablist" aria-label="播放列表切换">
+          <button
+            :class="['drawer-tab', { active: drawerMode === 'queue' }]"
+            type="button"
+            @click="drawerMode = 'queue'"
+          >
+            <ListMusic :size="16" /> 播放列表
+          </button>
+          <button
+            :class="['drawer-tab', { active: drawerMode === 'history' }]"
+            type="button"
+            @click="drawerMode = 'history'"
+          >
+            <History :size="16" /> 播放历史
+          </button>
         </div>
-      </header>
 
-      <div class="drawer-tabs" role="tablist" aria-label="播放列表切换">
-        <button
-          :class="['drawer-tab', { active: drawerMode === 'queue' }]"
-          type="button"
-          @click="drawerMode = 'queue'"
-        >
-          <ListMusic :size="16" /> 播放列表
-        </button>
-        <button
-          :class="['drawer-tab', { active: drawerMode === 'history' }]"
-          type="button"
-          @click="drawerMode = 'history'"
-        >
-          <History :size="16" /> 播放历史
-        </button>
-      </div>
-
-      <div class="drawer-list">
-        <button
-          v-for="(track, index) in drawerTracks"
-          :key="`${drawerMode}-${track.id}-${index}`"
-          :class="['drawer-row', { active: currentTrack?.id === track.id }]"
-          type="button"
-          @click="playDrawerTrack(track, index)"
-        >
-          <span>{{ String(index + 1).padStart(2, "0") }}</span>
-          <strong>{{ track.title }}</strong>
-          <small>{{ drawerMode === "history" ? track.playedAt : track.artist }}</small>
-        </button>
-        <p v-if="!drawerTracks.length" class="empty-state">
-          {{ drawerMode === "history" ? "暂无播放历史" : "暂无歌曲" }}
-        </p>
-      </div>
-    </aside>
+        <div class="drawer-list">
+          <button
+            v-for="(track, index) in drawerTracks"
+            :key="`${drawerMode}-${track.id}-${index}`"
+            :class="['drawer-row', { active: currentTrack?.id === track.id }]"
+            type="button"
+            @click="playDrawerTrack(track, index)"
+          >
+            <span>{{ String(index + 1).padStart(2, "0") }}</span>
+            <strong>{{ track.title }}</strong>
+            <small>{{ drawerMode === "history" ? track.playedAt : track.artist }}</small>
+          </button>
+          <p v-if="!drawerTracks.length" class="empty-state">
+            {{ drawerMode === "history" ? "暂无播放历史" : "暂无歌曲" }}
+          </p>
+        </div>
+      </aside>
+    </div>
 
   </section>
 </template>
@@ -360,8 +371,7 @@ onBeforeUnmount(() => {
 }
 
 .side-actions button,
-.import-button,
-.drawer-collapse {
+.import-button {
   align-items: center;
   background: rgba(9, 25, 43, 0.58);
   border: 1px solid rgba(125, 211, 252, 0.14);
@@ -417,6 +427,22 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 
+.drawer-layer {
+  inset: 0;
+  pointer-events: none;
+  position: fixed;
+  z-index: 8;
+}
+
+.drawer-scrim {
+  background: rgba(2, 8, 18, 0.24);
+  border: 0;
+  cursor: pointer;
+  inset: 0;
+  pointer-events: auto;
+  position: absolute;
+}
+
 .drawer-panel {
   background: linear-gradient(180deg, #102b43 0%, #071426 100%);
   border-left: 1px solid rgba(125, 211, 252, 0.14);
@@ -426,6 +452,7 @@ onBeforeUnmount(() => {
   grid-template-rows: auto auto minmax(0, 1fr);
   max-width: min(386px, calc(100vw - 84px));
   padding: 20px;
+  pointer-events: auto;
   position: absolute;
   right: 0;
   top: 0;
@@ -441,13 +468,41 @@ onBeforeUnmount(() => {
 
 .drawer-header {
   align-items: start;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: 36px minmax(0, 1fr);
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
   margin-bottom: 16px;
 }
 
+.drawer-title {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.drawer-title > span {
+  align-items: center;
+  background: rgba(14, 165, 233, 0.22);
+  border-radius: 8px;
+  color: var(--color-brand-cyan);
+  display: inline-flex;
+  height: 42px;
+  justify-content: center;
+  width: 42px;
+}
+
 .drawer-collapse {
+  align-items: center;
+  background: rgba(9, 25, 43, 0.72);
+  border: 0;
+  border-radius: 8px;
+  color: var(--color-heading);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  justify-content: center;
   height: 36px;
   width: 36px;
 }
