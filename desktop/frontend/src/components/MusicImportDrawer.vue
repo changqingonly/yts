@@ -24,6 +24,10 @@ const remainingCapacity = computed(() =>
   Math.max(0, 2000 - (playlist.currentPlaylist?.item_count || playlist.activeItems.length || 0)),
 );
 const hasTasks = computed(() => tasks.value.length > 0);
+const importHistoryItems = computed(() =>
+  [...playlist.activeItems].sort((left, right) => importTimestamp(right) - importTimestamp(left)),
+);
+const hasImportHistory = computed(() => importHistoryItems.value.length > 0);
 
 const statusLabels = {
   queued: "排队中",
@@ -103,6 +107,34 @@ function retryImport(task) {
   startImport(task);
 }
 
+function importTimestamp(item) {
+  if (item.added_at_ms == null) {
+    throw new Error("playlist item requires added_at_ms");
+  }
+  const timestamp = Number(item.added_at_ms);
+  if (!Number.isFinite(timestamp)) {
+    throw new Error("playlist item requires added_at_ms");
+  }
+  return timestamp;
+}
+
+function itemTitle(item) {
+  return item.title_alias || "未命名歌曲";
+}
+
+function itemArtist(item) {
+  return item.artist_alias || "未知艺人";
+}
+
+function itemImportTimeLabel(item) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(importTimestamp(item)));
+}
+
 function stripExtension(filename) {
   const dotIndex = filename.lastIndexOf(".");
   if (dotIndex <= 0) return filename;
@@ -157,7 +189,30 @@ function readDeviceId() {
           </button>
         </div>
 
+        <section class="import-history" aria-label="已导入歌曲">
+          <header class="section-heading">
+            <strong>已导入歌曲</strong>
+            <span>{{ importHistoryItems.length }} 首 · 最近导入在前</span>
+          </header>
+          <div v-if="hasImportHistory" class="history-list">
+            <article v-for="item in importHistoryItems" :key="item.id" class="history-row">
+              <div class="history-icon">
+                <FileAudio :size="16" />
+              </div>
+              <div class="history-copy">
+                <strong>{{ itemTitle(item) }}</strong>
+                <small>{{ itemArtist(item) }} · {{ itemImportTimeLabel(item) }}</small>
+              </div>
+            </article>
+          </div>
+          <p v-else class="drawer-empty">暂无已导入歌曲。</p>
+        </section>
+
         <section class="task-stack" aria-label="导入任务">
+          <header class="section-heading">
+            <strong>本次导入</strong>
+            <span>{{ tasks.length }} 个任务</span>
+          </header>
           <article v-for="task in tasks" :key="task.id" :class="['task-row', task.status]">
             <div class="task-icon">
               <AlertTriangle v-if="task.status === 'failed'" :size="18" />
@@ -179,7 +234,7 @@ function readDeviceId() {
               <RotateCcw :size="16" />
             </button>
           </article>
-          <p v-if="!hasTasks" class="drawer-empty">选择一个或多个音频文件，导入后会写入当前环境的歌单。</p>
+          <p v-if="!hasTasks" class="drawer-empty">新导入任务会显示在这里。</p>
         </section>
       </aside>
     </div>
@@ -211,7 +266,7 @@ function readDeviceId() {
   color: var(--color-text);
   display: grid;
   gap: 18px;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(150px, 0.78fr) minmax(120px, 0.72fr);
   height: 100%;
   max-width: min(430px, calc(100vw - 74px));
   overflow: hidden;
@@ -334,6 +389,84 @@ function readDeviceId() {
   min-height: 0;
   overflow-y: auto;
   padding-right: 2px;
+}
+
+.import-history {
+  display: grid;
+  gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.section-heading {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.section-heading strong {
+  color: var(--color-heading);
+  font-size: 13px;
+}
+
+.section-heading span {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 800;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-list {
+  display: grid;
+  gap: 8px;
+  grid-auto-rows: max-content;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.history-row {
+  align-items: center;
+  background: rgba(4, 16, 31, 0.34);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  min-height: 56px;
+  padding: 10px 12px;
+}
+
+.history-icon {
+  color: var(--color-brand-cyan);
+  display: inline-flex;
+}
+
+.history-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.history-copy strong {
+  color: var(--color-heading);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-copy small {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 750;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .task-row {

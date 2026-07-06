@@ -1,9 +1,11 @@
 """
-本地推理适配器:经 HTTP 调 Rust 的 candle-server(desktop/candle-server)。
+本地推理适配器:经 HTTP 调 Rust 的 **GGML 推理网关**(desktop/candle-server,名称兼容保留)。
 
-架构(v3.1):推理在 Rust(Candle)。Python 编排经此适配器 HTTP 调本地 candle-server。
-Mac 桌面形态:Tauri 壳可 spawn candle-server;sidecar(Python)与之同机通信。
-图片/语音/音乐(SD / Whisper+TTS / MusicGen)为 TODO。
+网关把四模态统一对接 GGML 原生二进制:
+- 文本 /candle/text → 代理常驻 llama-server(llama.cpp,OpenAI 兼容)
+- 图片 /image → stable-diffusion.cpp
+- 音乐 /music/stream → acestep.cpp / 内置合成器
+(历史:文本曾用 Candle 内嵌 quantized_llama,已移除。)
 """
 
 from __future__ import annotations

@@ -27,6 +27,33 @@ export function musicStreamUrl(target = selectedApiTarget()) {
   return `${streamEndpointForTarget(target)}/music/stream`;
 }
 
+export async function healthCheck(target = selectedApiTarget()) {
+  const requestTarget = assertApiTarget(target);
+  const baseUrl = apiBase(requestTarget);
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/health`, {
+      headers: { Accept: JSON_CONTENT_TYPE },
+    });
+  } catch (error) {
+    annotateRequestError(error, { path: "/health", target: requestTarget, baseUrl });
+    throw error;
+  }
+  if (response.status >= 200 && response.status < 300) {
+    return response.json().catch(() => ({}));
+  }
+  const body = await response.json().catch(() => null);
+  throw responseError({
+    path: "/health",
+    auth: false,
+    target: requestTarget,
+    baseUrl,
+    status: response.status,
+    statusText: response.statusText,
+    body,
+  });
+}
+
 export async function requestJson(path, options = {}) {
   try {
     return await requestJsonOverWebSocket(path, options);

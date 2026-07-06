@@ -385,6 +385,8 @@ onBeforeUnmount(() => {
 }
 
 .player-stage {
+  --shell-sidebar-width: 69px;
+  --stage-left-inset: 28px;
   --stage-x-pad: clamp(24px, 4vw, 56px);
 
   align-content: center;
@@ -392,7 +394,7 @@ onBeforeUnmount(() => {
   gap: 24px;
   grid-template-rows: minmax(0, 1fr);
   inset: 20px 86px 22px 28px;
-  overflow: hidden;
+  overflow: visible;
   padding: 34px var(--stage-x-pad);
   position: absolute;
 }
@@ -480,8 +482,10 @@ onBeforeUnmount(() => {
 }
 
 .drawer-list {
+  align-content: start;
   display: grid;
   gap: 8px;
+  grid-auto-rows: max-content;
   min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
@@ -492,15 +496,18 @@ onBeforeUnmount(() => {
   background: rgba(4, 16, 31, 0.44);
   border: 1px solid rgba(125, 211, 252, 0.1);
   border-radius: 8px;
+  box-sizing: border-box;
   color: var(--color-text);
   cursor: pointer;
   display: grid;
   font: inherit;
-  gap: 4px 10px;
-  grid-template-columns: 38px minmax(0, 1fr);
-  min-height: 58px;
-  padding: 10px;
+  align-items: center;
+  gap: 8px;
+  grid-template-columns: 30px minmax(0, 1fr) minmax(58px, 90px);
+  min-height: 44px;
+  padding: 8px 10px;
   text-align: left;
+  width: 100%;
 }
 
 .drawer-row:hover,
@@ -515,11 +522,12 @@ onBeforeUnmount(() => {
   color: var(--color-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  grid-row: span 2;
+  line-height: 1;
 }
 
 .drawer-row strong {
   color: var(--color-heading);
+  line-height: 1.1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -527,6 +535,8 @@ onBeforeUnmount(() => {
 
 .drawer-row small {
   color: var(--color-muted);
+  justify-self: end;
+  line-height: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -557,6 +567,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 960px) {
   .player-stage {
+    --stage-left-inset: 20px;
     --stage-x-pad: 24px;
 
     inset: 18px 68px 20px 20px;
@@ -575,6 +586,8 @@ onBeforeUnmount(() => {
   }
 
   .player-stage {
+    --stage-left-inset: 16px;
+
     inset: 18px 16px 18px;
   }
 

@@ -29,6 +29,7 @@ const wave = ref(null);
 const waveReady = ref(false);
 const currentTime = ref(0);
 const duration = ref(0);
+let sourceLoadSerial = 0;
 
 const MEDIA_ERROR_MESSAGES = {
   1: "播放被中止",
@@ -42,6 +43,16 @@ const trackTitle = computed(() => props.track?.title || "暂无歌曲");
 const trackArtist = computed(() => props.track?.artist || "从播放列表选择一首歌");
 const currentTimeLabel = computed(() => formatTimelineTime(currentTime.value));
 const durationLabel = computed(() => formatTimelineTime(duration.value));
+const timelineProgressRatio = computed(() => {
+  if (!Number.isFinite(duration.value) || duration.value <= 0) return 0;
+  return Math.min(1, Math.max(0, currentTime.value / duration.value));
+});
+const timelineProgress = computed(() => `${timelineProgressRatio.value * 100}%`);
+const timelineLabelPlacement = computed(() => {
+  if (timelineProgressRatio.value <= 0.06) return "edge-start";
+  if (timelineProgressRatio.value >= 0.94) return "edge-end";
+  return "edge-middle";
+});
 const loopIcon = computed(() => {
   if (props.loopMode === "single") return Repeat1;
   if (props.loopMode === "shuffle") return Shuffle;
@@ -60,6 +71,13 @@ function requireWaveform() {
     throw new Error("YtsAudioPlayer requires a waveform container");
   }
   return waveformRef.value;
+}
+
+function requireWave() {
+  if (!wave.value) {
+    throw new Error("YtsAudioPlayer requires a WaveSurfer instance");
+  }
+  return wave.value;
 }
 
 function createWave() {
@@ -86,12 +104,14 @@ function createWave() {
     setDuration(duration);
   });
   wave.value.on("timeupdate", (currentTime) => setCurrentTime(currentTime));
-  wave.value.on("error", (err) => {
-    emit("play-error", formatPlaybackError(err));
-  });
+  wave.value.on("error", handleWaveError);
   if (sourceUrl.value) {
+    const loadSerial = ++sourceLoadSerial;
     const loading = wave.value.load(sourceUrl.value);
-    loading?.catch?.((err) => emit("play-error", formatPlaybackError(err)));
+    loading?.catch?.((err) => {
+      if (loadSerial !== sourceLoadSerial) return;
+      emit("play-error", formatPlaybackError(err));
+    });
   } else {
     wave.value.empty();
   }
@@ -115,24 +135,24 @@ function formatTimelineTime(value) {
 }
 
 async function syncPlaybackIntent() {
-  const audio = requireAudio();
+  const player = requireWave();
   if (!sourceUrl.value) {
-    audio.pause();
+    player.pause();
     return;
   }
-  if (props.playing && audio.paused) {
+  if (props.playing && !player.isPlaying()) {
     try {
-      await audio.play();
+      await player.play();
     } catch (err) {
       emit("play-error", formatPlaybackError(err));
     }
-  } else if (!props.playing && !audio.paused) {
-    audio.pause();
+  } else if (!props.playing && player.isPlaying()) {
+    player.pause();
   }
 }
 
 function formatPlaybackError(err) {
-  const mediaError = err?.currentTarget?.error || err?.target?.error || err;
+  const mediaError = extractNativeMediaError(err);
   const code = typeof mediaError?.code === "number" ? mediaError.code : null;
   if (code != null) {
     const reason = MEDIA_ERROR_MESSAGES[code] || "未知媒体错误";
@@ -145,6 +165,23 @@ function formatPlaybackError(err) {
     return `音频加载失败：${err}`;
   }
   return "音频加载失败：无法读取音频文件";
+}
+
+function extractNativeMediaError(err) {
+  const mediaError = err?.currentTarget?.error || err?.target?.error;
+  if (mediaError) return mediaError;
+  if (typeof err?.code === "number" && err.code >= 1 && err.code <= 4) return err;
+  return null;
+}
+
+function isSourceAbort(err) {
+  return err?.name === "AbortError";
+}
+
+function handleWaveError(err) {
+  // WaveSurfer emits AbortError when a newer source cancels the previous load.
+  if (isSourceAbort(err)) return;
+  emit("play-error", formatPlaybackError(err));
 }
 
 function handlePlay() {
@@ -167,10 +204,6 @@ function handleDurationChange(event) {
   setDuration(event.currentTarget.duration || 0);
 }
 
-function handleAudioError(event) {
-  emit("play-error", formatPlaybackError(event));
-}
-
 onMounted(() => {
   createWave();
 });
@@ -184,6 +217,7 @@ onBeforeUnmount(() => {
 
 watch(sourceUrl, async (url) => {
   if (!wave.value) return;
+  const loadSerial = ++sourceLoadSerial;
   waveReady.value = false;
   currentTime.value = 0;
   duration.value = 0;
@@ -193,9 +227,11 @@ watch(sourceUrl, async (url) => {
     } else {
       wave.value.empty();
     }
+    if (loadSerial !== sourceLoadSerial) return;
     await nextTick();
     await syncPlaybackIntent();
   } catch (err) {
+    if (loadSerial !== sourceLoadSerial) return;
     emit("play-error", formatPlaybackError(err));
   }
 });
@@ -209,84 +245,98 @@ watch(
 </script>
 
 <template>
-  <section class="yts-audio-player" :class="{ empty: !sourceUrl, playing }">
+  <section
+    class="yts-audio-player"
+    :class="{ empty: !sourceUrl, playing }"
+    :style="{ '--timeline-progress': timelineProgress }"
+  >
     <div class="hero-wave" aria-label="音频波形">
       <div ref="waveformRef" class="waveform-canvas"></div>
       <p v-if="!sourceUrl" class="wave-empty">暂无歌曲</p>
       <p v-else-if="!waveReady" class="wave-empty">载入中</p>
     </div>
 
-    <media-controller class="media-shell" audio>
+    <media-controller id="yts-audio-controller" class="media-shell" audio>
       <audio
         ref="audioRef"
         slot="media"
         :loop="loopMode === 'single'"
-        :src="sourceUrl || undefined"
         preload="metadata"
         @durationchange="handleDurationChange"
         @ended="handleEnded"
-        @error="handleAudioError"
         @pause="handlePause"
         @play="handlePlay"
         @timeupdate="handleTimeUpdate"
       ></audio>
-
-      <media-control-bar class="media-controls">
-        <div class="time-progress" aria-label="时间进度">
-          时间进度：{{ currentTimeLabel }}/{{ durationLabel }}
-        </div>
-        <div class="timeline-row" aria-label="播放进度">
-          <media-time-range></media-time-range>
-        </div>
-        <div class="control-row">
-          <div class="track-summary">
-            <strong>{{ trackTitle }}</strong>
-            <small>{{ trackArtist }}</small>
-          </div>
-          <div class="button-groups">
-            <div class="transport-group" aria-label="播放控制">
-              <button
-                class="transport-button"
-                type="button"
-                title="上一首"
-                :disabled="!sourceUrl"
-                @click="emit('previous')"
-              >
-                <SkipBack :size="18" />
-              </button>
-              <media-play-button></media-play-button>
-              <button
-                class="transport-button"
-                type="button"
-                title="下一首"
-                :disabled="!sourceUrl"
-                @click="emit('next')"
-              >
-                <SkipForward :size="18" />
-              </button>
-            </div>
-            <div class="utility-group" aria-label="声音与播放模式">
-              <media-mute-button></media-mute-button>
-              <media-volume-range></media-volume-range>
-              <button class="mode-button" type="button" title="播放模式" @click="emit('cycle-loop')">
-                <component :is="loopIcon" :size="18" />
-                <span>{{ loopLabel }}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </media-control-bar>
     </media-controller>
+
+    <div class="timeline-row" aria-label="播放进度">
+      <div :class="['time-progress', timelineLabelPlacement]" aria-label="时间进度">
+        {{ currentTimeLabel }}/{{ durationLabel }}
+      </div>
+      <media-time-range mediacontroller="yts-audio-controller"></media-time-range>
+    </div>
+
+    <media-control-bar class="media-controls" mediacontroller="yts-audio-controller">
+      <div class="control-row">
+        <div class="track-summary">
+          <strong>{{ trackTitle }}</strong>
+          <small>{{ trackArtist }}</small>
+        </div>
+        <div class="button-groups">
+          <div class="transport-group" aria-label="播放控制">
+            <button
+              class="transport-button"
+              type="button"
+              title="上一首"
+              :disabled="!sourceUrl"
+              @click="emit('previous')"
+            >
+              <SkipBack :size="18" />
+            </button>
+            <media-play-button mediacontroller="yts-audio-controller"></media-play-button>
+            <button
+              class="transport-button"
+              type="button"
+              title="下一首"
+              :disabled="!sourceUrl"
+              @click="emit('next')"
+            >
+              <SkipForward :size="18" />
+            </button>
+          </div>
+          <div class="utility-group" aria-label="声音与播放模式">
+            <media-mute-button mediacontroller="yts-audio-controller"></media-mute-button>
+            <media-volume-range mediacontroller="yts-audio-controller"></media-volume-range>
+            <button class="mode-button" type="button" title="播放模式" @click="emit('cycle-loop')">
+              <component :is="loopIcon" :size="18" />
+              <span>{{ loopLabel }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </media-control-bar>
   </section>
 </template>
 
 <style scoped>
 .yts-audio-player {
+  --media-accent-color: var(--color-brand-cyan);
+  --media-background-color: transparent;
+  --media-control-background: rgba(9, 25, 43, 0.52);
+  --media-control-hover-background: rgba(14, 165, 233, 0.22);
+  --media-primary-color: var(--color-heading);
+  --media-secondary-color: rgba(138, 164, 189, 0.72);
+  --media-text-color: var(--color-heading);
+  --media-time-range-buffered-color: rgba(138, 164, 189, 0.18);
+  --media-time-range-track-background: rgba(138, 164, 189, 0.14);
+
   display: grid;
   gap: clamp(18px, 3.2vh, 34px);
-  grid-template-rows: minmax(220px, 1fr) auto;
+  grid-template-rows: minmax(220px, 1fr) auto auto;
   height: 100%;
   min-height: 0;
+  min-width: 0;
   position: relative;
   z-index: 1;
 }
@@ -307,9 +357,6 @@ watch(
 }
 
 .hero-wave::before {
-  background:
-    radial-gradient(ellipse at center, rgba(34, 211, 238, 0.12), rgba(8, 47, 73, 0.05) 44%, transparent 72%),
-    repeating-linear-gradient(90deg, rgba(125, 211, 252, 0.04) 0 1px, transparent 1px 23px);
   content: "";
   inset: 0;
   pointer-events: none;
@@ -317,9 +364,6 @@ watch(
 }
 
 .hero-wave::after {
-  background:
-    linear-gradient(90deg, transparent 0%, rgba(34, 211, 238, 0.18) 38%, rgba(52, 211, 153, 0.2) 50%, transparent 68%),
-    repeating-linear-gradient(90deg, transparent 0 18px, rgba(125, 211, 252, 0.08) 18px 23px);
   content: "";
   inset: 0;
   opacity: 0;
@@ -329,15 +373,9 @@ watch(
   z-index: 2;
 }
 
-.yts-audio-player.playing .hero-wave::after {
-  animation:
-    waveform-shimmer 1.8s linear infinite,
-    waveform-breathe 2.4s ease-in-out infinite;
-  opacity: 1;
-}
-
 .yts-audio-player.playing .waveform-canvas {
   animation: waveform-breathe 2.4s ease-in-out infinite;
+  filter: drop-shadow(0 0 14px rgba(34, 211, 238, 0.2));
   transform-origin: center;
 }
 
@@ -359,35 +397,26 @@ watch(
 }
 
 .media-shell {
-  --media-accent-color: var(--color-brand-cyan);
-  --media-background-color: transparent;
-  --media-control-background: rgba(9, 25, 43, 0.52);
-  --media-control-hover-background: rgba(14, 165, 233, 0.22);
-  --media-primary-color: var(--color-heading);
-  --media-secondary-color: rgba(138, 164, 189, 0.72);
-  --media-text-color: var(--color-heading);
-  --media-time-range-buffered-color: rgba(138, 164, 189, 0.18);
-  --media-time-range-track-background: rgba(138, 164, 189, 0.14);
-
   background: transparent;
   border: 0;
   box-shadow: none;
   color: var(--color-heading);
-  display: block;
-  justify-self: stretch;
+  height: 0;
   min-width: 0;
-  width: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  width: 0;
 }
 
 .media-controls {
+  --media-control-bar-display: block;
+
   background: transparent;
-  display: grid;
-  gap: 12px;
-  grid-template-rows: auto auto auto;
+  display: block;
   margin-inline: auto;
   max-width: none;
   min-width: 0;
-  width: 100%;
 }
 
 .time-progress {
@@ -395,10 +424,29 @@ watch(
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   font-weight: 850;
-  justify-self: center;
+  left: var(--timeline-progress);
   line-height: 1.2;
   min-height: 16px;
+  pointer-events: none;
+  position: absolute;
   text-align: center;
+  top: 18px;
+  transform: translate(-50%, -100%);
+  white-space: nowrap;
+  z-index: 2;
+}
+
+.time-progress.edge-start {
+  left: 0;
+  text-align: left;
+  transform: translateY(-100%);
+}
+
+.time-progress.edge-end {
+  left: auto;
+  right: 0;
+  text-align: right;
+  transform: translateY(-100%);
 }
 
 .timeline-row {
@@ -406,9 +454,12 @@ watch(
   display: grid;
   gap: 0;
   grid-template-columns: minmax(0, 1fr);
-  margin-inline: calc(0px - var(--stage-x-pad, 0px));
+  margin-left: calc(0px - var(--stage-x-pad, 0px) - var(--stage-left-inset));
+  margin-right: 0;
   min-width: 0;
-  width: calc(100% + var(--stage-x-pad, 0px) + var(--stage-x-pad, 0px));
+  padding-top: 22px;
+  position: relative;
+  width: calc(100vw - var(--shell-sidebar-width));
 }
 
 .control-row {
@@ -486,6 +537,16 @@ media-volume-range {
 }
 
 media-time-range {
+  --media-control-background: transparent;
+  --media-control-hover-background: transparent;
+  --media-range-padding: 0px;
+  --media-range-padding-left: 0px;
+  --media-range-padding-right: 0px;
+  --media-range-track-background: rgba(216, 231, 245, 0.28);
+  --media-time-range-buffered-color: transparent;
+  --media-time-range-track-background: transparent;
+
+  background: transparent;
   width: 100%;
 }
 
@@ -493,7 +554,7 @@ media-time-range {
 .mode-button {
   align-items: center;
   background: rgba(9, 25, 43, 0.58);
-  border: 1px solid rgba(125, 211, 252, 0.14);
+  border: 0;
   border-radius: 8px;
   color: var(--color-heading);
   cursor: pointer;
@@ -525,16 +586,6 @@ button:disabled {
   opacity: 0.44;
 }
 
-@keyframes waveform-shimmer {
-  from {
-    background-position: -32% 0, 0 0;
-  }
-
-  to {
-    background-position: 132% 0, 34px 0;
-  }
-}
-
 @keyframes waveform-breathe {
   0%,
   100% {
@@ -547,7 +598,6 @@ button:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .yts-audio-player.playing .hero-wave::after,
   .yts-audio-player.playing .waveform-canvas {
     animation: none;
   }

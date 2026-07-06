@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
-# 启动本地 Candle 推理服务(Rust)。首次运行经 hf-hub 下载模型权重(默认 TinyLlama-1.1B-Chat GGUF)。
-# 之后让服务端/桌面以本地产品后端跑:YTS_INFERENCE_BACKEND=local
+# 启动本地 GGML 推理网关(Rust)。文本→llama.cpp、图片→sd.cpp、音乐→acestep.cpp。
+# 网关按下方自动加载的 producer 配置对接各 GGML 二进制;上层用 YTS_INFERENCE_BACKEND=local。
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# 若已跑过 build_sdcpp.sh,自动加载图片生成 producer 配置(YTS_IMAGEGEN_CMD)
-IMG_ENV="$HERE/../desktop/vendor/imagegen.env"
-if [ -f "$IMG_ENV" ]; then
-  # shellcheck disable=SC1090
-  source "$IMG_ENV"
-  echo "已加载图片生成 producer:${YTS_IMAGEGEN_CMD%% *} ..."
-fi
+VENDOR="$HERE/../desktop/vendor"
+
+# 自动加载各模态 producer 配置(跑过对应 build_*.sh 后即存在):
+#   llamacpp.env → YTS_LLAMA_CMD/BASE_URL(文本);imagegen.env → YTS_IMAGEGEN_CMD(图片)
+for envf in llamacpp.env imagegen.env; do
+  if [ -f "$VENDOR/$envf" ]; then
+    # shellcheck disable=SC1090
+    source "$VENDOR/$envf"
+    echo "已加载 $envf"
+  fi
+done
+[ -n "${YTS_LLAMA_CMD:-}" ] && echo "文本 producer:llama-server(${YTS_LLAMA_CMD##*/})"
+[ -n "${YTS_IMAGEGEN_CMD:-}" ] && echo "图片 producer:${YTS_IMAGEGEN_CMD%% *}"
+
 cd "$HERE/../desktop/candle-server"
-# mac 默认启用 metal;CPU-only 机器用:cargo run --release --no-default-features
 cargo run --release

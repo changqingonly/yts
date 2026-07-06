@@ -60,8 +60,8 @@ def test_frontend_default_api_target_is_build_time_configurable() -> None:
     assert "target: selectedApiTarget()" in environment_store_source
     assert "health: Object.fromEntries(environmentOptions().map" in environment_store_source
     assert "setSelectedApiTarget(nextTarget)" in environment_store_source
-    assert "async checkHealth(" not in environment_store_source
-    assert "healthCheck" not in environment_store_source
+    assert "async checkHealth(target = this.target)" in environment_store_source
+    assert "healthCheck" in environment_store_source
     assert "VITE_YTS_DEFAULT_TARGET" not in http_source
     assert 'from "./transport"' in http_source
     assert "apiBase, requestJson, websocketBase" in http_source

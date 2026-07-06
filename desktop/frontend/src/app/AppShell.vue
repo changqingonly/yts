@@ -27,11 +27,13 @@ function handleAuthExpired() {
 
 function switchEnvironmentTarget(item) {
   environment.setTarget(item.value);
+  void environment.checkHealth(item.value);
 }
 
 onMounted(() => {
   window.addEventListener("yts-auth-expired", handleAuthExpired);
   environment.attach();
+  void environment.checkHealth(environment.target);
   auth.hydrate();
 });
 onUnmounted(() => {
@@ -75,7 +77,11 @@ onUnmounted(() => {
             :key="item.value"
             :class="{ active: environment.target === item.value }"
             :disabled="environment.switchLocked"
-            :title="environment.switchLocked ? '当前任务运行中，不能切换环境' : `切换到${item.label}`"
+            :title="
+              environment.switchLocked
+                ? '当前任务运行中，不能切换环境'
+                : `切换到${item.label} · ${environment.targetHealthDetail(item.value)}`
+            "
             type="button"
             @click="switchEnvironmentTarget(item)"
           >
@@ -126,6 +132,8 @@ onUnmounted(() => {
   gap: 14px;
   min-height: 0;
   padding: 14px 6px;
+  position: relative;
+  z-index: 50;
 }
 
 .creator-brand,
@@ -263,5 +271,7 @@ onUnmounted(() => {
 .creator-main {
   min-height: 0;
   overflow: auto;
+  position: relative;
+  z-index: 0;
 }
 </style>

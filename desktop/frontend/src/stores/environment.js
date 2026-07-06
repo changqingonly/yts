@@ -1,6 +1,8 @@
 import { defineStore } from "pinia";
+import { healthCheck } from "../services/transport";
 import {
   API_TARGET_CHANGED_EVENT,
+  assertApiTarget,
   environmentOptions,
   selectedApiTarget,
   setSelectedApiTarget,
@@ -13,6 +15,7 @@ export const useEnvironmentStore = defineStore("environment", {
     switchLocked: false,
     targetChangedHandler: null,
     health: Object.fromEntries(environmentOptions().map((item) => [item.value, "unknown"])),
+    healthError: Object.fromEntries(environmentOptions().map((item) => [item.value, ""])),
   }),
   actions: {
     setTarget(nextTarget) {
@@ -27,6 +30,30 @@ export const useEnvironmentStore = defineStore("environment", {
     },
     targetHealth(target) {
       return this.health[target] ?? "unknown";
+    },
+    targetHealthDetail(target) {
+      const status = this.targetHealth(target);
+      if (status === "online") return "已连接";
+      if (status === "checking") return "检查中";
+      if (status === "offline") {
+        const reason = this.healthError[target];
+        return reason ? `连接失败：${reason}` : "连接失败";
+      }
+      return "未检查";
+    },
+    async checkHealth(target = this.target) {
+      const requestTarget = assertApiTarget(target);
+      this.health[requestTarget] = "checking";
+      this.healthError[requestTarget] = "";
+      try {
+        await healthCheck(requestTarget);
+        this.health[requestTarget] = "online";
+        return "online";
+      } catch (error) {
+        this.health[requestTarget] = "offline";
+        this.healthError[requestTarget] = error instanceof Error ? error.message : String(error);
+        return "offline";
+      }
     },
     syncFromStorage() {
       this.target = selectedApiTarget();

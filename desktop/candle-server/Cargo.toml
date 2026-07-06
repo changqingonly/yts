@@ -1,8 +1,8 @@
 [package]
-name = "candle-server"
+name = "candle-server"  # 兼容名;实为 yts GGML 推理网关(文本 llama.cpp / 图片 sd.cpp / 音乐 acestep.cpp)
 version = "0.1.0"
 edition = "2021"
-description = "yts local Candle inference HTTP server (text first; image/speech/music TODO)"
+description = "yts local GGML inference gateway (text→llama-server proxy; image/music→spawned .cpp producers)"
 
 [[bin]]
 name = "candle-server"
@@ -17,16 +17,7 @@ serde_json = "1"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-
-candle-core = "0.8"
-candle-transformers = "0.8"
-tokenizers = "0.20"
-hf-hub = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }  # 代理 llama-server
 hound = "3.5"          # 读取 producer 输出的 WAV(acestep.cpp 输出 48kHz WAV)
 image = { version = "0.25", default-features = false, features = ["png"] }  # 读/编码 PNG(sd.cpp 输出)
 base64 = "0.22"        # /image 返回 base64 PNG
-
-# mac Metal 加速(默认开;非 mac 构建时去掉此 feature 或改 cpu)
-[features]
-default = ["metal"]
-metal = ["candle-core/metal"]

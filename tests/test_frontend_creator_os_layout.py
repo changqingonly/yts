@@ -210,7 +210,8 @@ def test_app_shell_api_target_switch_lives_above_settings_navigation() -> None:
     assert "environment.options" in shell
     assert "environment.target" in shell
     assert "environment.setTarget(item.value)" in shell
-    assert "environment.checkHealth" not in shell
+    assert "void environment.checkHealth(environment.target)" in shell
+    assert "void environment.checkHealth(item.value);" in shell
     assert "environment.checkAllHealth()" not in shell
     assert "environment.targetHealth(item.value)" in shell
     assert 'class="global-target-switch"' in bottom_nav_block
@@ -243,6 +244,17 @@ def test_app_shell_active_navigation_has_no_outer_accent_border() -> None:
 
     assert "border: 1px solid transparent;" in shell
     assert "border-color: var(--color-accent);" not in active_rule
+
+
+def test_app_shell_sidebar_stays_above_overflowing_page_surfaces() -> None:
+    shell = read_source("app/AppShell.vue")
+    sidebar_rule = shell.split(".creator-sidebar {", 1)[1].split("}", 1)[0]
+    main_rule = shell.split(".creator-main {", 1)[1].split("}", 1)[0]
+
+    assert "position: relative;" in sidebar_rule
+    assert "z-index: 50;" in sidebar_rule
+    assert "position: relative;" in main_rule
+    assert "z-index: 0;" in main_rule
 
 
 def test_app_shell_logo_has_no_outer_frame_background_and_larger_mark() -> None:
@@ -363,6 +375,33 @@ def test_music_import_drawer_supports_batch_status_and_capacity_warning() -> Non
     assert "grid-auto-rows: max-content;" in drawer
 
 
+def test_music_import_drawer_lists_existing_imports_by_recent_added_time() -> None:
+    drawer = read_source("components/MusicImportDrawer.vue")
+    template = drawer.split("<template>", 1)[1].split("</template>", 1)[0]
+    script = drawer.split("<script setup>", 1)[1].split("</script>", 1)[0]
+
+    assert "const importHistoryItems = computed(() =>" in script
+    assert "[...playlist.activeItems].sort" in script
+    assert "importTimestamp(right) - importTimestamp(left)" in script
+    assert "function importTimestamp(item)" in script
+    assert "throw new Error(\"playlist item requires added_at_ms\")" in script
+    assert "function itemImportTimeLabel(item)" in script
+
+    assert 'class="import-history"' in template
+    assert 'aria-label="已导入歌曲"' in template
+    assert "已导入歌曲" in template
+    assert "最近导入在前" in template
+    assert 'v-for="item in importHistoryItems"' in template
+    assert "{{ itemTitle(item) }}" in template
+    assert "{{ itemArtist(item) }} · {{ itemImportTimeLabel(item) }}" in template
+    assert "暂无已导入歌曲" in template
+    assert template.index('class="import-history"') < template.index('class="task-stack"')
+
+    assert "grid-template-rows: auto auto auto minmax(150px, 0.78fr) minmax(120px, 0.72fr);" in drawer
+    assert ".history-list {" in drawer
+    assert ".history-row {" in drawer
+
+
 def test_music_page_uses_import_drawer_and_meta_song_tracks() -> None:
     music = read_source("pages/MusicPage.vue")
     for token in [
@@ -410,37 +449,74 @@ def test_music_progress_copy_does_not_duplicate_loop_mode_label() -> None:
 def test_audio_player_uses_centered_time_progress_and_full_width_scrubber() -> None:
     player = read_source("components/YtsAudioPlayer.vue")
     template = player.split("<template>", 1)[1].split("</template>", 1)[0]
-    timeline_block = template.split('<div class="timeline-row"', 1)[1].split("</div>", 1)[0]
+    timeline_block = template.split('<div class="timeline-row"', 1)[1].split("</media-time-range>", 1)[0]
+    controller_block = template.split('<media-controller', 1)[1].split("</media-controller>", 1)[0]
 
     assert "currentTimeLabel" in player
     assert "durationLabel" in player
-    assert 'class="time-progress"' in template
-    assert "时间进度：{{ currentTimeLabel }}/{{ durationLabel }}" in template
-    assert "<media-time-range></media-time-range>" in timeline_block
+    assert "timelineProgress" in player
+    assert "timelineLabelPlacement" in player
+    assert '--timeline-progress' in template
+    assert 'id="yts-audio-controller"' in template
+    assert ':class="[' in template
+    assert "'time-progress'" in template
+    assert 'timelineLabelPlacement' in template
+    assert "{{ currentTimeLabel }}/{{ durationLabel }}" in timeline_block
+    assert "时间进度：" not in template
+    assert 'class="timeline-row"' not in controller_block
+    assert 'class="media-controls"' not in controller_block
+    assert 'mediacontroller="yts-audio-controller"' in timeline_block
+    assert timeline_block.index("'time-progress'") < timeline_block.index("<media-time-range")
+    assert "<media-time-range" in timeline_block
     assert "<media-time-display" not in timeline_block
     assert "<media-duration-display" not in timeline_block
-    assert "grid-template-rows: auto auto auto;" in player
+    assert "grid-template-rows: minmax(220px, 1fr) auto auto;" in player
     assert "grid-template-columns: minmax(0, 1fr);" in player
+    assert "left: var(--timeline-progress);" in player
+    assert "transform: translate(-50%, -100%);" in player
+    assert ".time-progress.edge-start" in player
+    assert "left: 0;" in player.split(".time-progress.edge-start {", 1)[1].split("}", 1)[0]
+    assert "transform: translateY(-100%);" in player.split(".time-progress.edge-start {", 1)[1].split("}", 1)[0]
+    assert ".time-progress.edge-end" in player
+    assert "right: 0;" in player.split(".time-progress.edge-end {", 1)[1].split("}", 1)[0]
+    assert "transform: translateY(-100%);" in player.split(".time-progress.edge-end {", 1)[1].split("}", 1)[0]
+    assert "--media-control-background: transparent;" in player
+    assert "--media-range-padding-left: 0px;" in player
+    assert "--media-range-padding-right: 0px;" in player
+    assert "--media-range-track-background: rgba(216, 231, 245, 0.28);" in player
 
 
 def test_audio_player_animates_waveform_while_playing() -> None:
     player = read_source("components/YtsAudioPlayer.vue")
 
     assert ':class="{ empty: !sourceUrl, playing }"' in player
-    assert ".yts-audio-player.playing .hero-wave::after" in player
     assert ".yts-audio-player.playing .waveform-canvas" in player
-    assert "@keyframes waveform-shimmer" in player
     assert "@keyframes waveform-breathe" in player
     assert "@media (prefers-reduced-motion: reduce)" in player
+    hero_after_block = player.split(".hero-wave::after {", 1)[1].split("}", 1)[0]
+    assert "background:" not in hero_after_block
+    assert "linear-gradient" not in hero_after_block
 
 
 def test_audio_player_formats_media_errors_without_object_string() -> None:
     player = read_source("components/YtsAudioPlayer.vue")
+    template = player.split("<template>", 1)[1].split("</template>", 1)[0]
+    audio_block = template.split("<audio", 1)[1].split("></audio>", 1)[0]
 
     assert "function formatPlaybackError(err)" in player
     assert "MEDIA_ERROR_MESSAGES" in player
     assert "音频加载失败" in player
-    assert 'String(err)' not in player.split('wave.value.on("error"', 1)[1].split("});", 1)[0]
+    assert ':src="sourceUrl || undefined"' not in audio_block
+    assert '@error="handleAudioError"' not in audio_block
+    assert "function handleAudioError" not in player
+    assert 'wave.value.on("error", handleWaveError)' in player
+    assert "function handleWaveError(err)" in player
+    assert "if (isSourceAbort(err)) return;" in player
+    assert "function isSourceAbort(err)" in player
+    assert 'err?.name === "AbortError"' in player
+    assert "function extractNativeMediaError(err)" in player
+    assert "err.code >= 1 && err.code <= 4" in player
+    assert "err?.target?.error || err" not in player
 
 
 def test_music_player_places_track_identity_inside_open_source_player_shell() -> None:
@@ -477,7 +553,7 @@ def test_music_player_uses_open_source_media_components_instead_of_hand_rolled_c
         "<media-volume-range",
     ]:
         assert custom_element in player
-    assert 'class="time-progress"' in player
+    assert "'time-progress'" in player
     assert "<media-time-display" not in player.split("<template>", 1)[1].split("</template>", 1)[0]
     assert "<media-duration-display" not in player.split("<template>", 1)[1].split("</template>", 1)[0]
     assert 'ref="audioRef"' in player
@@ -505,10 +581,12 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
     root_rule = player.split(".yts-audio-player {", 1)[1].split("}", 1)[0]
     controls_rule = player.split(".media-controls {", 1)[1].split("}", 1)[0]
     timeline_rule = player.split(".timeline-row {", 1)[1].split("}", 1)[0]
+    control_button_rule = player.split(".transport-button,\n.mode-button {", 1)[1].split("}", 1)[0]
+    controller_block = player.split("<media-controller", 1)[1].split("</media-controller>", 1)[0]
     assert 'class="timeline-row"' in player
     assert 'class="control-row"' in player
     assert 'class="button-groups"' in player
-    timeline_row_block = player.split('<div class="timeline-row"', 1)[1].split("</div>", 1)[0]
+    timeline_row_block = player.split('<div class="timeline-row"', 1)[1].split("</media-time-range>", 1)[0]
     control_row_block = player.split('<div class="control-row"', 1)[1].split("</media-control-bar>", 1)[0]
     control_row_rule = player.split(".control-row {", 1)[1].split("}", 1)[0]
     button_groups_rule = player.split(".button-groups {", 1)[1].split("}", 1)[0]
@@ -517,9 +595,12 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
 
     for class_name in ["timeline-row", "control-row", "track-summary", "button-groups", "transport-group", "utility-group"]:
         assert class_name in player
-    assert player.index('class="time-progress"') < player.index('class="timeline-row"')
+    assert 'class="timeline-row"' not in controller_block
+    assert 'class="control-row"' not in controller_block
+    assert 'class="media-controls"' not in controller_block
     assert player.index('class="timeline-row"') < player.index('class="control-row"')
-    assert "<media-time-range" in timeline_row_block
+    assert timeline_row_block.index("'time-progress'") < timeline_row_block.index("<media-time-range")
+    assert '<media-time-range mediacontroller="yts-audio-controller"' in timeline_row_block
     assert "<media-time-display" not in timeline_row_block
     assert "<media-duration-display" not in timeline_row_block
     assert "transport-group" not in timeline_row_block
@@ -532,14 +613,23 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
     assert "<ListMusic" not in player
     assert '"queue"' not in player
     assert '@queue="showDrawer' not in music
-    assert "grid-template-rows: minmax(220px, 1fr) auto;" in root_rule
-    assert "grid-template-rows: auto auto auto;" in controls_rule
+    assert "grid-template-rows: minmax(220px, 1fr) auto auto;" in root_rule
+    assert "min-width: 0;" in root_rule
+    assert "display: block;" in controls_rule
     assert "max-width: none;" in controls_rule
     assert "margin-inline: auto;" in controls_rule
-    assert "margin-inline: calc(0px - var(--stage-x-pad, 0px));" in timeline_rule
-    assert "width: calc(100% + var(--stage-x-pad, 0px) + var(--stage-x-pad, 0px));" in timeline_rule
+    assert "width: 100%;" not in controls_rule
+    stage_rule = music.split(".player-stage {", 1)[1].split("}", 1)[0]
+    assert "--shell-sidebar-width: 69px;" in stage_rule
+    assert "--stage-left-inset: 28px;" in stage_rule
+    assert "overflow: visible;" in stage_rule
+    assert "margin-left: calc(0px - var(--stage-x-pad, 0px) - var(--stage-left-inset));" in timeline_rule
+    assert "margin-right: 0;" in timeline_rule
+    assert "width: calc(100vw - var(--shell-sidebar-width));" in timeline_rule
     assert "grid-template-columns: minmax(180px, 1fr) max-content;" in control_row_rule
     assert "justify-content: end;" in button_groups_rule
+    assert "border: 0;" in control_button_rule
+    assert "border: 1px" not in control_button_rule
     assert "justify-items: start;" in track_rule
     assert "line-height: 1.2;" in track_rule
     assert "line-height: 1.2;" in artist_rule
@@ -911,8 +1001,9 @@ def test_music_page_wave_surface_has_no_panel_frame_and_fades_into_background() 
     assert "border-radius: 0;" in wave_rule
     assert "-webkit-mask-image:" in wave_rule
     assert "mask-image:" in wave_rule
-    assert "radial-gradient(ellipse at center" in wave_glow_rule
-    assert "repeating-linear-gradient" in wave_glow_rule
+    assert "background:" not in wave_glow_rule
+    assert "radial-gradient(ellipse at center" not in wave_glow_rule
+    assert "repeating-linear-gradient" not in wave_glow_rule
     assert 'cursorColor: "transparent"' in player
     assert "cursorWidth: 0" in player
 
@@ -937,6 +1028,29 @@ def test_music_page_uses_right_drawer_for_queue_and_history() -> None:
     assert 'class="drawer-backdrop"' not in music
     assert "right: 0;" in music
     assert "transform: translateX(0);" in music
+
+
+def test_music_playlist_drawer_uses_compact_single_line_rows() -> None:
+    music = read_source("pages/MusicPage.vue")
+    drawer_list_rule = music.split(".drawer-list {", 1)[1].split("}", 1)[0]
+    drawer_row_rule = music.split(".drawer-row {", 1)[1].split("}", 1)[0]
+    drawer_index_rule = music.split(".drawer-row span {", 1)[1].split("}", 1)[0]
+    drawer_title_rule = music.split(".drawer-row strong {", 1)[1].split("}", 1)[0]
+    drawer_meta_rule = music.split(".drawer-row small {", 1)[1].split("}", 1)[0]
+
+    assert "align-content: start;" in drawer_list_rule
+    assert "grid-auto-rows: max-content;" in drawer_list_rule
+    assert "box-sizing: border-box;" in drawer_row_rule
+    assert "grid-template-columns: 30px minmax(0, 1fr) minmax(58px, 90px);" in drawer_row_rule
+    assert "align-items: center;" in drawer_row_rule
+    assert "min-height: 44px;" in drawer_row_rule
+    assert "padding: 8px 10px;" in drawer_row_rule
+    assert "width: 100%;" in drawer_row_rule
+    assert "grid-row: span 2;" not in drawer_index_rule
+    assert "line-height: 1;" in drawer_index_rule
+    assert "line-height: 1.1;" in drawer_title_rule
+    assert "justify-self: end;" in drawer_meta_rule
+    assert "line-height: 1;" in drawer_meta_rule
 
 
 def test_music_page_uses_edge_progress_and_vertical_side_actions_without_large_frames() -> None:
