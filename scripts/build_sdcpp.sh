@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 一条命令搞定:构建 stable-diffusion.cpp(GGML/Metal)+ 自动下载 GGUF 模型 + 生成 producer 配置。
-# 跑完直接 `bash scripts/dev_candle.sh`,前端图片生成即用真 stable-diffusion.cpp,零手动步骤。
+# 跑完直接 `bash scripts/dev_gateway.sh`,前端图片生成即用真 stable-diffusion.cpp,零手动步骤。
 #
 # 默认模型:FLUX.1-schnell(Apache-2.0,可商用)全 GGUF,来自 ungated 仓 Green-Sky/flux.1-schnell-GGUF。
 # 覆盖:SD_MODEL_REPO / SD_DIFFUSION / SD_VAE / SD_CLIP / SD_T5 / SD_STEPS 等环境变量。
@@ -46,11 +46,11 @@ dl "$SD_DIFFUSION"; dl "$SD_VAE"; dl "$SD_CLIP"; dl "$SD_T5"
 
 # ---- 3) 生成 producer 配置(candle-server 读 YTS_IMAGEGEN_CMD)----
 cat > "$ENVFILE" <<EOF
-# 由 scripts/build_sdcpp.sh 自动生成。dev_candle.sh 会自动 source 本文件。
+# 由 scripts/build_sdcpp.sh 自动生成。dev_gateway.sh 会自动 source 本文件。
 export YTS_IMAGEGEN_CMD='${SD_BIN} --diffusion-model ${MODELS}/${SD_DIFFUSION} --vae ${MODELS}/${SD_VAE} --clip_l ${MODELS}/${SD_CLIP} --t5xxl ${MODELS}/${SD_T5} -p {prompt} -o {out} -W {width} -H {height} --steps ${SD_STEPS} --cfg-scale ${SD_CFG} --sampling-method ${SD_SAMPLER}'
 EOF
 
 echo ""
 echo "✅ 完成。图片生成已就绪(配置写入 $ENVFILE)。"
-echo "   启动:bash scripts/dev_candle.sh   # 会自动加载上面的 YTS_IMAGEGEN_CMD"
+echo "   启动:bash scripts/dev_gateway.sh   # 会自动加载上面的 YTS_IMAGEGEN_CMD"
 echo "   换模型:设 SD_MODEL_REPO/SD_DIFFUSION 等 env 后重跑本脚本(如 SDXL / Qwen-Image)。"

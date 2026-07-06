@@ -5,8 +5,8 @@
 > 设计源(完整论证 + 图谱):`../yuetools/docs/tech.html` 与 `../yuetools/docs/wiki/`(见 `Arch-V3-1` / `Candle-Inference` / `Platform-Split` / `Server-Stack-Plan` / `Transport-Agnostic-Core`)。
 
 ## 架构一句话
-- **推理 = Candle(纯 Rust,in-process)**:文本 / 图片 / 语音 / 背景音乐;`llama.cpp` 仅用户授权可选。
-- **编排 = Python(LangGraph)调 Candle**:本轮 Mac 走 **sidecar**(Windows in-process 留后)。
+- **本地推理 = GGML 推理网关(Rust,`desktop/candle-server`)**:文本→llama.cpp、图片→stable-diffusion.cpp、音乐→acestep.cpp(GGML/Metal 原生二进制,spawn/proxy)。
+- **编排 = Python(LangGraph)调网关/云**:本轮 Mac 走 **sidecar**(Windows in-process 留后)。
 - **服务端(云实现)= FastAPI + LangGraph + LiteLLM + Phoenix + PostgreSQL**。
 - **统一 API + 双实现 + 用户切换**:本地(桌面)/ 云(服务端)共用 API 契约,自定义 skill 仅本地。
 
@@ -17,7 +17,7 @@
 ```
 core/      传输无关核心(LangGraph 编排 + LiteLLM + Pydantic 契约 + 推理端口)
 server/    云实现:FastAPI + DB + 计费(TCC) + Phoenix
-desktop/   Mac 桌面:frontend(Vue) + src-tauri(Rust 壳 + Candle 推理) + sidecar(复用 server app,本地 profile)
+desktop/   Mac 桌面:frontend(Vue) + src-tauri(Rust 壳) + candle-server(GGML 推理网关) + sidecar(复用 server app,本地 profile)
 shared/    API 契约导出(OpenAPI/JSON Schema)
 scripts/   安装 / 开发 / 打包脚本
 ```
@@ -82,7 +82,7 @@ LangGraph checkpoint、LiteLLM/OpenAI/Candle 文本模型,以及图片/音频/�
 bash scripts/build_llamacpp.sh       # 文本:llama.cpp + Qwen2.5-7B GGUF(~4.4GB,Apache-2.0)
 bash scripts/build_sdcpp.sh          # 图片:stable-diffusion.cpp + FLUX.1-schnell GGUF(~9.3GB)
 # (音乐:build_acestep.sh)
-bash scripts/dev_candle.sh           # 起 GGML 网关(:8799),自动加载上面生成的 producer 配置、spawn llama-server
+bash scripts/dev_gateway.sh           # 起 GGML 网关(:8799),自动加载上面生成的 producer 配置、spawn llama-server
 # 在 conf/{profile}.env 中设置 YTS_INFERENCE_BACKEND=local 后:
 ./servctl restart --profile local    # write_lyrics 等节点改走本地 GGML 网关
 ```
