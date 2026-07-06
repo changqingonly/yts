@@ -2,7 +2,7 @@
 name = "yts-desktop"
 version = "0.1.0"
 edition = "2021"
-description = "yts Mac desktop shell (Tauri 2 + Candle inference)"
+description = "yts Mac desktop shell (Tauri 2; inference via local GGML gateway)"
 
 [lib]
 name = "yts_desktop_lib"
@@ -18,14 +18,3 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-
-# Candle 多模态推理。默认关闭以加快脚手架编译;
-# 启用:`cargo check --features candle`(mac 加速再叠 `--features metal`)。
-candle-core = { version = "0.8", optional = true }
-candle-nn = { version = "0.8", optional = true }
-candle-transformers = { version = "0.8", optional = true }
-
-[features]
-default = []
-candle = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers"]
-metal = ["candle-core?/metal", "candle-nn?/metal", "candle-transformers?/metal"]

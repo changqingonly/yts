@@ -1072,12 +1072,25 @@ def test_music_page_wave_surface_has_no_panel_frame_and_fades_into_background() 
 
 def test_music_page_uses_right_drawer_for_queue_and_history() -> None:
     music = read_source("pages/MusicPage.vue")
+    template = music.split("<template>", 1)[1].split("</template>", 1)[0]
+    drawer_layer_block = template.split('<div v-if="playlistDrawerOpen" class="drawer-layer"', 1)[1].split(
+        "</aside>", 1
+    )[0]
+    drawer_header_block = drawer_layer_block.split('<header class="drawer-header"', 1)[1].split("</header>", 1)[0]
+    drawer_layer_rule = music.split(".drawer-layer {", 1)[1].split("}", 1)[0]
+    drawer_scrim_rule = music.split(".drawer-scrim {", 1)[1].split("}", 1)[0]
+    drawer_header_rule = music.split(".drawer-header {", 1)[1].split("}", 1)[0]
+    drawer_title_rule = music.split(".drawer-title {", 1)[1].split("}", 1)[0]
+    drawer_title_icon_rule = music.split(".drawer-title > span {", 1)[1].split("}", 1)[0]
 
     for token in [
         "playlistDrawerOpen",
         "playlistDrawerOpen = ref(false)",
         "drawerMode",
+        "drawer-layer",
+        "drawer-scrim",
         "drawer-panel",
+        "drawer-title",
         "drawer-tab",
         "drawerTracks",
         "playHistory",
@@ -1087,6 +1100,20 @@ def test_music_page_uses_right_drawer_for_queue_and_history() -> None:
         "播放列表",
     ]:
         assert token in music
+    assert 'aria-label="关闭播放列表面板"' in drawer_layer_block
+    assert '@click="playlistDrawerOpen = false"' in drawer_layer_block
+    assert '<ListMusic :size="18" />' in drawer_header_block
+    assert '<button class="drawer-collapse"' in drawer_header_block
+    assert drawer_header_block.index('class="drawer-title"') < drawer_header_block.index('class="drawer-collapse"')
+    assert "position: fixed;" in drawer_layer_rule
+    assert "inset: 0;" in drawer_layer_rule
+    assert "pointer-events: none;" in drawer_layer_rule
+    assert "position: absolute;" in drawer_scrim_rule
+    assert "pointer-events: auto;" in drawer_scrim_rule
+    assert "display: flex;" in drawer_header_rule
+    assert "justify-content: space-between;" in drawer_header_rule
+    assert "grid-template-columns: 42px minmax(0, 1fr);" in drawer_title_rule
+    assert "background: rgba(14, 165, 233, 0.22);" in drawer_title_icon_rule
     assert 'class="drawer-backdrop"' not in music
     assert "right: 0;" in music
     assert "transform: translateX(0);" in music
