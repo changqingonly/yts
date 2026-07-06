@@ -4,15 +4,15 @@ import httpx
 import pytest
 from yts_core.config import Settings, get_settings
 from yts_core.inference import make_backend
-from yts_core.inference.candle_adapter import CandleInference
 from yts_core.inference.cloud_adapter import CloudInference
+from yts_core.inference.gateway_adapter import GatewayInference
 
 
 def test_make_backend_maps_product_local_backend_to_candle() -> None:
     backend = make_backend(Settings(inference_backend="local"))
 
-    assert isinstance(backend, CandleInference)
-    assert backend.name == "candle"
+    assert isinstance(backend, GatewayInference)
+    assert backend.name == "gateway"
 
 
 def test_make_backend_maps_product_cloud_backend_to_cloud_inference() -> None:
@@ -22,7 +22,7 @@ def test_make_backend_maps_product_cloud_backend_to_cloud_inference() -> None:
     assert backend.name == "cloud-litellm"
 
 
-@pytest.mark.parametrize("backend", ["echo", "openai", "candle", "pro-fixture", "unknown"])
+@pytest.mark.parametrize("backend", ["echo", "openai", "gateway", "pro-fixture", "unknown"])
 def test_make_backend_rejects_unsupported_backend_values(backend: str) -> None:
     with pytest.raises(ValueError, match="Unsupported inference backend"):
         make_backend(Settings(inference_backend=backend))
@@ -93,11 +93,11 @@ async def test_candle_inference_uses_configured_timeout_and_text_max_tokens(monk
             )
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
-    backend = CandleInference(
+    backend = GatewayInference(
         Settings(
-            candle_base_url="http://127.0.0.1:9999",
-            candle_request_timeout_seconds=33,
-            candle_text_max_tokens=777,
+            gateway_base_url="http://127.0.0.1:9999",
+            gateway_request_timeout_seconds=33,
+            gateway_text_max_tokens=777,
         )
     )
 
@@ -105,5 +105,5 @@ async def test_candle_inference_uses_configured_timeout_and_text_max_tokens(monk
 
     assert result.text == "ok"
     assert observed["timeout"] == 33
-    assert observed["url"] == "http://127.0.0.1:9999/candle/text"
+    assert observed["url"] == "http://127.0.0.1:9999/text"
     assert observed["json"]["max_tokens"] == 777

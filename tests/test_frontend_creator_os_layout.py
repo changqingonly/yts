@@ -38,7 +38,15 @@ def test_app_shell_router_and_default_music_route_are_defined() -> None:
     assert "<RouterView />" in app
     assert 'path: "/"' in router
     assert 'redirect: "/music"' in router
-    for route in ["/music", "/studio", "/assets", "/settings", "/profile/setup", "/auth/login", "/auth/register"]:
+    for route in [
+        "/music",
+        "/studio",
+        "/assets",
+        "/settings",
+        "/profile/setup",
+        "/auth/login",
+        "/auth/register",
+    ]:
         assert route in router
     assert "createPinia()" in main
     assert ".use(router)" in main
@@ -186,7 +194,10 @@ def test_app_shell_settings_navigation_lives_at_sidebar_bottom_without_credit_ca
 
     assert "const primaryNavItems = [" in shell
     assert 'key: "settings"' not in shell.split("const primaryNavItems = [", 1)[1].split("];", 1)[0]
-    assert 'const settingsNavItem = { key: "settings", label: "设置", to: "/settings", icon: Settings2 };' in shell
+    assert (
+        'const settingsNavItem = { key: "settings", label: "设置", to: "/settings", icon: Settings2 };'
+        in shell
+    )
     assert 'class="creator-bottom-nav"' in shell
     assert "display: flex;" in sidebar_rule
     assert "flex-direction: column;" in sidebar_rule
@@ -222,7 +233,7 @@ def test_app_shell_api_target_switch_lives_above_settings_navigation() -> None:
     assert "target-status-dot" in bottom_nav_block
     assert 'class="target-lock-note"' in bottom_nav_block
     assert bottom_nav_block.index('class="global-target-switch"') < bottom_nav_block.index(
-        ":to=\"settingsNavItem.to\""
+        ':to="settingsNavItem.to"'
     )
 
 
@@ -240,7 +251,9 @@ def test_app_shell_api_target_switch_only_highlights_selected_button() -> None:
 
 def test_app_shell_active_navigation_has_no_outer_accent_border() -> None:
     shell = read_source("app/AppShell.vue")
-    active_rule = shell.split(".creator-nav-item:hover,\n.creator-nav-item.active {", 1)[1].split("}", 1)[0]
+    active_rule = shell.split(".creator-nav-item:hover,\n.creator-nav-item.active {", 1)[1].split(
+        "}", 1
+    )[0]
 
     assert "border: 1px solid transparent;" in shell
     assert "border-color: var(--color-accent);" not in active_rule
@@ -287,7 +300,7 @@ def test_music_stream_generation_uses_global_api_target() -> None:
     assert 'target = "local"' not in player
     assert "target = selectedApiTarget()" in player
     assert 'import { openBinaryStream } from "../services/transport";' in stream_player
-    assert "openBinaryStream(\"\", {" in stream_player
+    assert 'openBinaryStream("", {' in stream_player
     assert "streamEndpointForTarget(target)" in transport
     assert "const WS_BASES = {" not in stream_player
     assert "musicWsBase" in environment
@@ -304,7 +317,7 @@ def test_music_service_uses_playlist_and_song_upload_contracts() -> None:
         "uploadSong",
         'uploadForm("/api/music/upload"',
         "loadSongObjectUrl",
-        'requestBlob(`/api/music/file/${contentHash}`',
+        "requestBlob(`/api/music/file/${contentHash}`",
         "listPlaylists",
         "requestJson(`/api/music/playlists",
         "ensureDefaultPlaylist",
@@ -384,7 +397,7 @@ def test_music_import_drawer_lists_existing_imports_by_recent_added_time() -> No
     assert "[...playlist.activeItems].sort" in script
     assert "importTimestamp(right) - importTimestamp(left)" in script
     assert "function importTimestamp(item)" in script
-    assert "throw new Error(\"playlist item requires added_at_ms\")" in script
+    assert 'throw new Error("playlist item requires added_at_ms")' in script
     assert "function itemImportTimeLabel(item)" in script
 
     assert 'class="import-history"' in template
@@ -397,7 +410,9 @@ def test_music_import_drawer_lists_existing_imports_by_recent_added_time() -> No
     assert "暂无已导入歌曲" in template
     assert template.index('class="import-history"') < template.index('class="task-stack"')
 
-    assert "grid-template-rows: auto auto auto minmax(150px, 0.78fr) minmax(120px, 0.72fr);" in drawer
+    assert (
+        "grid-template-rows: auto auto auto minmax(150px, 0.78fr) minmax(120px, 0.72fr);" in drawer
+    )
     assert ".history-list {" in drawer
     assert ".history-row {" in drawer
 
@@ -449,18 +464,20 @@ def test_music_progress_copy_does_not_duplicate_loop_mode_label() -> None:
 def test_audio_player_uses_centered_time_progress_and_full_width_scrubber() -> None:
     player = read_source("components/YtsAudioPlayer.vue")
     template = player.split("<template>", 1)[1].split("</template>", 1)[0]
-    timeline_block = template.split('<div class="timeline-row"', 1)[1].split("</media-time-range>", 1)[0]
-    controller_block = template.split('<media-controller', 1)[1].split("</media-controller>", 1)[0]
+    timeline_block = template.split('<div class="timeline-row"', 1)[1].split(
+        "</media-time-range>", 1
+    )[0]
+    controller_block = template.split("<media-controller", 1)[1].split("</media-controller>", 1)[0]
 
     assert "currentTimeLabel" in player
     assert "durationLabel" in player
     assert "timelineProgress" in player
     assert "timelineLabelPlacement" in player
-    assert '--timeline-progress' in template
+    assert "--timeline-progress" in template
     assert 'id="yts-audio-controller"' in template
     assert ':class="[' in template
     assert "'time-progress'" in template
-    assert 'timelineLabelPlacement' in template
+    assert "timelineLabelPlacement" in template
     assert "{{ currentTimeLabel }}/{{ durationLabel }}" in timeline_block
     assert "时间进度：" not in template
     assert 'class="timeline-row"' not in controller_block
@@ -476,10 +493,16 @@ def test_audio_player_uses_centered_time_progress_and_full_width_scrubber() -> N
     assert "transform: translate(-50%, -100%);" in player
     assert ".time-progress.edge-start" in player
     assert "left: 0;" in player.split(".time-progress.edge-start {", 1)[1].split("}", 1)[0]
-    assert "transform: translateY(-100%);" in player.split(".time-progress.edge-start {", 1)[1].split("}", 1)[0]
+    assert (
+        "transform: translateY(-100%);"
+        in player.split(".time-progress.edge-start {", 1)[1].split("}", 1)[0]
+    )
     assert ".time-progress.edge-end" in player
     assert "right: 0;" in player.split(".time-progress.edge-end {", 1)[1].split("}", 1)[0]
-    assert "transform: translateY(-100%);" in player.split(".time-progress.edge-end {", 1)[1].split("}", 1)[0]
+    assert (
+        "transform: translateY(-100%);"
+        in player.split(".time-progress.edge-end {", 1)[1].split("}", 1)[0]
+    )
     assert "--media-control-background: transparent;" in player
     assert "--media-range-padding-left: 0px;" in player
     assert "--media-range-padding-right: 0px;" in player
@@ -523,17 +546,21 @@ def test_music_player_places_track_identity_inside_open_source_player_shell() ->
     music = read_source("pages/MusicPage.vue")
     player = read_source("components/YtsAudioPlayer.vue")
     assert 'class="control-row"' in player
-    control_row_block = player.split('<div class="control-row"', 1)[1].split("</media-control-bar>", 1)[0]
+    control_row_block = player.split('<div class="control-row"', 1)[1].split(
+        "</media-control-bar>", 1
+    )[0]
 
     assert 'class="player-meta"' not in music
     assert 'class="transport-bar"' not in music
     assert 'class="track-summary"' in player
     assert ':track="currentTrack"' in music
-    assert 'trackTitle' in player
-    assert 'trackArtist' in player
+    assert "trackTitle" in player
+    assert "trackArtist" in player
     assert player.index('class="timeline-row"') < player.index('class="control-row"')
     assert 'class="track-summary"' in control_row_block
-    assert control_row_block.index('class="track-summary"') < control_row_block.index('class="button-groups"')
+    assert control_row_block.index('class="track-summary"') < control_row_block.index(
+        'class="button-groups"'
+    )
 
 
 def test_music_player_uses_open_source_media_components_instead_of_hand_rolled_controls() -> None:
@@ -555,7 +582,9 @@ def test_music_player_uses_open_source_media_components_instead_of_hand_rolled_c
         assert custom_element in player
     assert "'time-progress'" in player
     assert "<media-time-display" not in player.split("<template>", 1)[1].split("</template>", 1)[0]
-    assert "<media-duration-display" not in player.split("<template>", 1)[1].split("</template>", 1)[0]
+    assert (
+        "<media-duration-display" not in player.split("<template>", 1)[1].split("</template>", 1)[0]
+    )
     assert 'ref="audioRef"' in player
     assert 'ref="waveformRef"' in player
     assert "WaveSurfer.create" in player
@@ -586,20 +615,33 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
     assert 'class="timeline-row"' in player
     assert 'class="control-row"' in player
     assert 'class="button-groups"' in player
-    timeline_row_block = player.split('<div class="timeline-row"', 1)[1].split("</media-time-range>", 1)[0]
-    control_row_block = player.split('<div class="control-row"', 1)[1].split("</media-control-bar>", 1)[0]
+    timeline_row_block = player.split('<div class="timeline-row"', 1)[1].split(
+        "</media-time-range>", 1
+    )[0]
+    control_row_block = player.split('<div class="control-row"', 1)[1].split(
+        "</media-control-bar>", 1
+    )[0]
     control_row_rule = player.split(".control-row {", 1)[1].split("}", 1)[0]
     button_groups_rule = player.split(".button-groups {", 1)[1].split("}", 1)[0]
     track_rule = player.split(".track-summary {", 1)[1].split("}", 1)[0]
     artist_rule = player.split(".track-summary small {", 1)[1].split("}", 1)[0]
 
-    for class_name in ["timeline-row", "control-row", "track-summary", "button-groups", "transport-group", "utility-group"]:
+    for class_name in [
+        "timeline-row",
+        "control-row",
+        "track-summary",
+        "button-groups",
+        "transport-group",
+        "utility-group",
+    ]:
         assert class_name in player
     assert 'class="timeline-row"' not in controller_block
     assert 'class="control-row"' not in controller_block
     assert 'class="media-controls"' not in controller_block
     assert player.index('class="timeline-row"') < player.index('class="control-row"')
-    assert timeline_row_block.index("'time-progress'") < timeline_row_block.index("<media-time-range")
+    assert timeline_row_block.index("'time-progress'") < timeline_row_block.index(
+        "<media-time-range"
+    )
     assert '<media-time-range mediacontroller="yts-audio-controller"' in timeline_row_block
     assert "<media-time-display" not in timeline_row_block
     assert "<media-duration-display" not in timeline_row_block
@@ -607,7 +649,9 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
     assert "utility-group" not in timeline_row_block
     assert 'class="track-summary"' in control_row_block
     assert 'class="button-groups"' in control_row_block
-    assert control_row_block.index('class="track-summary"') < control_row_block.index('class="button-groups"')
+    assert control_row_block.index('class="track-summary"') < control_row_block.index(
+        'class="button-groups"'
+    )
     assert 'class="transport-group"' in control_row_block
     assert 'class="utility-group"' in control_row_block
     assert "<ListMusic" not in player
@@ -623,7 +667,10 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
     assert "--shell-sidebar-width: 69px;" in stage_rule
     assert "--stage-left-inset: 28px;" in stage_rule
     assert "overflow: visible;" in stage_rule
-    assert "margin-left: calc(0px - var(--stage-x-pad, 0px) - var(--stage-left-inset));" in timeline_rule
+    assert (
+        "margin-left: calc(0px - var(--stage-x-pad, 0px) - var(--stage-left-inset));"
+        in timeline_rule
+    )
     assert "margin-right: 0;" in timeline_rule
     assert "width: calc(100vw - var(--shell-sidebar-width));" in timeline_rule
     assert "grid-template-columns: minmax(180px, 1fr) max-content;" in control_row_rule
@@ -638,7 +685,12 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
 def test_creation_page_uses_dark_theme_instead_of_broad_light_surfaces() -> None:
     source = read_source("pages/CreationPage.vue")
 
-    for token in ["var(--color-bg)", "var(--color-panel)", "var(--color-text)", "var(--color-accent)"]:
+    for token in [
+        "var(--color-bg)",
+        "var(--color-panel)",
+        "var(--color-text)",
+        "var(--color-accent)",
+    ]:
         assert token in source
     for color in BROAD_LIGHT_SURFACES:
         assert color not in source
@@ -655,7 +707,7 @@ def test_creation_page_uses_deep_sea_studio_branding() -> None:
 def test_creation_page_shows_one_concise_user_facing_error_message() -> None:
     source = read_source("pages/CreationPage.vue")
 
-    assert 'const displayError = computed(() => formatUserError(error.value));' in source
+    assert "const displayError = computed(() => formatUserError(error.value));" in source
     assert "function formatUserError(rawError)" in source
     assert "OpenAI 接口请求失败" in source
     assert "API Base URL" in source
@@ -669,13 +721,17 @@ def test_creation_page_exposes_history_drawer_for_replaying_workflow_trace() -> 
     source = read_source("pages/CreationPage.vue")
     workflows = read_source("services/workflows.js")
     top_actions_block = source.split('<div class="top-actions">', 1)[1].split("</div>", 1)[0]
-    history_drawer_block = source.split('class="side-drawer history-drawer"', 1)[1].split("</aside>", 1)[0]
+    history_drawer_block = source.split('class="side-drawer history-drawer"', 1)[1].split(
+        "</aside>", 1
+    )[0]
     history_list_rule = source.split(".history-list button {", 1)[1].split("}", 1)[0]
 
     assert "History" in source
     assert 'title="历史创作"' in top_actions_block
-    assert "@click=\"openHistoryDrawer\"" in top_actions_block
-    assert top_actions_block.index('title="历史创作"') < top_actions_block.index("@click=\"runThread\"")
+    assert '@click="openHistoryDrawer"' in top_actions_block
+    assert top_actions_block.index('title="历史创作"') < top_actions_block.index(
+        '@click="runThread"'
+    )
     assert "historyDrawerOpen" in source
     assert "historyItems" in source
     assert "historyLoading" in source
@@ -697,15 +753,17 @@ def test_creation_page_exposes_history_drawer_for_replaying_workflow_trace() -> 
 
 def test_creation_page_history_replay_does_not_lock_global_api_target_as_live_waiting() -> None:
     source = read_source("pages/CreationPage.vue")
-    live_waiting_rule = source.split("const hasLiveWaitingAction = computed(() => {", 1)[1].split("});", 1)[0]
+    live_waiting_rule = source.split("const hasLiveWaitingAction = computed(() => {", 1)[1].split(
+        "});", 1
+    )[0]
     busy_rule = source.split("const isWorkflowBusy = computed(() => {", 1)[1].split("});", 1)[0]
 
     assert "const hasLiveWaitingAction = computed(() => {" in source
     assert "Array.isArray(runResult.value?.waiting?.actions)" in live_waiting_rule
     assert "runResult.value.waiting.actions.length > 0" in live_waiting_rule
     assert "hasLiveWaitingAction.value" in busy_rule
-    assert "runResult.value?.status === \"waiting\"" not in busy_rule
-    assert "v-if=\"hasLiveWaitingAction && focusNode?.id === runResult.waiting.node_id\"" in source
+    assert 'runResult.value?.status === "waiting"' not in busy_rule
+    assert 'v-if="hasLiveWaitingAction && focusNode?.id === runResult.waiting.node_id"' in source
 
 
 def test_auth_pages_include_yuetools_register_login_fields() -> None:
@@ -795,9 +853,9 @@ def test_assets_page_defaults_to_list_with_detail_drawer_layout() -> None:
     assert '@click="handlePageClick"' in assets
     assert "function handlePageClick(event)" in assets
     assert 'target.closest(".asset-row")' in assets
-    assert "<Teleport to=\"body\">" in assets
-    assert "aria-modal=\"false\"" in assets
-    assert "role=\"dialog\"" in assets
+    assert '<Teleport to="body">' in assets
+    assert 'aria-modal="false"' in assets
+    assert 'role="dialog"' in assets
     assert "drawer-backdrop" not in assets
     assert ".asset-workbench.has-selection" not in assets
     assert "grid-template-columns: var(--asset-list-columns);" in assets
@@ -836,9 +894,9 @@ def test_assets_page_uses_deep_sea_night_watch_visual_system() -> None:
     assets = read_source("pages/AssetsPage.vue")
     page_rule = assets.split(".page {", 1)[1].split("}", 1)[0]
     asset_library_rule = assets.split(".asset-library {", 1)[1].split("}", 1)[0]
-    selected_row_rule = assets.split(".asset-row:hover,\n.asset-row:focus-visible,\n.asset-row.selected {", 1)[
-        1
-    ].split("}", 1)[0]
+    selected_row_rule = assets.split(
+        ".asset-row:hover,\n.asset-row:focus-visible,\n.asset-row.selected {", 1
+    )[1].split("}", 1)[0]
     detail_section_rule = assets.split(".detail-section {", 1)[1].split("}", 1)[0]
     asset_detail_drawer_rule = assets.split(".asset-detail-drawer {", 1)[1].split("}", 1)[0]
 
@@ -879,7 +937,9 @@ def test_assets_page_supports_copying_generated_song_fields_without_framed_tabs(
     assets = read_source("pages/AssetsPage.vue")
     asset_tabs_rule = assets.split(".asset-tabs {", 1)[1].split("}", 1)[0]
     asset_tab_button_rule = assets.split(".asset-tabs button {", 1)[1].split("}", 1)[0]
-    asset_tab_hover_rule = assets.split(".asset-tabs button:hover,\n.asset-tabs button:focus-visible {", 1)[1].split("}", 1)[0]
+    asset_tab_hover_rule = assets.split(
+        ".asset-tabs button:hover,\n.asset-tabs button:focus-visible {", 1
+    )[1].split("}", 1)[0]
     asset_tab_active_hover_rule = assets.split(
         ".asset-tabs button.active:hover,\n.asset-tabs button.active:focus-visible {", 1
     )[1].split("}", 1)[0]
@@ -917,7 +977,9 @@ def test_assets_page_supports_copying_generated_song_fields_without_framed_tabs(
     assert "height: 100vh;" in asset_detail_drawer_rule
     assert "border-radius: 0;" in asset_detail_drawer_rule
     assert "color-scheme: dark;" in asset_detail_drawer_rule
-    assert "background: linear-gradient(180deg, #163955 0%, #0b2135 100%);" in asset_detail_drawer_rule
+    assert (
+        "background: linear-gradient(180deg, #163955 0%, #0b2135 100%);" in asset_detail_drawer_rule
+    )
     assert "#f8fbff" not in assets
     assert "#edf6fc" not in assets
     assert "white-space: pre-wrap;" in lyric_text_rule
@@ -1013,7 +1075,7 @@ def test_music_page_uses_right_drawer_for_queue_and_history() -> None:
 
     for token in [
         "playlistDrawerOpen",
-        'playlistDrawerOpen = ref(false)',
+        "playlistDrawerOpen = ref(false)",
         "drawerMode",
         "drawer-panel",
         "drawer-tab",
@@ -1064,7 +1126,7 @@ def test_music_page_uses_edge_progress_and_vertical_side_actions_without_large_f
     assert 'class="side-actions"' in music
     assert 'title="播放队列"' in side_actions_block
     assert "@click=\"showDrawer('queue')\"" in side_actions_block
-    assert "<ListMusic :size=\"17\" />" in side_actions_block
+    assert '<ListMusic :size="17" />' in side_actions_block
     assert 'class="drawer-peek"' not in music
     assert "ChevronLeft" not in music
     assert "flex-direction: column;" in side_actions_rule

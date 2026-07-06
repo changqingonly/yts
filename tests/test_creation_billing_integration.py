@@ -54,7 +54,9 @@ def test_cloud_workflow_requires_authentication(monkeypatch: pytest.MonkeyPatch)
 
 def test_cloud_workflow_reserves_and_captures_credit(monkeypatch: pytest.MonkeyPatch) -> None:
     checkpointer = InMemorySaver()
-    monkeypatch.setattr(workflow_route, "build_langgraph_checkpointer", lambda settings: checkpointer)
+    monkeypatch.setattr(
+        workflow_route, "build_langgraph_checkpointer", lambda settings: checkpointer
+    )
     monkeypatch.setattr(workflow_route, "make_backend", lambda: FakeRouteBackend())
 
     with TestClient(create_app()) as client:
@@ -67,7 +69,10 @@ def test_cloud_workflow_reserves_and_captures_credit(monkeypatch: pytest.MonkeyP
         run_response = client.post(
             "/api/workflows/pro_creation_hitl_v1/threads",
             headers=headers,
-            json={"thread_id": "cloud-billing", "user_prompt": "下雨的午后，大雨倾盆，思念远方的故人"},
+            json={
+                "thread_id": "cloud-billing",
+                "user_prompt": "下雨的午后，大雨倾盆，思念远方的故人",
+            },
         )
         assert run_response.status_code == 200
 

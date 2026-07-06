@@ -21,9 +21,9 @@ def test_settings_exposes_typed_config_sections() -> None:
         openai_image_model="gpt-image-1",
         openai_speech_model="gpt-4o-mini-tts",
         openai_base_url="https://api.example.test/v1",
-        candle_base_url="http://127.0.0.1:8799",
-        candle_text_max_tokens=1024,
-        candle_request_timeout_seconds=45,
+        gateway_base_url="http://127.0.0.1:8799",
+        gateway_text_max_tokens=1024,
+        gateway_request_timeout_seconds=45,
         image_provider="openai",
         image_model="gpt-image-1",
         audio_effect_provider="elevenlabs",
@@ -65,9 +65,9 @@ def test_settings_exposes_typed_config_sections() -> None:
     assert settings.openai.image_model == "gpt-image-1"
     assert settings.openai.speech_model == "gpt-4o-mini-tts"
     assert settings.openai.base_url == "https://api.example.test/v1"
-    assert settings.candle.base_url == "http://127.0.0.1:8799"
-    assert settings.candle.text_max_tokens == 1024
-    assert settings.candle.request_timeout_seconds == 45
+    assert settings.gateway.base_url == "http://127.0.0.1:8799"
+    assert settings.gateway.text_max_tokens == 1024
+    assert settings.gateway.request_timeout_seconds == 45
     assert settings.image.provider == "openai"
     assert settings.image.model == "gpt-image-1"
     assert settings.audio_effect.provider == "elevenlabs"
@@ -155,7 +155,7 @@ def test_settings_reads_profile_config_file_and_env_override(
                 "YTS_LOGGING_BACKEND_FILE=backend-{profile}.log",
                 "YTS_LOGGING_FRONTEND_FILE=frontend-{profile}.log",
                 'YTS_SERVER_ALLOWED_ORIGINS=["http://127.0.0.1:1420","https://studio.example.test"]',
-                "YTS_CANDLE_TEXT_MAX_TOKENS=512",
+                "YTS_GATEWAY_TEXT_MAX_TOKENS=512",
                 "YTS_IMAGE_PROVIDER=openai",
                 "YTS_IMAGE_MODEL=gpt-image-1",
                 "YTS_AUDIO_EFFECT_PROVIDER=elevenlabs",
@@ -188,7 +188,7 @@ def test_settings_reads_profile_config_file_and_env_override(
         "http://127.0.0.1:1420",
         "https://studio.example.test",
     ]
-    assert settings.candle.text_max_tokens == 512
+    assert settings.gateway.text_max_tokens == 512
     assert settings.image.provider == "openai"
     assert settings.image.model == "gpt-image-1"
     assert settings.audio_effect.provider == "elevenlabs"

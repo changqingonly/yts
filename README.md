@@ -5,7 +5,7 @@
 > 设计源(完整论证 + 图谱):`../yuetools/docs/tech.html` 与 `../yuetools/docs/wiki/`(见 `Arch-V3-1` / `Candle-Inference` / `Platform-Split` / `Server-Stack-Plan` / `Transport-Agnostic-Core`)。
 
 ## 架构一句话
-- **本地推理 = GGML 推理网关(Rust,`desktop/candle-server`)**:文本→llama.cpp、图片→stable-diffusion.cpp、音乐→acestep.cpp(GGML/Metal 原生二进制,spawn/proxy)。
+- **本地推理 = GGML 推理网关(Rust,`desktop/infer-gateway`)**:文本→llama.cpp、图片→stable-diffusion.cpp、音乐→acestep.cpp(GGML/Metal 原生二进制,spawn/proxy)。
 - **编排 = Python(LangGraph)调网关/云**:本轮 Mac 走 **sidecar**(Windows in-process 留后)。
 - **服务端(云实现)= FastAPI + LangGraph + LiteLLM + Phoenix + PostgreSQL**。
 - **统一 API + 双实现 + 用户切换**:本地(桌面)/ 云(服务端)共用 API 契约,自定义 skill 仅本地。
@@ -17,7 +17,7 @@
 ```
 core/      传输无关核心(LangGraph 编排 + LiteLLM + Pydantic 契约 + 推理端口)
 server/    云实现:FastAPI + DB + 计费(TCC) + Phoenix
-desktop/   Mac 桌面:frontend(Vue) + src-tauri(Rust 壳) + candle-server(GGML 推理网关) + sidecar(复用 server app,本地 profile)
+desktop/   Mac 桌面:frontend(Vue) + src-tauri(Rust 壳) + infer-gateway(GGML 推理网关) + sidecar(复用 server app,本地 profile)
 shared/    API 契约导出(OpenAPI/JSON Schema)
 scripts/   安装 / 开发 / 打包脚本
 ```
@@ -56,9 +56,9 @@ Web 前端 `http://127.0.0.1:1420/`。任一步失败都会非零退出,不做�
 不会重复安装 Python/Node 环境。
 
 ## 推理后端切换(YTS_INFERENCE_BACKEND)
-- `local`:本地 **GGML 推理网关**(`desktop/candle-server`,:8799),经 `YTS_CANDLE_BASE_URL` 调用。
+- `local`:本地 **GGML 推理网关**(`desktop/infer-gateway`,:8799),经 `YTS_GATEWAY_BASE_URL` 调用。
   四模态统一走 GGML 原生二进制:**文本→llama.cpp(`llama-server`,OpenAI 兼容)**、图片→stable-diffusion.cpp、音乐→acestep.cpp。
-  (历史:文本曾用 Candle 内嵌,已移除;网关目录/二进制名 `candle-server` 保留以兼容脚本。)
+  (历史:文本曾用 Candle 内嵌,已移除;网关目录/二进制名 `infer-gateway` 保留以兼容脚本。)
 - `cloud`:LiteLLM 云模型,provider 由 `YTS_DEFAULT_TEXT_MODEL`、fallbacks 和对应 key/base_url 决定。
 
 OpenAI-compatible 或 DeepSeek 都属于 `cloud` 路由,不要把 provider 名写进 `YTS_INFERENCE_BACKEND`:

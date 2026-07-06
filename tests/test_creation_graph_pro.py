@@ -158,9 +158,9 @@ async def test_structure_planner_receives_compact_context_for_gateway_timeout_bu
         "negative_tags",
     }
     assert set(payload["hook_lab"]) == {"selected_hook", "hook_strategy"}
-    assert "请生成 2 个差异明显的歌曲结构蓝图" in backend.input_prompts[
-        "draft_structure_blueprints"
-    ]
+    assert (
+        "请生成 2 个差异明显的歌曲结构蓝图" in backend.input_prompts["draft_structure_blueprints"]
+    )
 
 
 @pytest.mark.asyncio
@@ -349,7 +349,10 @@ async def test_review_quality_rejects_inconsistent_decisions(
         ),
         (
             {
-                "style_candidates": [_style_candidate("mainstream_pop"), _style_candidate("indie_pop")],
+                "style_candidates": [
+                    _style_candidate("mainstream_pop"),
+                    _style_candidate("indie_pop"),
+                ],
                 "selected_style_id": "missing",
                 "selection_reason": "selected candidate must exist",
                 "negative_tags": [],
@@ -457,7 +460,11 @@ async def test_run_creation_rejects_style_prompt_that_contains_negative_terms() 
     style_prompt["style_prompt_draft"] = (
         "Mandopop, 88 BPM, warm female vocal, piano, warm strings, heavy distorted electric guitar"
     )
-    style_prompt["negative_terms"] = ["female vocal", "duet harmony", "heavy distorted electric guitar"]
+    style_prompt["negative_terms"] = [
+        "female vocal",
+        "duet harmony",
+        "heavy distorted electric guitar",
+    ]
     backend = _FakeProBackend(
         overrides={"plan_music_style": music_style_plan, "plan_style_prompt": style_prompt}
     )
@@ -575,11 +582,21 @@ async def test_run_creation_graph_cache_does_not_reuse_backend_instances_with_sa
             "energy_curve must be an object",
         ),
         (
-            {"blueprints": [_blueprint("bad", energy_curve={"Verse 1": 1, "Chorus": 6}), _blueprint("good")]},
+            {
+                "blueprints": [
+                    _blueprint("bad", energy_curve={"Verse 1": 1, "Chorus": 6}),
+                    _blueprint("good"),
+                ]
+            },
             "energy_curve values must be integers from 1 to 5",
         ),
         (
-            {"blueprints": [_blueprint("bad", energy_curve={"Verse 1": 1, "Chorus": 4, "Drop": 5}), _blueprint("good")]},
+            {
+                "blueprints": [
+                    _blueprint("bad", energy_curve={"Verse 1": 1, "Chorus": 4, "Drop": 5}),
+                    _blueprint("good"),
+                ]
+            },
             "energy_curve keys must come from sections",
         ),
         (
@@ -767,13 +784,13 @@ async def test_run_creation_reports_strict_json_parse_context() -> None:
 async def test_plan_music_style_reports_strict_json_parse_context() -> None:
     service._graph_cache.clear()
     malformed = (
-        '{\n'
+        "{\n"
         '  "style_candidates": [\n'
         '    {"id": "mandolin_rain", "template_id": "mandarin_pop_ballad", '
         '"label": "雨中"钢琴"流行"}\n'
-        '  ],\n'
+        "  ],\n"
         '  "selected_style_id": "mandolin_rain"\n'
-        '}'
+        "}"
     )
     backend = _FakeProBackend(raw_overrides={"plan_music_style": malformed})
 
@@ -829,12 +846,8 @@ async def test_generate_lyrics_self_repairs_missing_hook_repetition() -> None:
     service._graph_cache.clear()
     broken_generation = deepcopy(_PAYLOADS["generate_lyrics"])
     broken_generation["lyric_prompt"] = broken_generation["lyric_prompt"].replace(
-        "[Chorus]\n"
-        "雨落旧窗前\n"
-        "雨落旧窗前\n",
-        "[Chorus]\n"
-        "午后的城慢慢暗下来\n"
-        "旧照片在雨里发亮\n",
+        "[Chorus]\n雨落旧窗前\n雨落旧窗前\n",
+        "[Chorus]\n午后的城慢慢暗下来\n旧照片在雨里发亮\n",
     )
     repaired_generation = deepcopy(_PAYLOADS["generate_lyrics"])
     repaired_generation["title"] = "雨中自修复"
@@ -851,9 +864,10 @@ async def test_generate_lyrics_self_repairs_missing_hook_repetition() -> None:
     assert "雨落旧窗前" in result.lyrics
     assert backend.repair_called_stages == ["generate_lyrics"]
     repair_input = backend.repair_input_payloads["generate_lyrics"][0]
-    assert "generation.lyric_prompt section [Chorus] must repeat selected_hook" in repair_input[
-        "validation_error"
-    ]
+    assert (
+        "generation.lyric_prompt section [Chorus] must repeat selected_hook"
+        in repair_input["validation_error"]
+    )
     assert repair_input["invalid_output"]["title"] == "雨中旧窗"
     assert repair_input["attempt"] == 1
 
@@ -900,10 +914,7 @@ async def test_run_creation_rejects_generated_style_prompt_drift() -> None:
 async def test_run_creation_rejects_generated_lyrics_missing_required_sections() -> None:
     service._graph_cache.clear()
     generation = deepcopy(_PAYLOADS["generate_lyrics"])
-    generation["lyric_prompt"] = (
-        "[Verse 1]\n雨落旧窗前\n\n"
-        "[Chorus]\n雨落旧窗前\n雨落旧窗前\n"
-    )
+    generation["lyric_prompt"] = "[Verse 1]\n雨落旧窗前\n\n[Chorus]\n雨落旧窗前\n雨落旧窗前\n"
     backend = _FakeProBackend(overrides={"generate_lyrics": generation})
 
     with pytest.raises(ValueError, match="lyric_prompt must include section tag"):
@@ -917,7 +928,15 @@ async def test_run_creation_rejects_generated_lyrics_missing_required_sections()
 async def test_run_creation_postprocesses_chinese_suno_meta_text() -> None:
     service._graph_cache.clear()
     generation = deepcopy(_PAYLOADS["generate_lyrics"])
-    generation["structure"] = ["Verse 1", "Verse 2", "Pre-Chorus", "Chorus", "Bridge", "Final Chorus", "Outro"]
+    generation["structure"] = [
+        "Verse 1",
+        "Verse 2",
+        "Pre-Chorus",
+        "Chorus",
+        "Bridge",
+        "Final Chorus",
+        "Outro",
+    ]
     generation["lyric_prompt"] = (
         "[Verse 1]\n"
         "(极简钢琴单音，营造雨天回忆)\n"
@@ -1091,13 +1110,17 @@ class _FakeProBackend:
         self.repair_input_payloads: dict[str, list[dict]] = {}
         self.input_prompts: dict[str, str] = {}
 
-    async def generate_text(self, messages, *, model=None, fallbacks=None, response_format=None) -> TextResult:
+    async def generate_text(
+        self, messages, *, model=None, fallbacks=None, response_format=None
+    ) -> TextResult:
         content = messages[-1]["content"]
         repair_marker = "YTS_PRO_STAGE_REPAIR:"
         if repair_marker in content:
             stage = content.split(repair_marker, 1)[1].splitlines()[0].strip()
             self.repair_called_stages.append(stage)
-            self.response_formats.append(response_format.get("type") if isinstance(response_format, dict) else None)
+            self.response_formats.append(
+                response_format.get("type") if isinstance(response_format, dict) else None
+            )
             self.input_prompts[f"repair:{stage}"] = content
             input_marker = "Repair Input JSON:\n"
             if input_marker in content:
@@ -1106,13 +1129,17 @@ class _FakeProBackend:
                 )
             payloads = self.repair_payloads.get(stage)
             payload = payloads.pop(0) if payloads else self.payloads[stage]
-            return TextResult(text=json.dumps(payload, ensure_ascii=False), provider="fake", model="fake")
+            return TextResult(
+                text=json.dumps(payload, ensure_ascii=False), provider="fake", model="fake"
+            )
         marker = "YTS_PRO_STAGE:"
         if marker not in content:
             raise AssertionError(f"missing pro stage marker in prompt: {content[:120]}")
         stage = content.split(marker, 1)[1].splitlines()[0].strip()
         self.called_stages.append(stage)
-        self.response_formats.append(response_format.get("type") if isinstance(response_format, dict) else None)
+        self.response_formats.append(
+            response_format.get("type") if isinstance(response_format, dict) else None
+        )
         self.input_prompts[stage] = content
         input_marker = "Input JSON:\n"
         if input_marker in content:
@@ -1120,7 +1147,9 @@ class _FakeProBackend:
         if stage in self.raw_overrides:
             return TextResult(text=self.raw_overrides[stage], provider="fake", model="fake")
         payload = self.payloads[stage]
-        return TextResult(text=json.dumps(payload, ensure_ascii=False), provider="fake", model="fake")
+        return TextResult(
+            text=json.dumps(payload, ensure_ascii=False), provider="fake", model="fake"
+        )
 
     async def generate_image(self, prompt: str) -> bytes:
         raise NotImplementedError
@@ -1183,10 +1212,26 @@ _PAYLOADS = {
             {
                 "id": "slow_burn_pop",
                 "mode": "ballad_slow_build",
-                "sections": ["Verse1", "Verse2", "PreChorus1", "Chorus1", "Bridge", "Final Chorus", "Outro"],
+                "sections": [
+                    "Verse1",
+                    "Verse2",
+                    "PreChorus1",
+                    "Chorus1",
+                    "Bridge",
+                    "Final Chorus",
+                    "Outro",
+                ],
                 "section_roles": {"Verse1": "雨中入画", "Chorus1": "Hook 释放"},
                 "line_budget": {"Verse1": 4, "Verse2": 4, "Chorus1": 6},
-                "energy_curve": {"Verse1": 1, "Verse2": 2, "PreChorus1": 3, "Chorus1": 4, "Bridge": 3, "Final Chorus": 5, "Outro": 1},
+                "energy_curve": {
+                    "Verse1": 1,
+                    "Verse2": 2,
+                    "PreChorus1": 3,
+                    "Chorus1": 4,
+                    "Bridge": 3,
+                    "Final Chorus": 5,
+                    "Outro": 1,
+                },
                 "hook_placement": ["Chorus1", "Final Chorus"],
                 "vocal_plan": {"mode": "solo", "forbidden_meta_tags": ["duet harmony"]},
                 "risk": "节奏偏慢",
@@ -1194,7 +1239,15 @@ _PAYLOADS = {
             {
                 "id": "classic_pop",
                 "mode": "classic_pop_full",
-                "sections": ["Verse 1", "Pre-Chorus", "Chorus", "Verse 2", "Bridge", "Final Chorus", "Outro"],
+                "sections": [
+                    "Verse 1",
+                    "Pre-Chorus",
+                    "Chorus",
+                    "Verse 2",
+                    "Bridge",
+                    "Final Chorus",
+                    "Outro",
+                ],
                 "section_roles": {
                     "Verse 1": "开场叙事",
                     "Pre-Chorus": "情绪抬升",
@@ -1204,8 +1257,24 @@ _PAYLOADS = {
                     "Final Chorus": "最终释放",
                     "Outro": "收束",
                 },
-                "line_budget": {"Verse 1": 4, "Pre-Chorus": 2, "Chorus": 4, "Verse 2": 4, "Bridge": 2, "Final Chorus": 4, "Outro": 2},
-                "energy_curve": {"Verse 1": 1, "Pre-Chorus": 3, "Chorus": 4, "Verse 2": 2, "Bridge": 3, "Final Chorus": 5, "Outro": 1},
+                "line_budget": {
+                    "Verse 1": 4,
+                    "Pre-Chorus": 2,
+                    "Chorus": 4,
+                    "Verse 2": 4,
+                    "Bridge": 2,
+                    "Final Chorus": 4,
+                    "Outro": 2,
+                },
+                "energy_curve": {
+                    "Verse 1": 1,
+                    "Pre-Chorus": 3,
+                    "Chorus": 4,
+                    "Verse 2": 2,
+                    "Bridge": 3,
+                    "Final Chorus": 5,
+                    "Outro": 1,
+                },
                 "hook_placement": ["Chorus", "Final Chorus"],
             },
         ]
@@ -1216,12 +1285,24 @@ _PAYLOADS = {
         "rejected": [{"id": "classic_pop", "reason": "较普通"}],
     },
     "plan_style_prompt": {
-        "style_family": {"id": "mainstream_pop", "label": "主流流行", "template_id": "mandarin_pop_ballad"},
+        "style_family": {
+            "id": "mainstream_pop",
+            "label": "主流流行",
+            "template_id": "mandarin_pop_ballad",
+        },
         "style_prompt_draft": "Mandopop, 88 BPM, intimate lead vocal, piano, warm strings",
         "style_components": ["Mandopop", "88 BPM", "intimate lead vocal", "piano", "warm strings"],
         "lyric_guidance": {
             "language": "Chinese",
-            "required_sections": ["Verse 1", "Verse 2", "Pre-Chorus", "Chorus", "Bridge", "Final Chorus", "Outro"],
+            "required_sections": [
+                "Verse 1",
+                "Verse 2",
+                "Pre-Chorus",
+                "Chorus",
+                "Bridge",
+                "Final Chorus",
+                "Outro",
+            ],
             "hook_policy": "Chorus and Final Chorus repeat selected hook",
             "mood_arc": "rain memory -> warm ache -> quiet release",
             "line_length_hint": "8-14 Chinese characters per lyric line",
@@ -1229,9 +1310,17 @@ _PAYLOADS = {
         "negative_terms": [],
         "source_signals": ["华语流行"],
     },
-        "generate_lyrics": {
+    "generate_lyrics": {
         "structure_mode": "ballad_slow_build",
-        "structure": ["Verse 1", "Verse 2", "Pre-Chorus", "Chorus", "Bridge", "Final Chorus", "Outro"],
+        "structure": [
+            "Verse 1",
+            "Verse 2",
+            "Pre-Chorus",
+            "Chorus",
+            "Bridge",
+            "Final Chorus",
+            "Outro",
+        ],
         "title": "雨中旧窗",
         "style_prompt": "Mandopop, 88 BPM, intimate lead vocal, piano, warm strings",
         "lyric_prompt": (
@@ -1266,7 +1355,11 @@ _PAYLOADS = {
             "你仍在我心里面"
         ),
         "hook": "雨落旧窗前",
-        "clip_suggestion": {"start_section": "Chorus", "duration_seconds": 15, "reason": "副歌 Hook 清晰。"},
+        "clip_suggestion": {
+            "start_section": "Chorus",
+            "duration_seconds": 15,
+            "reason": "副歌 Hook 清晰。",
+        },
         "used_card_ids": [],
         "constraint_check": {
             "negative_constraints_avoided": True,
@@ -1301,7 +1394,12 @@ _PAYLOADS = {
         "original_title": "雨中旧窗",
         "final_title": "雨中故人",
         "title_candidates": [
-            {"title": "雨中故人", "kind": "hook_story", "reason": "贴合雨天与故人线索。", "selected": True}
+            {
+                "title": "雨中故人",
+                "kind": "hook_story",
+                "reason": "贴合雨天与故人线索。",
+                "selected": True,
+            }
         ],
         "selection_reason": "更准确覆盖核心故事。",
     },

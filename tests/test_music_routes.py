@@ -45,9 +45,7 @@ def test_upload_song_extracts_meta_song_and_reuses_content_hash() -> None:
     expected_hash = hashlib.sha256(audio_bytes).hexdigest()
 
     with TestClient(create_app()) as client:
-        token = register_via_test_crypto(client, "meta@example.com", "Password123")[
-            "access_token"
-        ]
+        token = register_via_test_crypto(client, "meta@example.com", "Password123")["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
         first = client.post(
@@ -212,9 +210,7 @@ def test_reorder_playlist_items_rewrites_continuous_positions() -> None:
 def test_playlist_append_rejects_when_item_limit_exceeded() -> None:
     audio_bytes = wav_bytes()
     with TestClient(create_app()) as client:
-        token = register_via_test_crypto(client, "limit@example.com", "Password123")[
-            "access_token"
-        ]
+        token = register_via_test_crypto(client, "limit@example.com", "Password123")["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
         content_hash = client.post(
             "/api/music/upload",
@@ -238,7 +234,9 @@ def test_playlist_append_rejects_when_item_limit_exceeded() -> None:
             ]
         }
 
-        response = client.post(f"/api/music/playlists/{playlist_id}/items", headers=headers, json=payload)
+        response = client.post(
+            f"/api/music/playlists/{playlist_id}/items", headers=headers, json=payload
+        )
         assert response.status_code == 400
         assert response.json()["code"] == "playlist_item_limit_exceeded"
 
@@ -338,9 +336,7 @@ def test_bootstrap_upgrades_existing_playlist_tables() -> None:
 
 def test_playlist_sync_accepts_remote_song_and_rejects_unowned_local_file() -> None:
     with TestClient(create_app()) as client:
-        token = register_via_test_crypto(client, "music@example.com", "Password123")[
-            "access_token"
-        ]
+        token = register_via_test_crypto(client, "music@example.com", "Password123")["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
         remote_payload = {
@@ -392,9 +388,7 @@ def test_local_import_upload_allows_owned_local_file_sync() -> None:
     expected_hash = hashlib.sha256(audio_bytes).hexdigest()
 
     with TestClient(create_app()) as client:
-        token = register_via_test_crypto(client, "local@example.com", "Password123")[
-            "access_token"
-        ]
+        token = register_via_test_crypto(client, "local@example.com", "Password123")["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
         uploaded = client.post(

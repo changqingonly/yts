@@ -39,10 +39,15 @@ def test_active_pro_lyrics_pack_declares_style_template_and_json_safety_contract
     assert "template_id 必须来自输入的 style_template_candidates" in music_style_prompt
     assert "suno_tags、instrumentation、production_notes 只能使用简短字符串" in music_style_prompt
     style_prompt = pack.stage_templates["plan_style_prompt"]
-    assert "请只基于 Input JSON 中的已选曲风、structure、hook、song_brief 与 intent 摘要" in style_prompt
+    assert (
+        "请只基于 Input JSON 中的已选曲风、structure、hook、song_brief 与 intent 摘要"
+        in style_prompt
+    )
     assert "style_family 必须包含 id、label、template_id 三个字段" in style_prompt
     assert "required_sections 必须逐字复制 Input JSON.structure.sections" in style_prompt
-    assert "style_prompt_draft 不得包含 style_prompt_contract.forbidden_positive_terms" in style_prompt
+    assert (
+        "style_prompt_draft 不得包含 style_prompt_contract.forbidden_positive_terms" in style_prompt
+    )
     assert "heavy distorted electric guitar" in style_prompt
     assert "clip_strategy" not in style_prompt
     refine_title_prompt = pack.stage_templates["refine_title"]

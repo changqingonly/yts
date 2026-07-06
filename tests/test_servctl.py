@@ -37,7 +37,7 @@ def _write_profile_config(root: Path, profile: str = "cloud") -> None:
 def _write_frontend_dist(root: Path) -> None:
     dist_dir = root / "desktop" / "frontend" / "dist"
     dist_dir.mkdir(parents=True)
-    (dist_dir / "index.html").write_text("<div id=\"app\"></div>", encoding="utf-8")
+    (dist_dir / "index.html").write_text('<div id="app"></div>', encoding="utf-8")
 
 
 def _unused_tcp_port() -> int:
@@ -120,7 +120,7 @@ def test_validate_profile_config_accepts_product_local_backend(tmp_path: Path) -
     servctl.validate_profile_config(tmp_path, "local")
 
 
-@pytest.mark.parametrize("backend", ["echo", "openai", "candle", "pro-fixture"])
+@pytest.mark.parametrize("backend", ["echo", "openai", "gateway", "pro-fixture"])
 def test_validate_profile_config_rejects_removed_inference_backends(
     tmp_path: Path,
     backend: str,
@@ -570,9 +570,7 @@ def test_start_stops_backend_when_frontend_start_fails(tmp_path: Path) -> None:
         servctl.start(
             tmp_path,
             "cloud",
-            start_backend_func=lambda root, profile, **kwargs: calls.append(
-                f"backend:{profile}"
-            ),
+            start_backend_func=lambda root, profile, **kwargs: calls.append(f"backend:{profile}"),
             start_frontend_func=fail_frontend,
             check_frontend_func=lambda root, profile, **kwargs: None,
             stop_backend_func=lambda root, profile, **kwargs: calls.append(
@@ -834,12 +832,8 @@ def test_stop_reports_frontend_then_backend_progress(tmp_path: Path) -> None:
     servctl.stop(
         tmp_path,
         "cloud",
-        stop_frontend_func=lambda root, profile, **kwargs: calls.append(
-            f"frontend:{profile}"
-        ),
-        stop_backend_func=lambda root, profile, **kwargs: calls.append(
-            f"backend:{profile}"
-        ),
+        stop_frontend_func=lambda root, profile, **kwargs: calls.append(f"frontend:{profile}"),
+        stop_backend_func=lambda root, profile, **kwargs: calls.append(f"backend:{profile}"),
         progress=progress.append,
     )
 
@@ -943,9 +937,7 @@ def test_stop_stops_running_backend_when_frontend_was_never_started(tmp_path: Pa
         tmp_path,
         "cloud",
         stop_backend_func=lambda root, profile, **kwargs: calls.append(f"backend:{profile}"),
-        stop_frontend_func=lambda root, profile, **kwargs: calls.append(
-            f"frontend:{profile}"
-        ),
+        stop_frontend_func=lambda root, profile, **kwargs: calls.append(f"frontend:{profile}"),
     )
 
     assert calls == ["backend:cloud"]

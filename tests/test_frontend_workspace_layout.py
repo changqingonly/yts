@@ -83,12 +83,17 @@ def test_frontend_workspace_uses_compact_trace_focus_header() -> None:
 
 def test_frontend_selected_node_overrides_executing_focus_when_user_clicks_history_node() -> None:
     source = WORKFLOW_SOURCE.read_text(encoding="utf-8")
-    focus_node_id_body = source.split("const focusNodeId = computed(() => {", 1)[1].split("\n});", 1)[0]
+    focus_node_id_body = source.split("const focusNodeId = computed(() => {", 1)[1].split(
+        "\n});", 1
+    )[0]
     select_node_body = source.split("function selectNode(nodeId) {", 1)[1].split("\n}", 1)[0]
 
-    assert "const userSelectedNodeId = ref(\"\");" in source
+    assert 'const userSelectedNodeId = ref("");' in source
     assert "if (userSelectedNodeId.value) return userSelectedNodeId.value;" in focus_node_id_body
-    assert "return currentExecutingNodeId.value || waitingNodeId.value || selectedNodeId.value;" in focus_node_id_body
+    assert (
+        "return currentExecutingNodeId.value || waitingNodeId.value || selectedNodeId.value;"
+        in focus_node_id_body
+    )
     assert "userSelectedNodeId.value = nodeId;" in select_node_body
 
 
@@ -113,7 +118,7 @@ def test_frontend_creation_page_locks_environment_switch_while_workflow_is_busy(
     assert "environment.setSwitchLocked(isWorkflowBusy.value);" in source
     assert "const isWorkflowBusy = computed(() =>" in source
     assert 'status.value !== "idle"' in source
-    assert "runResult.value?.status === \"waiting\"" in source
+    assert 'runResult.value?.status === "waiting"' in source
     assert "environment.setSwitchLocked(false);" in source
 
 
@@ -124,7 +129,12 @@ def test_frontend_workspace_removes_boxy_outer_panel_borders() -> None:
     workspace_panel_rule = source.split(".workspace-panel {", 1)[1].split("}", 1)[0]
     workspace_note_rule = source.split(".workspace-note {", 1)[1].split("}", 1)[0]
 
-    for rule in [workspace_shell_rule, compact_focus_rule, workspace_panel_rule, workspace_note_rule]:
+    for rule in [
+        workspace_shell_rule,
+        compact_focus_rule,
+        workspace_panel_rule,
+        workspace_note_rule,
+    ]:
         assert "border:" not in rule
     assert "background: transparent;" in workspace_shell_rule
     assert "box-shadow:" in compact_focus_rule
@@ -195,9 +205,15 @@ def test_frontend_node_durations_are_visible_in_core_workflow_surfaces() -> None
 def test_frontend_shows_breathing_indicator_for_current_executing_node() -> None:
     source = WORKFLOW_SOURCE.read_text(encoding="utf-8")
     node_status_body = source.split("function nodeStatus(nodeId) {", 1)[1].split("\n}", 1)[0]
-    timeline_executing_rule = source.split(".timeline-node.status-executing {", 1)[1].split("}", 1)[0]
-    timeline_dot_pulse_rule = source.split(".timeline-node.status-executing .timeline-dot::after {", 1)[1].split("}", 1)[0]
-    workflow_executing_rule = source.split(".workflow-node.status-executing {", 1)[1].split("}", 1)[0]
+    timeline_executing_rule = source.split(".timeline-node.status-executing {", 1)[1].split("}", 1)[
+        0
+    ]
+    timeline_dot_pulse_rule = source.split(
+        ".timeline-node.status-executing .timeline-dot::after {", 1
+    )[1].split("}", 1)[0]
+    workflow_executing_rule = source.split(".workflow-node.status-executing {", 1)[1].split("}", 1)[
+        0
+    ]
 
     assert "const isWorkflowExecuting = computed(() =>" in source
     assert "const currentExecutingNodeId = computed(() =>" in source
@@ -222,7 +238,10 @@ def test_frontend_workflow_requests_use_shared_auth_http_layer() -> None:
     assert 'from "../services/http"' in source
     assert "function requestJson(path, options = {})" not in source
     assert "await fetch(`${apiBase()}${path}`" not in source
-    assert "requestWorkflowJson(`/api/workflows/${workflowId}/template`, { target: workflowTarget() })" in source
+    assert (
+        "requestWorkflowJson(`/api/workflows/${workflowId}/template`, { target: workflowTarget() })"
+        in source
+    )
     assert (
         "requestWorkflowJson(`/api/workflows/${workflowId}/threads/${threadId.value}/trace`, { target: workflowTarget() })"
         in source
@@ -248,15 +267,19 @@ def test_frontend_workflow_run_and_resume_use_shared_websocket_stream() -> None:
 def test_frontend_workflow_stream_surfaces_node_repair_status() -> None:
     source = WORKFLOW_SOURCE.read_text(encoding="utf-8")
     node_status_body = source.split("function nodeStatus(nodeId) {", 1)[1].split("\n}", 1)[0]
-    timeline_repairing_rule = source.split(".timeline-node.status-repairing {", 1)[1].split("}", 1)[0]
-    workflow_repairing_rule = source.split(".workflow-node.status-repairing {", 1)[1].split("}", 1)[0]
+    timeline_repairing_rule = source.split(".timeline-node.status-repairing {", 1)[1].split("}", 1)[
+        0
+    ]
+    workflow_repairing_rule = source.split(".workflow-node.status-repairing {", 1)[1].split("}", 1)[
+        0
+    ]
 
     assert "const liveNodeStatuses = ref({});" in source
     assert 'if (message.type === "node_status") {' in source
     assert "applyWorkflowNodeStatus(message)" in source
     assert 'repairing: "自修复中"' in source
-    assert 'const liveStatus = liveNodeStatuses.value[nodeId];' in node_status_body
-    assert 'if (liveStatus) return liveStatus;' in node_status_body
+    assert "const liveStatus = liveNodeStatuses.value[nodeId];" in node_status_body
+    assert "if (liveStatus) return liveStatus;" in node_status_body
     assert "animation: timelineBreathing" in timeline_repairing_rule
     assert "animation: nodeBreathing" in workflow_repairing_rule
 
@@ -265,7 +288,7 @@ def test_frontend_workflow_websocket_authorization_uses_bearer_token() -> None:
     source = Path("desktop/frontend/src/services/transport.js").read_text(encoding="utf-8")
 
     assert 'localStorage.getItem("yts-access-token")' in source
-    assert "authorization: token ? `Bearer ${token}` : \"\"," in source
+    assert 'authorization: token ? `Bearer ${token}` : "",' in source
     assert "{ Authorization: `Bearer ${token}` }" in source
 
 

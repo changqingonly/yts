@@ -1,6 +1,6 @@
 # 统一音频帧流契约(方案 B)
 
-生成式音频「边生成边播」的来源无关协议。**云端(server/FastAPI)与本地(candle-server/Rust)是同一契约的两个 producer**;前端单一 AudioWorklet 播放层是唯一 consumer。切换 local/cloud 只换 WS URL,不改播放逻辑(对齐 yts「统一 API + 双实现 + 用户切换」红线)。
+生成式音频「边生成边播」的来源无关协议。**云端(server/FastAPI)与本地(infer-gateway/Rust)是同一契约的两个 producer**;前端单一 AudioWorklet 播放层是唯一 consumer。切换 local/cloud 只换 WS URL,不改播放逻辑(对齐 yts「统一 API + 双实现 + 用户切换」红线)。
 
 ## 传输
 - **WebSocket**(双向:支持中途 `stop` / 背压)。
@@ -38,9 +38,9 @@
 - **错误**:`{"type":"error","message":"..."}`,client 收到后停止并释放 worklet。
 
 ## Producer 实现点
-- 本地:`desktop/candle-server` `/music/stream`,两档(env `YTS_AUDIOGEN_CMD`):
+- 本地:`desktop/infer-gateway` `/music/stream`,两档(env `YTS_AUDIOGEN_CMD`):
   - **未设置**:内置确定性合成器(真实 PCM,无依赖验证用)。
-  - **已设置**:spawn 外部 audiogen 二进制(**acestep.cpp / ACE-Step 1.5,GGML/Metal**)。命令含占位 `{prompt}` `{seconds}` `{out}`,producer 把 48kHz WAV 写到 `{out}`;candle-server 读 WAV→mono f32→按帧推流。整段生成→流式喂播(准实时,有首段延迟)。
+  - **已设置**:spawn 外部 audiogen 二进制(**acestep.cpp / ACE-Step 1.5,GGML/Metal**)。命令含占位 `{prompt}` `{seconds}` `{out}`,producer 把 48kHz WAV 写到 `{out}`;infer-gateway 读 WAV→mono f32→按帧推流。整段生成→流式喂播(准实时,有首段延迟)。
   - 搭建:`scripts/build_acestep.sh`(clone+CMake+Metal),再设 `YTS_AUDIOGEN_CMD`。
 - 云端:`server/yts_server` —— 同消息格式,TODO(任务 2)。
 

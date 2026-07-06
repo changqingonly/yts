@@ -17,7 +17,7 @@ class TextResult:
 class InferenceBackend(Protocol):
     """文本/图片/语音/背景音乐统一推理端口。
 
-    cloud 实现走 LiteLLM;local 实现走 Candle(经 Rust)。
+    cloud 实现走 LiteLLM;local 实现走 GGML 网关(经 Rust)。
     图片/语音/音乐先以字节 bytes 占位返回。
     """
 

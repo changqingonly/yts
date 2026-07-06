@@ -64,9 +64,7 @@ def test_workflow_config_trims_thread_and_run_identifiers() -> None:
 def test_build_langgraph_checkpointer_returns_none_when_disabled() -> None:
     close_langgraph_checkpointer()
 
-    checkpointer = build_langgraph_checkpointer(
-        Settings(langgraph_checkpoint_backend="disabled")
-    )
+    checkpointer = build_langgraph_checkpointer(Settings(langgraph_checkpoint_backend="disabled"))
 
     assert checkpointer is None
 
@@ -180,7 +178,9 @@ async def test_run_creation_uses_request_thread_id_when_argument_is_omitted(monk
     )
 
     assert graph.state["thread_id"] == "request-thread"
-    assert graph.config == {"configurable": {"thread_id": "request-thread", "run_id": "run-request"}}
+    assert graph.config == {
+        "configurable": {"thread_id": "request-thread", "run_id": "run-request"}
+    }
 
 
 @pytest.mark.asyncio
@@ -208,7 +208,9 @@ async def test_run_creation_rejects_checkpoint_without_thread_id(monkeypatch) ->
 async def test_checkpointed_creation_graph_persists_by_thread_id() -> None:
     checkpointer = InMemorySaver()
     graph = service.build_creation_graph(backend=CheckpointBackend(), checkpointer=checkpointer)
-    config = workflow_config(checkpointer=checkpointer, thread_id="thread-persist", run_id="run-persist")
+    config = workflow_config(
+        checkpointer=checkpointer, thread_id="thread-persist", run_id="run-persist"
+    )
 
     state = await graph.ainvoke(
         {

@@ -17,5 +17,5 @@ done
 [ -n "${YTS_LLAMA_CMD:-}" ] && echo "文本 producer:llama-server(${YTS_LLAMA_CMD##*/})"
 [ -n "${YTS_IMAGEGEN_CMD:-}" ] && echo "图片 producer:${YTS_IMAGEGEN_CMD%% *}"
 
-cd "$HERE/../desktop/candle-server"
+cd "$HERE/../desktop/infer-gateway"
 cargo run --release

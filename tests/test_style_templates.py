@@ -26,7 +26,11 @@ def test_match_style_templates_prefers_precise_lss_scene_matches() -> None:
             "emotion_cues": [],
             "style_cues": [],
         },
-        song_brief={"core_story": "春节团圆", "emotion_arc": ["热闹"], "target_form": "短视频 Hook 歌"},
+        song_brief={
+            "core_story": "春节团圆",
+            "emotion_arc": ["热闹"],
+            "target_form": "短视频 Hook 歌",
+        },
     )
 
     assert matches[0]["template_id"] == "short_video_folk_pop"
@@ -65,7 +69,11 @@ def test_match_style_templates_returns_candidate_seed_fields() -> None:
             "emotion_cues": ["暧昧"],
             "style_cues": ["R&B"],
         },
-        song_brief={"core_story": "暧昧拉扯", "emotion_arc": ["克制", "升温"], "target_form": "完整情绪流行歌"},
+        song_brief={
+            "core_story": "暧昧拉扯",
+            "emotion_arc": ["克制", "升温"],
+            "target_form": "完整情绪流行歌",
+        },
     )
 
     assert match["template_id"] == "cpop_rnb"
@@ -86,7 +94,13 @@ def test_style_template_catalog_rejects_duplicate_template_ids(monkeypatch) -> N
         template_id="mandarin_pop_ballad",
         label="Duplicate",
         keywords=("duplicate",),
-        components=("Mandopop", "96 BPM", "clear lead vocal", "piano", "modern polished production"),
+        components=(
+            "Mandopop",
+            "96 BPM",
+            "clear lead vocal",
+            "piano",
+            "modern polished production",
+        ),
         lyric_hint="duplicate",
     )
 

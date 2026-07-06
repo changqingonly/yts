@@ -35,9 +35,9 @@ _LEGACY_ENV_MAP = {
     "YTS_OPENAI_BASE_URL": ("openai", "base_url"),
     "YTS_OPENAI_REQUEST_TIMEOUT_SECONDS": ("openai", "request_timeout_seconds"),
     "YTS_OPENAI_MAX_RETRIES": ("openai", "max_retries"),
-    "YTS_CANDLE_BASE_URL": ("candle", "base_url"),
-    "YTS_CANDLE_TEXT_MAX_TOKENS": ("candle", "text_max_tokens"),
-    "YTS_CANDLE_REQUEST_TIMEOUT_SECONDS": ("candle", "request_timeout_seconds"),
+    "YTS_GATEWAY_BASE_URL": ("gateway", "base_url"),
+    "YTS_GATEWAY_TEXT_MAX_TOKENS": ("gateway", "text_max_tokens"),
+    "YTS_GATEWAY_REQUEST_TIMEOUT_SECONDS": ("gateway", "request_timeout_seconds"),
     "YTS_IMAGE_PROVIDER": ("image", "provider"),
     "YTS_IMAGE_MODEL": ("image", "model"),
     "YTS_AUDIO_EFFECT_PROVIDER": ("audio_effect", "provider"),
@@ -106,7 +106,7 @@ class DeepSeekSettings(BaseModel):
         return self.api_key.get_secret_value()
 
 
-class CandleSettings(BaseModel):
+class GatewaySettings(BaseModel):
     base_url: str = "http://127.0.0.1:8799"
     text_max_tokens: int = Field(default=256, gt=0)
     request_timeout_seconds: float = Field(default=120.0, gt=0)
@@ -179,7 +179,7 @@ class Settings(BaseSettings):
     inference: InferenceSettings = Field(default_factory=InferenceSettings)
     deepseek: DeepSeekSettings = Field(default_factory=DeepSeekSettings)
     openai: OpenAISettings = Field(default_factory=OpenAISettings)
-    candle: CandleSettings = Field(default_factory=CandleSettings)
+    gateway: GatewaySettings = Field(default_factory=GatewaySettings)
     image: GenerationProviderSettings = Field(
         default_factory=lambda: GenerationProviderSettings(provider="openai", model="gpt-image-1")
     )
@@ -302,16 +302,16 @@ class Settings(BaseSettings):
         return self.openai.max_retries
 
     @property
-    def candle_base_url(self) -> str:
-        return self.candle.base_url
+    def gateway_base_url(self) -> str:
+        return self.gateway.base_url
 
     @property
-    def candle_text_max_tokens(self) -> int:
-        return self.candle.text_max_tokens
+    def gateway_text_max_tokens(self) -> int:
+        return self.gateway.text_max_tokens
 
     @property
-    def candle_request_timeout_seconds(self) -> float:
-        return self.candle.request_timeout_seconds
+    def gateway_request_timeout_seconds(self) -> float:
+        return self.gateway.request_timeout_seconds
 
     @property
     def image_provider(self) -> str:
@@ -499,7 +499,7 @@ def _apply_profile_defaults(settings: Settings, profile: Profile) -> Settings:
         update={
             "deepseek": settings.deepseek,
             "openai": settings.openai,
-            "candle": settings.candle,
+            "gateway": settings.gateway,
             "image": settings.image,
             "audio_effect": settings.audio_effect,
             "music": settings.music,
@@ -537,9 +537,9 @@ def _coerce_legacy_settings(values: dict[str, Any]) -> dict[str, Any]:
     _move(coerced, "openai_base_url", "openai", "base_url")
     _move(coerced, "openai_request_timeout_seconds", "openai", "request_timeout_seconds")
     _move(coerced, "openai_max_retries", "openai", "max_retries")
-    _move(coerced, "candle_base_url", "candle", "base_url")
-    _move(coerced, "candle_text_max_tokens", "candle", "text_max_tokens")
-    _move(coerced, "candle_request_timeout_seconds", "candle", "request_timeout_seconds")
+    _move(coerced, "gateway_base_url", "gateway", "base_url")
+    _move(coerced, "gateway_text_max_tokens", "gateway", "text_max_tokens")
+    _move(coerced, "gateway_request_timeout_seconds", "gateway", "request_timeout_seconds")
     _move(coerced, "image_provider", "image", "provider")
     _move(coerced, "image_model", "image", "model")
     _move(coerced, "audio_effect_provider", "audio_effect", "provider")

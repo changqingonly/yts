@@ -1,4 +1,4 @@
-"""云端 /api/image —— 与本地 candle-server /image 对称(薄入口)。
+"""云端 /api/image —— 与本地 infer-gateway /image 对称(薄入口)。
 
 POST {prompt,width,height,steps} → {png_base64,model,width,height}。
 业务在 yts_core.imagegen;真实云图模型替换 generate_png 即可。

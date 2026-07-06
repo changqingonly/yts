@@ -195,7 +195,9 @@ async def test_workflow_trace_nodes_include_artifact_previews_for_workspace() ->
     assert by_id["build_song_brief"].summary == "雨中想起远方故人"
     assert by_id["build_song_brief"].artifact_preview["core_story"] == "雨中想起远方故人"
     assert by_id["plan_music_style"].summary == "华语抒情流行"
-    assert by_id["plan_music_style"].artifact_preview["selected_template_id"] == "mandarin_pop_ballad"
+    assert (
+        by_id["plan_music_style"].artifact_preview["selected_template_id"] == "mandarin_pop_ballad"
+    )
     assert by_id["hook_lab"].summary == "雨落旧窗前"
     assert by_id["generate_lyrics"].artifact_preview["title"] == "雨中旧窗"
     assert by_id["build_response"].artifact_preview["title"] == "雨中故人"
@@ -222,12 +224,8 @@ async def test_workflow_trace_marks_repaired_node_attempts() -> None:
     runtime = WorkflowHarness()
     broken_generation = deepcopy(runtime.backend.payloads["generate_lyrics"])
     broken_generation["lyric_prompt"] = broken_generation["lyric_prompt"].replace(
-        "[Chorus]\n"
-        "雨落旧窗前\n"
-        "雨落旧窗前\n",
-        "[Chorus]\n"
-        "午后的城慢慢暗下来\n"
-        "旧照片在雨里发亮\n",
+        "[Chorus]\n雨落旧窗前\n雨落旧窗前\n",
+        "[Chorus]\n午后的城慢慢暗下来\n旧照片在雨里发亮\n",
     )
     repaired_generation = deepcopy(runtime.backend.payloads["generate_lyrics"])
     runtime.backend.payloads["generate_lyrics"] = broken_generation
@@ -247,9 +245,10 @@ async def test_workflow_trace_marks_repaired_node_attempts() -> None:
     repaired_node = by_id["generate_lyrics"]
     assert repaired_node.metrics["repair_attempt_count"] == 1
     assert repaired_node.metrics["repaired"] is True
-    assert "generation.lyric_prompt section [Chorus] must repeat selected_hook" in repaired_node.metrics[
-        "repair_errors"
-    ][0]
+    assert (
+        "generation.lyric_prompt section [Chorus] must repeat selected_hook"
+        in repaired_node.metrics["repair_errors"][0]
+    )
     assert repaired_node.llm_call["repair_attempts"][0]["attempt"] == 1
     assert runtime.backend.repair_called_stages == ["generate_lyrics"]
 
@@ -428,7 +427,9 @@ class _FakeProBackend:
         self.repair_input_payloads: dict[str, list[dict]] = {}
         self.llm_loops: list[asyncio.AbstractEventLoop] = []
 
-    async def generate_text(self, messages, *, model=None, fallbacks=None, response_format=None) -> TextResult:
+    async def generate_text(
+        self, messages, *, model=None, fallbacks=None, response_format=None
+    ) -> TextResult:
         import json
 
         self.llm_loops.append(asyncio.get_running_loop())
@@ -444,7 +445,11 @@ class _FakeProBackend:
                 )
             payloads = self.repair_payloads.get(stage)
             payload = payloads.pop(0) if payloads else self.payloads[stage]
-            return TextResult(text=json.dumps(payload, ensure_ascii=False), provider="fake", model="fake")
+            return TextResult(
+                text=json.dumps(payload, ensure_ascii=False), provider="fake", model="fake"
+            )
         marker = "YTS_PRO_STAGE:"
         stage = content.split(marker, 1)[1].splitlines()[0].strip()
-        return TextResult(text=json.dumps(self.payloads[stage], ensure_ascii=False), provider="fake", model="fake")
+        return TextResult(
+            text=json.dumps(self.payloads[stage], ensure_ascii=False), provider="fake", model="fake"
+        )

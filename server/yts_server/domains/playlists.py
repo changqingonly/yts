@@ -78,7 +78,9 @@ async def create_playlist(
 ) -> MusicPlaylist:
     _validate_scope(scope)
     if not name.strip():
-        raise AppError.bad_request("playlist_name_required", "playlist name must not be empty", "name")
+        raise AppError.bad_request(
+            "playlist_name_required", "playlist name must not be empty", "name"
+        )
     now_ms = _now_ms()
     playlist = MusicPlaylist(
         id=_new_id("playlist"),
@@ -305,9 +307,7 @@ async def _meta_songs_by_hash(
     return {song.content_hash: song for song in result.scalars().all()}
 
 
-def _playlist_item_response(
-    item: MusicPlaylistItem, meta_songs: dict[str, MetaSong]
-) -> dict:
+def _playlist_item_response(item: MusicPlaylistItem, meta_songs: dict[str, MetaSong]) -> dict:
     if item.content_hash is None:
         raise AppError.bad_request(
             "meta_song_required",
@@ -361,7 +361,9 @@ def _meta_song_response(song: MetaSong) -> dict:
 
 def _validate_scope(scope: str) -> None:
     if scope not in VALID_SCOPES:
-        raise AppError.bad_request("invalid_playlist_scope", "scope must be cloud or local", "scope")
+        raise AppError.bad_request(
+            "invalid_playlist_scope", "scope must be cloud or local", "scope"
+        )
 
 
 def _new_id(prefix: str) -> str:

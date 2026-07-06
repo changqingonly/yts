@@ -194,9 +194,7 @@ def test_workflow_history_lists_latest_thread_snapshot_after_run_and_resume(monk
         )
         assert run_response.status_code == 200
 
-        waiting_history_response = client.get(
-            "/api/workflows/pro_creation_hitl_v1/threads/history"
-        )
+        waiting_history_response = client.get("/api/workflows/pro_creation_hitl_v1/threads/history")
         assert waiting_history_response.status_code == 200
         waiting_items = waiting_history_response.json()
         assert len(waiting_items) == 1
@@ -273,12 +271,8 @@ def test_workflow_run_stream_pushes_repair_status_chunk(monkeypatch) -> None:
     backend = FakeRouteBackend()
     broken_generation = deepcopy(backend.payloads["generate_lyrics"])
     broken_generation["lyric_prompt"] = broken_generation["lyric_prompt"].replace(
-        "[Chorus]\n"
-        "雨落旧窗前\n"
-        "雨落旧窗前\n",
-        "[Chorus]\n"
-        "午后的城慢慢暗下来\n"
-        "旧照片在雨里发亮\n",
+        "[Chorus]\n雨落旧窗前\n雨落旧窗前\n",
+        "[Chorus]\n午后的城慢慢暗下来\n旧照片在雨里发亮\n",
     )
     backend.payloads["generate_lyrics"] = broken_generation
     backend.repair_payloads["generate_lyrics"] = [
@@ -308,15 +302,13 @@ def test_workflow_run_stream_pushes_repair_status_chunk(monkeypatch) -> None:
     assert status_messages[0]["node_id"] == "generate_lyrics"
     assert status_messages[0]["status"] == "repairing"
     assert status_messages[0]["attempt"] == 1
-    assert "generation.lyric_prompt section [Chorus] must repeat selected_hook" in status_messages[
-        0
-    ]["detail"]
+    assert (
+        "generation.lyric_prompt section [Chorus] must repeat selected_hook"
+        in status_messages[0]["detail"]
+    )
     terminal = messages[-1]
     assert terminal["type"] == "result"
-    by_id = {
-        node["node_id"]: node
-        for node in terminal["result"]["trace"]["nodes"]
-    }
+    by_id = {node["node_id"]: node for node in terminal["result"]["trace"]["nodes"]}
     assert by_id["generate_lyrics"]["metrics"]["repair_attempt_count"] == 1
 
 
@@ -384,9 +376,7 @@ def test_workflow_resume_stream_pushes_node_trace_chunks(monkeypatch) -> None:
 
     assert messages[0]["type"] == "started"
     trace_messages = [message for message in messages if message["type"] == "trace"]
-    assert any(
-        message["trace"]["nodes"][-1]["node_id"] == "done" for message in trace_messages
-    )
+    assert any(message["trace"]["nodes"][-1]["node_id"] == "done" for message in trace_messages)
     terminal = messages[-1]
     assert terminal["type"] == "result"
     assert terminal["result"]["status"] == "completed"

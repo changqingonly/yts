@@ -4,9 +4,9 @@
 //!   - 音乐:spawn `acestep.cpp` / 内置合成器(见 stream.rs,YTS_AUDIOGEN_CMD)。
 //!
 //! (历史:文本曾用 Candle 内嵌 quantized_llama;现移除 Candle,四模态统一到 GGML 二进制。
-//!  crate 名 candle-server 保留以兼容现有脚本/配置,实为「GGML 推理网关」。)
+//!  crate 名 infer-gateway 保留以兼容现有脚本/配置,实为「GGML 推理网关」。)
 //!
-//! Python 编排经 candle_adapter.py → POST /candle/text(本网关代理 llama-server)。
+//! Python 编排经 gateway_adapter.py → POST /text(本网关代理 llama-server)。
 
 mod image;
 mod llama;
@@ -25,7 +25,7 @@ async fn health() -> Json<serde_json::Value> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
-    let addr = env_or("YTS_CANDLE_ADDR", "127.0.0.1:8799");
+    let addr = env_or("YTS_GATEWAY_ADDR", "127.0.0.1:8799");
 
     // 文本:按 YTS_LLAMA_CMD spawn 常驻 llama-server 并托管(未配置则期望外部已在 YTS_LLAMA_BASE_URL)。
     let llama = llama::LlamaBackend::start().await;
@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/health", get(health))
-        .route("/candle/text", post(llama::gen_text))
+        .route("/text", post(llama::gen_text))
         .route("/image", post(image::gen_image))
         .route("/music/stream", get(stream::music_stream_handler))
         .with_state(llama.clone());

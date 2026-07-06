@@ -1,11 +1,11 @@
 [package]
-name = "candle-server"  # 兼容名;实为 yts GGML 推理网关(文本 llama.cpp / 图片 sd.cpp / 音乐 acestep.cpp)
+name = "infer-gateway"  # 兼容名;实为 yts GGML 推理网关(文本 llama.cpp / 图片 sd.cpp / 音乐 acestep.cpp)
 version = "0.1.0"
 edition = "2021"
 description = "yts local GGML inference gateway (text→llama-server proxy; image/music→spawned .cpp producers)"
 
 [[bin]]
-name = "candle-server"
+name = "infer-gateway"
 path = "src/main.rs"
 
 [dependencies]

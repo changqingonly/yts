@@ -1,4 +1,4 @@
-"""云端 /music/stream —— 与本地 candle-server 同契约的 WebSocket 端点(薄入口)。
+"""云端 /music/stream —— 与本地 infer-gateway 同契约的 WebSocket 端点(薄入口)。
 
 消息序列见 desktop/STREAM_PROTOCOL.md:start → header → 二进制 PCM 帧 → end;client 可发 stop。
 业务在 yts_core.audiogen;此路由只做 WS 收发 + 取消信号转发。

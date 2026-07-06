@@ -36,9 +36,9 @@ def test_frontend_default_api_target_is_build_time_configurable() -> None:
     environment_store_source = (
         root / "desktop" / "frontend" / "src" / "stores" / "environment.js"
     ).read_text(encoding="utf-8")
-    creation_source = (root / "desktop" / "frontend" / "src" / "pages" / "CreationPage.vue").read_text(
-        encoding="utf-8"
-    )
+    creation_source = (
+        root / "desktop" / "frontend" / "src" / "pages" / "CreationPage.vue"
+    ).read_text(encoding="utf-8")
     music_source = (root / "desktop" / "frontend" / "src" / "pages" / "MusicPage.vue").read_text(
         encoding="utf-8"
     )
@@ -47,16 +47,27 @@ def test_frontend_default_api_target_is_build_time_configurable() -> None:
     )
 
     assert "export const ENVIRONMENT_TARGETS = {" in environment_source
-    assert 'local: { label: "本地", apiBase: "http://127.0.0.1:8765", musicWsBase: "ws://127.0.0.1:8799" }' in environment_source
-    assert 'cloud: { label: "云端", apiBase: "http://127.0.0.1:8000", musicWsBase: "ws://127.0.0.1:8000" }' in environment_source
+    assert (
+        'local: { label: "本地", apiBase: "http://127.0.0.1:8765", musicWsBase: "ws://127.0.0.1:8799" }'
+        in environment_source
+    )
+    assert (
+        'cloud: { label: "云端", apiBase: "http://127.0.0.1:8000", musicWsBase: "ws://127.0.0.1:8000" }'
+        in environment_source
+    )
     assert 'export const DEFAULT_ENVIRONMENT_TARGET = "cloud";' in environment_source
     assert "export function endpointForTarget(target)" in environment_source
     assert 'export const API_TARGET_CHANGED_EVENT = "yts-target-changed";' in environment_source
     assert "export function selectedApiTarget()" in environment_source
-    assert "return stored ? assertApiTarget(stored) : DEFAULT_ENVIRONMENT_TARGET;" in environment_source
+    assert (
+        "return stored ? assertApiTarget(stored) : DEFAULT_ENVIRONMENT_TARGET;"
+        in environment_source
+    )
     assert "export function setSelectedApiTarget(target)" in environment_source
     assert "window.dispatchEvent(new CustomEvent(API_TARGET_CHANGED_EVENT" in environment_source
-    assert "export const useEnvironmentStore = defineStore(\"environment\"" in environment_store_source
+    assert (
+        'export const useEnvironmentStore = defineStore("environment"' in environment_store_source
+    )
     assert "target: selectedApiTarget()" in environment_store_source
     assert "health: Object.fromEntries(environmentOptions().map" in environment_store_source
     assert "setSelectedApiTarget(nextTarget)" in environment_store_source
@@ -76,19 +87,22 @@ def test_frontend_shared_requests_follow_the_selected_api_target() -> None:
     http_source = (root / "desktop" / "frontend" / "src" / "services" / "http.js").read_text(
         encoding="utf-8"
     )
-    music_service_source = (root / "desktop" / "frontend" / "src" / "services" / "music.js").read_text(
-        encoding="utf-8"
-    )
+    music_service_source = (
+        root / "desktop" / "frontend" / "src" / "services" / "music.js"
+    ).read_text(encoding="utf-8")
 
     environment_source = (
         root / "desktop" / "frontend" / "src" / "services" / "environment.js"
     ).read_text(encoding="utf-8")
 
     assert "function assertApiTarget(target)" in environment_source
-    assert "return stored ? assertApiTarget(stored) : DEFAULT_ENVIRONMENT_TARGET;" in environment_source
+    assert (
+        "return stored ? assertApiTarget(stored) : DEFAULT_ENVIRONMENT_TARGET;"
+        in environment_source
+    )
     assert "throw new Error(`Unsupported API target: ${target}`);" in environment_source
     assert 'from "./transport"' in http_source
-    assert "uploadForm(\"/api/music/upload\", form)" in music_service_source
+    assert 'uploadForm("/api/music/upload", form)' in music_service_source
     assert "/api/music/local_import/upload" not in music_service_source
 
 
@@ -120,5 +134,8 @@ def test_frontend_transport_defaults_to_websocket_rpc_with_http_fallback() -> No
     assert "return requestJsonOverHttp(path, options);" in transport_source
     assert "new WebSocket(rpcWebSocketUrl(target))" in transport_source
     assert 'code === "WS_CONNECT_FAILED"' in transport_source
-    assert "export function openJsonStream(path, payload, handlers = {}, options = {})" in transport_source
+    assert (
+        "export function openJsonStream(path, payload, handlers = {}, options = {})"
+        in transport_source
+    )
     assert "if (!opened && fallbackJson)" in transport_source

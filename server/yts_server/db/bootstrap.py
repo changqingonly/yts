@@ -30,11 +30,7 @@ def _upgrade_music_schema(connection) -> None:
             },
         )
         connection.execute(
-            text(
-                "UPDATE music_playlist "
-                "SET created_at_ms = updated_at_ms "
-                "WHERE created_at_ms = 0"
-            )
+            text("UPDATE music_playlist SET created_at_ms = updated_at_ms WHERE created_at_ms = 0")
         )
     if "music_playlist_item" in table_names:
         _add_missing_columns(
@@ -82,8 +78,13 @@ def _add_missing_columns(connection, table_name: str, columns: dict[str, str]) -
 
 def _upgrade_music_playlist_item_legacy_columns(connection) -> None:
     if connection.dialect.name == "postgresql":
-        columns = {column["name"]: column for column in inspect(connection).get_columns("music_playlist_item")}
-        connection.execute(text("ALTER TABLE music_playlist_item ALTER COLUMN source DROP NOT NULL"))
+        columns = {
+            column["name"]: column
+            for column in inspect(connection).get_columns("music_playlist_item")
+        }
+        connection.execute(
+            text("ALTER TABLE music_playlist_item ALTER COLUMN source DROP NOT NULL")
+        )
         connection.execute(
             text("ALTER TABLE music_playlist_item ALTER COLUMN source_ref DROP NOT NULL")
         )

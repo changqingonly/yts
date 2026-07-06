@@ -44,7 +44,7 @@ dl() {  # dl <file>
 echo "下载模型到 $MODELS (仓库: $SD_MODEL_REPO)"
 dl "$SD_DIFFUSION"; dl "$SD_VAE"; dl "$SD_CLIP"; dl "$SD_T5"
 
-# ---- 3) 生成 producer 配置(candle-server 读 YTS_IMAGEGEN_CMD)----
+# ---- 3) 生成 producer 配置(infer-gateway 读 YTS_IMAGEGEN_CMD)----
 cat > "$ENVFILE" <<EOF
 # 由 scripts/build_sdcpp.sh 自动生成。dev_gateway.sh 会自动 source 本文件。
 export YTS_IMAGEGEN_CMD='${SD_BIN} --diffusion-model ${MODELS}/${SD_DIFFUSION} --vae ${MODELS}/${SD_VAE} --clip_l ${MODELS}/${SD_CLIP} --t5xxl ${MODELS}/${SD_T5} -p {prompt} -o {out} -W {width} -H {height} --steps ${SD_STEPS} --cfg-scale ${SD_CFG} --sampling-method ${SD_SAMPLER}'

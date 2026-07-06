@@ -25,9 +25,7 @@ def isolated_sqlite_db(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[No
 
 def test_song_asset_crud_requires_owner() -> None:
     with TestClient(create_app()) as client:
-        token = register_via_test_crypto(client, "song@example.com", "Password123")[
-            "access_token"
-        ]
+        token = register_via_test_crypto(client, "song@example.com", "Password123")["access_token"]
         other_token = register_via_test_crypto(client, "other@example.com", "Password123")[
             "access_token"
         ]

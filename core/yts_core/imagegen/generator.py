@@ -1,7 +1,7 @@
 """云端图像生成(传输无关)。返回 PNG 字节。
 
 本轮:占位 PNG(纯 Python zlib,无第三方依赖),随 prompt 变色的对角渐变,
-与本地 candle-server 的占位一致,便于双源对拍。
+与本地 infer-gateway 的占位一致,便于双源对拍。
 
 ★ 真实云端模型替换点:generate_png 内改为调云图模型/服务(FLUX/SD3.5/Qwen-Image),
 返回其 PNG 字节即可;上层契约(prompt/width/height/steps → PNG)不变。

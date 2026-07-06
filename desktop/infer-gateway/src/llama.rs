@@ -2,7 +2,7 @@
 //!
 //! 网关按 `YTS_LLAMA_CMD` spawn 并托管 llama-server 生命周期(子进程随网关退出被回收);
 //! 未配置时假定外部已在 `YTS_LLAMA_BASE_URL`(默认 http://127.0.0.1:8080)运行。
-//! `/candle/text` 接口对上层不变(candle_adapter.py 无需改动),底层已换成 llama.cpp。
+//! `/text` 接口对上层不变(gateway_adapter.py 无需改动),底层已换成 llama.cpp。
 
 use std::sync::Arc;
 

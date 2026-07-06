@@ -46,7 +46,7 @@ def test_health_exposes_inference_config_without_secret(monkeypatch: pytest.Monk
     monkeypatch.setenv("YTS_OPENAI_MAX_RETRIES", "0")
     monkeypatch.setenv("YTS_LOGGING_LEVEL", "DEBUG")
     monkeypatch.setenv("YTS_LOGGING_FORMAT", "json")
-    monkeypatch.setenv("YTS_CANDLE_TEXT_MAX_TOKENS", "512")
+    monkeypatch.setenv("YTS_GATEWAY_TEXT_MAX_TOKENS", "512")
     monkeypatch.setenv("YTS_IMAGE_PROVIDER", "openai")
     monkeypatch.setenv("YTS_IMAGE_MODEL", "gpt-image-1")
 
@@ -79,7 +79,7 @@ def test_health_exposes_inference_config_without_secret(monkeypatch: pytest.Monk
     assert body["openai_max_retries"] == 0
     assert body["openai_api_key_configured"] is True
     assert body["openai_api_key_length"] == len("sk-health-secret")
-    assert body["candle_text_max_tokens"] == 512
+    assert body["gateway_text_max_tokens"] == 512
     assert body["logging_level"] == "DEBUG"
     assert body["logging_format"] == "json"
     assert body["image_provider"] == "openai"

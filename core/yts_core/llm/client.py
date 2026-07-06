@@ -1,5 +1,5 @@
 """
-LiteLLM 调用封装。云实现用;桌面本地实现走 Candle(见 inference/candle_adapter)
+LiteLLM 调用封装。云实现用;桌面本地实现走 GGML 网关(见 inference/gateway_adapter)
 出站调用在桌面端须经 Rust 出口代理(认证/拦截/审计)——把 base_url 指向本地代理即可
 """
 
