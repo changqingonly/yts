@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import signal
 import socket
 import subprocess
@@ -9,13 +9,11 @@ from pathlib import Path
 
 import pytest
 
-_SERVCTL_PATH = Path(__file__).resolve().parents[1] / "scripts" / "servctl.py"
-_SERVCTL_SPEC = importlib.util.spec_from_file_location("servctl", _SERVCTL_PATH)
-assert _SERVCTL_SPEC is not None
-servctl = importlib.util.module_from_spec(_SERVCTL_SPEC)
-assert _SERVCTL_SPEC.loader is not None
-sys.modules[_SERVCTL_SPEC.name] = servctl
-_SERVCTL_SPEC.loader.exec_module(servctl)
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+servctl = importlib.import_module("scripts.servctl")
 
 
 def _write_profile_config(root: Path, profile: str = "cloud") -> None:
@@ -44,6 +42,24 @@ def _unused_tcp_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+def test_servctl_is_package_with_module_entrypoint() -> None:
+    package = importlib.import_module("scripts.servctl")
+    main_module = importlib.import_module("scripts.servctl.__main__")
+
+    assert hasattr(package, "__path__")
+    assert main_module.main is package.cli.main
+
+
+def test_preflight_probe_lives_in_real_python_file() -> None:
+    package_dir = Path(importlib.import_module("scripts.servctl").__file__).resolve().parent
+    probe_path = package_dir / "preflight_probe.py"
+
+    assert probe_path.is_file()
+    assert servctl._preflight_python_code(port=8000, host="127.0.0.1") == probe_path.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_require_profile_config_rejects_missing_real_env_file(tmp_path: Path) -> None:
@@ -314,7 +330,7 @@ def test_start_server_prepares_log_before_preflight_and_port_bind(
         assert config.env["YTS_SKIP_STARTUP_DB_BOOTSTRAP"] == "1"
         return 12345
 
-    monkeypatch.setattr(servctl, "_prepare_log_file", prepare_log)
+    monkeypatch.setattr(servctl.commands, "_prepare_log_file", prepare_log)
 
     servctl.start_server(
         tmp_path,
@@ -368,13 +384,14 @@ def test_run_python_probe_reports_subprocess_failure_without_dumping_probe_code(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    probe_code = "print('probe implementation details')"
+    probe_source = servctl._preflight_python_code(port=8000, host="127.0.0.1")
+    probe_path = servctl._preflight_probe_path()
 
     def fail_if_check_call_is_used(command: list[str], **kwargs) -> None:
         raise AssertionError("_run_python_probe must capture probe output")
 
     def fake_run(command: list[str], **kwargs):
-        assert command == ["uv", "run", "python", "-c", probe_code]
+        assert command == ["uv", "run", "python", str(probe_path)]
         return subprocess.CompletedProcess(
             command,
             1,
@@ -386,12 +403,12 @@ def test_run_python_probe_reports_subprocess_failure_without_dumping_probe_code(
     monkeypatch.setattr(servctl.subprocess, "run", fake_run)
 
     with pytest.raises(servctl.ServctlError) as exc_info:
-        servctl._run_python_probe(tmp_path, {"PATH": "/bin"}, probe_code)
+        servctl._run_python_probe(tmp_path, {"PATH": "/bin"})
 
     message = str(exc_info.value)
     assert "preflight probe failed with exit code 1" in message
     assert "servctl preflight failed: RuntimeError: LLM preflight failed" in message
-    assert probe_code not in message
+    assert probe_source not in message
 
 
 def test_start_does_not_run_deploy_environment_installation(tmp_path: Path) -> None:
@@ -880,7 +897,9 @@ def test_stop_server_waits_for_backend_port_release_after_pid_stops(
         calls.append(f"check:{pid}")
         return calls.count(f"check:{pid}") == 1
 
-    monkeypatch.setattr(servctl, "_terminate_process", lambda pid: calls.append(f"term:{pid}"))
+    monkeypatch.setattr(
+        servctl.process, "_terminate_process", lambda pid: calls.append(f"term:{pid}")
+    )
 
     servctl.stop_server(
         tmp_path,
@@ -1073,6 +1092,63 @@ def test_cli_uses_short_servctl_commands(monkeypatch: pytest.MonkeyPatch, tmp_pa
         "stop:cloud",
         "restart:cloud:0.0.0.0:8000:False",
     ]
+
+
+def test_cli_uses_profile_default_backend_ports(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        servctl, "Path", lambda value: tmp_path if value == servctl.__file__ else Path(value)
+    )
+    monkeypatch.setattr(
+        servctl,
+        "start",
+        lambda root, profile, **kwargs: calls.append(f"start:{profile}:{kwargs['port']}"),
+    )
+    monkeypatch.setattr(
+        servctl,
+        "stop",
+        lambda root, profile, **kwargs: calls.append(f"stop:{profile}:{kwargs['port']}"),
+    )
+    monkeypatch.setattr(
+        servctl,
+        "restart",
+        lambda root, profile, **kwargs: calls.append(f"restart:{profile}:{kwargs['port']}"),
+    )
+    monkeypatch.setattr(
+        servctl,
+        "status",
+        lambda root, profile, **kwargs: calls.append(f"status:{profile}:{kwargs['port']}") or "",
+    )
+
+    assert servctl.main(["start", "--profile", "local"]) == 0
+    assert servctl.main(["stop", "--profile", "local"]) == 0
+    assert servctl.main(["restart", "--profile", "local"]) == 0
+    assert servctl.main(["status", "--profile", "local"]) == 0
+    assert servctl.main(["start", "--profile", "cloud"]) == 0
+    assert servctl.main(["start", "--profile", "local", "--port", "9001"]) == 0
+
+    assert calls == [
+        "start:local:8765",
+        "stop:local:8765",
+        "restart:local:8765",
+        "status:local:8765",
+        "start:cloud:8000",
+        "start:local:9001",
+    ]
+
+
+def test_dev_server_wrapper_delegates_profile_default_port_when_port_is_unset() -> None:
+    source = (Path(__file__).resolve().parents[1] / "scripts" / "dev_server.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'command=(./servctl start --profile "${YTS_PROFILE:-cloud}" --reload)' in source
+    assert 'command+=(--port "$YTS_PORT")' in source
+    assert "YTS_PORT:-8000" not in source
 
 
 def test_cli_start_prints_progress_to_console(
