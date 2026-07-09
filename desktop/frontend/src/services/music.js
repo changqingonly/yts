@@ -38,12 +38,38 @@ export function listPlaylistItems({ playlistId: rawPlaylistId } = {}) {
   return requestJson(`/api/music/playlists/${playlistId}/items`);
 }
 
+export function listDeletedPlaylistItems({ playlistId: rawPlaylistId } = {}) {
+  if (!rawPlaylistId) throw new Error("listDeletedPlaylistItems requires playlistId");
+  const playlistId = encodeURIComponent(rawPlaylistId);
+  return requestJson(`/api/music/playlists/${playlistId}/items/deleted`);
+}
+
 export function appendPlaylistItems({ playlistId: rawPlaylistId, items } = {}) {
   if (!rawPlaylistId) throw new Error("appendPlaylistItems requires playlistId");
   const playlistId = encodeURIComponent(rawPlaylistId);
   return requestJson(`/api/music/playlists/${playlistId}/items`, {
     method: "POST",
     body: JSON.stringify({ items }),
+  });
+}
+
+export function deletePlaylistItem({ playlistId: rawPlaylistId, itemId: rawItemId } = {}) {
+  if (!rawPlaylistId) throw new Error("deletePlaylistItem requires playlistId");
+  if (!rawItemId) throw new Error("deletePlaylistItem requires itemId");
+  const playlistId = encodeURIComponent(rawPlaylistId);
+  const itemId = encodeURIComponent(rawItemId);
+  return requestJson(`/api/music/playlists/${playlistId}/items/${itemId}`, {
+    method: "DELETE",
+  });
+}
+
+export function restorePlaylistItem({ playlistId: rawPlaylistId, itemId: rawItemId } = {}) {
+  if (!rawPlaylistId) throw new Error("restorePlaylistItem requires playlistId");
+  if (!rawItemId) throw new Error("restorePlaylistItem requires itemId");
+  const playlistId = encodeURIComponent(rawPlaylistId);
+  const itemId = encodeURIComponent(rawItemId);
+  return requestJson(`/api/music/playlists/${playlistId}/items/${itemId}/restore`, {
+    method: "POST",
   });
 }
 

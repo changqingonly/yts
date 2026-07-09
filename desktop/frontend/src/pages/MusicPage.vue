@@ -1,6 +1,16 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { History, ListMusic, Radio, RefreshCw, Square, Upload, X } from "@lucide/vue";
+import {
+  History,
+  ListMusic,
+  Radio,
+  RefreshCw,
+  RotateCcw,
+  Square,
+  Trash2,
+  Upload,
+  X,
+} from "@lucide/vue";
 import MusicImportDrawer from "../components/MusicImportDrawer.vue";
 import YtsAudioPlayer from "../components/YtsAudioPlayer.vue";
 import { usePlayerStore } from "../stores/player";
@@ -38,9 +48,35 @@ const tracks = computed(() =>
   })),
 );
 
+const deletedTracks = computed(() =>
+  playlist.deletedItems.map((item) => ({
+    id: item.id,
+    title: item.title_alias || "未命名歌曲",
+    artist: item.artist_alias || "未知艺人",
+    contentHash: item.content_hash,
+    metaSong: item.meta_song,
+    deletedAt: item.deleted_at_ms,
+    deletedAtLabel: formatDeletedAt(item.deleted_at_ms),
+  })),
+);
+
 const currentTrack = computed(() => player.currentTrack || tracks.value[0] || null);
 const activeLoopMode = computed(() => loopModes.find((item) => item.key === loopMode.value) || loopModes[0]);
-const drawerTracks = computed(() => (drawerMode.value === "history" ? playHistory.value : tracks.value));
+const drawerTracks = computed(() => {
+  if (drawerMode.value === "history") return playHistory.value;
+  if (drawerMode.value === "deleted") return deletedTracks.value;
+  return tracks.value;
+});
+const drawerTitle = computed(() => {
+  if (drawerMode.value === "history") return "播放历史";
+  if (drawerMode.value === "deleted") return "删除历史";
+  return "播放列表";
+});
+const drawerEmptyText = computed(() => {
+  if (drawerMode.value === "history") return "暂无播放历史";
+  if (drawerMode.value === "deleted") return "暂无删除历史";
+  return "暂无歌曲";
+});
 
 function playableTrackUrl(item) {
   if (!item.content_hash) {
@@ -136,8 +172,56 @@ function playTrack(index) {
 }
 
 function playDrawerTrack(track, index) {
+  if (drawerMode.value === "deleted") return;
   const targetIndex = drawerMode.value === "history" ? tracks.value.findIndex((item) => item.id === track.id) : index;
   if (targetIndex >= 0) playTrack(targetIndex);
+}
+
+async function handleDeletePlaylistItem(track) {
+  error.value = "";
+  try {
+    if (!track?.id) throw new Error("删除播放列表歌曲需要 item id");
+    await playlist.deleteItem(track.id);
+    await loadPlayableTrackUrls(playlist.activeItems);
+    player.setQueue(tracks.value);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+async function handleRestorePlaylistItem(track) {
+  error.value = "";
+  try {
+    if (!track?.id) throw new Error("恢复播放列表歌曲需要 item id");
+    await playlist.restoreItem(track.id);
+    await loadPlayableTrackUrls(playlist.activeItems);
+    player.setQueue(tracks.value);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
+function drawerTrackMeta(track) {
+  if (drawerMode.value === "history") return track.playedAt;
+  if (drawerMode.value === "deleted") return track.deletedAtLabel;
+  return track.artist;
+}
+
+function formatDeletedAt(value) {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp)) {
+    throw new Error("删除历史歌曲需要 deleted_at_ms");
+  }
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("删除历史歌曲的 deleted_at_ms 无法解析");
+  }
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function previousTrack() {
@@ -286,7 +370,7 @@ onBeforeUnmount(() => {
             <span><ListMusic :size="18" /></span>
             <div>
               <p>播放管理</p>
-              <h2>{{ drawerMode === "history" ? "播放历史" : "播放列表" }}</h2>
+              <h2>{{ drawerTitle }}</h2>
             </div>
           </div>
           <button class="drawer-collapse" type="button" title="关闭" @click="playlistDrawerOpen = false">
@@ -309,22 +393,56 @@ onBeforeUnmount(() => {
           >
             <History :size="16" /> 播放历史
           </button>
+          <button
+            :class="['drawer-tab', { active: drawerMode === 'deleted' }]"
+            type="button"
+            @click="drawerMode = 'deleted'"
+          >
+            <Trash2 :size="16" /> 删除历史
+          </button>
         </div>
 
         <div class="drawer-list">
-          <button
+          <article
             v-for="(track, index) in drawerTracks"
             :key="`${drawerMode}-${track.id}-${index}`"
-            :class="['drawer-row', { active: currentTrack?.id === track.id }]"
-            type="button"
-            @click="playDrawerTrack(track, index)"
+            :class="['drawer-row', { active: currentTrack?.id === track.id && drawerMode !== 'deleted' }]"
           >
-            <span>{{ String(index + 1).padStart(2, "0") }}</span>
-            <strong>{{ track.title }}</strong>
-            <small>{{ drawerMode === "history" ? track.playedAt : track.artist }}</small>
-          </button>
+            <button
+              class="drawer-row-main"
+              type="button"
+              :disabled='drawerMode === "deleted"'
+              @click="playDrawerTrack(track, index)"
+            >
+              <span class="drawer-row-index">{{ String(index + 1).padStart(2, "0") }}</span>
+              <strong>{{ track.title }}</strong>
+              <small>{{ drawerTrackMeta(track) }}</small>
+            </button>
+            <button
+              v-if="drawerMode === 'queue'"
+              class="drawer-row-action danger"
+              type="button"
+              title="移除"
+              aria-label="移除歌曲"
+              @click.stop="handleDeletePlaylistItem(track)"
+            >
+              <Trash2 :size="13" />
+              <span>移除</span>
+            </button>
+            <button
+              v-else-if="drawerMode === 'deleted'"
+              class="drawer-row-action restore"
+              type="button"
+              title="恢复"
+              aria-label="恢复歌曲"
+              @click.stop="handleRestorePlaylistItem(track)"
+            >
+              <RotateCcw :size="13" />
+              <span>恢复</span>
+            </button>
+          </article>
           <p v-if="!drawerTracks.length" class="empty-state">
-            {{ drawerMode === "history" ? "暂无播放历史" : "暂无歌曲" }}
+            {{ drawerEmptyText }}
           </p>
         </div>
       </aside>
@@ -510,7 +628,7 @@ onBeforeUnmount(() => {
 .drawer-tabs {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-bottom: 16px;
 }
 
@@ -539,7 +657,7 @@ onBeforeUnmount(() => {
 .drawer-list {
   align-content: start;
   display: grid;
-  gap: 8px;
+  gap: 4px;
   grid-auto-rows: max-content;
   min-height: 0;
   overflow-y: auto;
@@ -548,40 +666,61 @@ onBeforeUnmount(() => {
 }
 
 .drawer-row {
-  background: rgba(4, 16, 31, 0.44);
-  border: 1px solid rgba(125, 211, 252, 0.1);
-  border-radius: 8px;
+  background: rgba(4, 16, 31, 0.3);
+  border: 0;
+  border-radius: 6px;
   box-sizing: border-box;
   color: var(--color-text);
   cursor: pointer;
   display: grid;
   font: inherit;
   align-items: center;
-  gap: 8px;
-  grid-template-columns: 30px minmax(0, 1fr) minmax(58px, 90px);
-  min-height: 44px;
-  padding: 8px 10px;
+  gap: 6px;
+  grid-template-columns: 24px minmax(0, 1fr) minmax(48px, 78px);
+  min-height: 34px;
+  padding: 5px 8px;
+  position: relative;
   text-align: left;
   width: 100%;
 }
 
+.drawer-row:has(.drawer-row-action) {
+  padding-right: 60px;
+}
+
 .drawer-row:hover,
-.drawer-row:focus-visible,
+.drawer-row:focus-within,
 .drawer-row.active {
   background: linear-gradient(90deg, rgba(14, 165, 233, 0.18), rgba(20, 184, 166, 0.08));
-  border-color: rgba(34, 211, 238, 0.28);
+  box-shadow: inset 2px 0 0 rgba(34, 211, 238, 0.42);
   outline: none;
+}
+
+.drawer-row-main {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: contents;
+  font: inherit;
+  text-align: left;
+}
+
+.drawer-row-main:disabled {
+  cursor: default;
 }
 
 .drawer-row span {
   color: var(--color-muted);
-  font-size: 12px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
 .drawer-row strong {
   color: var(--color-heading);
+  font-size: 12px;
   line-height: 1.1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -590,11 +729,54 @@ onBeforeUnmount(() => {
 
 .drawer-row small {
   color: var(--color-muted);
+  font-size: 11px;
   justify-self: end;
   line-height: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.drawer-row-action {
+  align-items: center;
+  background: rgba(9, 25, 43, 0.72);
+  border: 1px solid rgba(125, 211, 252, 0.14);
+  border-radius: 6px;
+  color: var(--color-heading);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  gap: 4px;
+  justify-content: center;
+  min-height: 24px;
+  min-width: 48px;
+  padding: 0 7px;
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.drawer-row-action span {
+  color: inherit;
+  font-size: 11px;
+}
+
+.drawer-row-action.danger {
+  color: #fecdd3;
+}
+
+.drawer-row-action.restore {
+  color: #bbf7d0;
+}
+
+.drawer-row-action:hover,
+.drawer-row-action:focus-visible {
+  background: rgba(14, 165, 233, 0.24);
+  border-color: rgba(34, 211, 238, 0.34);
+  outline: none;
 }
 
 .empty-state,

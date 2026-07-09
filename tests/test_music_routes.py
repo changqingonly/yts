@@ -207,6 +207,87 @@ def test_reorder_playlist_items_rewrites_continuous_positions() -> None:
         ]
 
 
+def test_playlist_item_delete_history_and_restore_appends_to_end() -> None:
+    audio_bytes = wav_bytes()
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(client, "delete-history@example.com", "Password123")[
+            "access_token"
+        ]
+        headers = {"Authorization": f"Bearer {token}"}
+        content_hash = client.post(
+            "/api/music/upload",
+            headers=headers,
+            files={"file": ("rain.wav", audio_bytes, "audio/wav")},
+        ).json()["content_hash"]
+        playlist_id = client.post(
+            "/api/music/playlists/default",
+            headers=headers,
+            json={"scope": "cloud"},
+        ).json()["id"]
+        appended = client.post(
+            f"/api/music/playlists/{playlist_id}/items",
+            headers=headers,
+            json={
+                "items": [
+                    {
+                        "content_hash": content_hash,
+                        "title_alias": "一",
+                        "artist_alias": "",
+                        "device_id": "d",
+                    },
+                    {
+                        "content_hash": content_hash,
+                        "title_alias": "二",
+                        "artist_alias": "",
+                        "device_id": "d",
+                    },
+                    {
+                        "content_hash": content_hash,
+                        "title_alias": "三",
+                        "artist_alias": "",
+                        "device_id": "d",
+                    },
+                ]
+            },
+        ).json()["items"]
+        deleted_item_id = appended[1]["id"]
+
+        deleted = client.delete(
+            f"/api/music/playlists/{playlist_id}/items/{deleted_item_id}",
+            headers=headers,
+        )
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["playlist"]["item_count"] == 2
+        assert deleted.json()["item"]["id"] == deleted_item_id
+        assert deleted.json()["item"]["deleted_at_ms"] is not None
+
+        listed = client.get(f"/api/music/playlists/{playlist_id}/items", headers=headers)
+        assert listed.status_code == 200, listed.text
+        assert [item["title_alias"] for item in listed.json()["items"]] == ["一", "三"]
+
+        history = client.get(
+            f"/api/music/playlists/{playlist_id}/items/deleted",
+            headers=headers,
+        )
+        assert history.status_code == 200, history.text
+        assert [item["id"] for item in history.json()["items"]] == [deleted_item_id]
+        assert history.json()["items"][0]["deleted_at_ms"] is not None
+
+        restored = client.post(
+            f"/api/music/playlists/{playlist_id}/items/{deleted_item_id}/restore",
+            headers=headers,
+        )
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["playlist"]["item_count"] == 3
+        assert restored.json()["item"]["id"] == deleted_item_id
+        assert restored.json()["item"]["deleted_at_ms"] is None
+        assert restored.json()["item"]["position"] == 3
+
+        relisted = client.get(f"/api/music/playlists/{playlist_id}/items", headers=headers)
+        assert [item["title_alias"] for item in relisted.json()["items"]] == ["一", "三", "二"]
+        assert [item["position"] for item in relisted.json()["items"]] == [1, 2, 3]
+
+
 def test_playlist_append_rejects_when_item_limit_exceeded() -> None:
     audio_bytes = wav_bytes()
     with TestClient(create_app()) as client:

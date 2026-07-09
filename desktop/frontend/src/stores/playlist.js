@@ -1,10 +1,13 @@
 import { defineStore } from "pinia";
 import {
   appendPlaylistItems,
+  deletePlaylistItem,
   ensureDefaultPlaylist,
+  listDeletedPlaylistItems,
   listPlaylistItems,
   listPlaylists,
   reorderPlaylistItems,
+  restorePlaylistItem,
   syncPlaylist,
 } from "../services/music";
 
@@ -13,6 +16,7 @@ export const usePlaylistStore = defineStore("playlist", {
     playlists: [],
     currentPlaylistId: "",
     playlistItems: [],
+    deletedItems: [],
     serverClock: 0,
     syncing: false,
     lastError: "",
@@ -44,8 +48,17 @@ export const usePlaylistStore = defineStore("playlist", {
       const playlist = normalizePlaylist(data.playlist);
       this.upsertPlaylist(playlist);
       this.currentPlaylistId = playlist.id;
-      this.playlistItems = Array.isArray(data.items) ? data.items.map(normalizePlaylistItem) : [];
+      this.playlistItems = normalizePlaylistItems(data.items, "loadItems");
       return this.playlistItems;
+    },
+    async loadDeletedItems({ playlistId = this.currentPlaylistId } = {}) {
+      if (!playlistId) throw new Error("loadDeletedItems requires currentPlaylistId");
+      const data = await listDeletedPlaylistItems({ playlistId });
+      const playlist = normalizePlaylist(data.playlist);
+      this.upsertPlaylist(playlist);
+      this.currentPlaylistId = playlist.id;
+      this.deletedItems = normalizeDeletedPlaylistItems(data.items, "loadDeletedItems");
+      return this.deletedItems;
     },
     async hydrate({ scope = "cloud" } = {}) {
       this.syncing = true;
@@ -54,6 +67,7 @@ export const usePlaylistStore = defineStore("playlist", {
         await this.loadPlaylists({ scope });
         await this.ensureDefault({ scope });
         await this.loadItems();
+        await this.loadDeletedItems();
       } catch (err) {
         this.lastError = err instanceof Error ? err.message : String(err);
         throw err;
@@ -71,11 +85,62 @@ export const usePlaylistStore = defineStore("playlist", {
           items,
         });
         this.upsertPlaylist(normalizePlaylist(data.playlist));
-        const nextItems = Array.isArray(data.items) ? data.items.map(normalizePlaylistItem) : [];
+        const nextItems = normalizePlaylistItems(data.items, "appendItems");
         this.playlistItems = [...this.playlistItems, ...nextItems].sort(
           (left, right) => left.position - right.position,
         );
         return nextItems;
+      } catch (err) {
+        this.lastError = err instanceof Error ? err.message : String(err);
+        throw err;
+      } finally {
+        this.syncing = false;
+      }
+    },
+    async deleteItem(itemId) {
+      if (!this.currentPlaylistId) throw new Error("deleteItem requires currentPlaylistId");
+      if (!itemId) throw new Error("deleteItem requires itemId");
+      this.syncing = true;
+      this.lastError = "";
+      try {
+        const data = await deletePlaylistItem({
+          playlistId: this.currentPlaylistId,
+          itemId,
+        });
+        const playlist = normalizePlaylist(data.playlist);
+        const deletedItem = normalizeDeletedPlaylistItem(data.item);
+        this.upsertPlaylist(playlist);
+        this.currentPlaylistId = playlist.id;
+        this.playlistItems = normalizePlaylistItems(data.items, "deleteItem");
+        this.deletedItems = [
+          deletedItem,
+          ...this.deletedItems.filter((item) => item.id !== deletedItem.id),
+        ].sort(compareDeletedPlaylistItems);
+        return deletedItem;
+      } catch (err) {
+        this.lastError = err instanceof Error ? err.message : String(err);
+        throw err;
+      } finally {
+        this.syncing = false;
+      }
+    },
+    async restoreItem(itemId) {
+      if (!this.currentPlaylistId) throw new Error("restoreItem requires currentPlaylistId");
+      if (!itemId) throw new Error("restoreItem requires itemId");
+      this.syncing = true;
+      this.lastError = "";
+      try {
+        const data = await restorePlaylistItem({
+          playlistId: this.currentPlaylistId,
+          itemId,
+        });
+        const playlist = normalizePlaylist(data.playlist);
+        const restoredItem = normalizePlaylistItem(data.item);
+        this.upsertPlaylist(playlist);
+        this.currentPlaylistId = playlist.id;
+        this.playlistItems = normalizePlaylistItems(data.items, "restoreItem");
+        this.deletedItems = this.deletedItems.filter((item) => item.id !== restoredItem.id);
+        return restoredItem;
       } catch (err) {
         this.lastError = err instanceof Error ? err.message : String(err);
         throw err;
@@ -90,7 +155,7 @@ export const usePlaylistStore = defineStore("playlist", {
         orderedItemIds,
       });
       this.upsertPlaylist(normalizePlaylist(data.playlist));
-      this.playlistItems = Array.isArray(data.items) ? data.items.map(normalizePlaylistItem) : [];
+      this.playlistItems = normalizePlaylistItems(data.items, "reorder");
       return this.playlistItems;
     },
     async sync({ uploads = [] } = {}) {
@@ -128,4 +193,34 @@ function normalizePlaylistItem(item) {
   if (!item.content_hash) throw new Error("playlist item requires content_hash");
   if (!item.meta_song) throw new Error("playlist item requires meta_song");
   return item;
+}
+
+function normalizePlaylistItems(items, source) {
+  if (!Array.isArray(items)) throw new Error(`${source} response requires items`);
+  return items.map(normalizePlaylistItem);
+}
+
+function normalizeDeletedPlaylistItem(item) {
+  const normalizedItem = normalizePlaylistItem(item);
+  if (normalizedItem.deleted_at_ms == null) {
+    throw new Error("deleted playlist item requires deleted_at_ms");
+  }
+  return normalizedItem;
+}
+
+function normalizeDeletedPlaylistItems(items, source) {
+  if (!Array.isArray(items)) throw new Error(`${source} response requires items`);
+  return items.map(normalizeDeletedPlaylistItem);
+}
+
+function compareDeletedPlaylistItems(left, right) {
+  return deletedAtMs(right) - deletedAtMs(left);
+}
+
+function deletedAtMs(item) {
+  const timestamp = Number(item.deleted_at_ms);
+  if (!Number.isFinite(timestamp)) {
+    throw new Error("deleted playlist item requires numeric deleted_at_ms");
+  }
+  return timestamp;
 }

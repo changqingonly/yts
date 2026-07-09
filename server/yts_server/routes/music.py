@@ -138,6 +138,14 @@ async def playlist_items(playlist_id: str, user: CurrentUser, session: DbSession
     return await playlists_domain.playlist_items_response(session, playlist=playlist, items=items)
 
 
+@router.get("/playlists/{playlist_id}/items/deleted")
+async def deleted_playlist_items(playlist_id: str, user: CurrentUser, session: DbSession) -> dict:
+    playlist, items = await playlists_domain.list_deleted_playlist_items(
+        session, user_uuid=user.user_uuid, playlist_id=playlist_id
+    )
+    return await playlists_domain.playlist_items_response(session, playlist=playlist, items=items)
+
+
 @router.post("/playlists/{playlist_id}/items")
 async def append_playlist_items(
     playlist_id: str,
@@ -161,6 +169,60 @@ async def append_playlist_items(
     )
     await session.commit()
     return await playlists_domain.playlist_items_response(session, playlist=playlist, items=items)
+
+
+@router.delete("/playlists/{playlist_id}/items/{item_id}")
+async def delete_playlist_item(
+    playlist_id: str,
+    item_id: str,
+    user: CurrentUser,
+    session: DbSession,
+) -> dict:
+    playlist, item, active_items = await playlists_domain.delete_playlist_item(
+        session,
+        user_uuid=user.user_uuid,
+        playlist_id=playlist_id,
+        item_id=item_id,
+    )
+    await session.commit()
+    item_response = await playlists_domain.playlist_items_response(
+        session, playlist=playlist, items=[item]
+    )
+    active_response = await playlists_domain.playlist_items_response(
+        session, playlist=playlist, items=active_items
+    )
+    return {
+        "playlist": active_response["playlist"],
+        "item": item_response["items"][0],
+        "items": active_response["items"],
+    }
+
+
+@router.post("/playlists/{playlist_id}/items/{item_id}/restore")
+async def restore_playlist_item(
+    playlist_id: str,
+    item_id: str,
+    user: CurrentUser,
+    session: DbSession,
+) -> dict:
+    playlist, item, active_items = await playlists_domain.restore_playlist_item(
+        session,
+        user_uuid=user.user_uuid,
+        playlist_id=playlist_id,
+        item_id=item_id,
+    )
+    await session.commit()
+    item_response = await playlists_domain.playlist_items_response(
+        session, playlist=playlist, items=[item]
+    )
+    active_response = await playlists_domain.playlist_items_response(
+        session, playlist=playlist, items=active_items
+    )
+    return {
+        "playlist": active_response["playlist"],
+        "item": item_response["items"][0],
+        "items": active_response["items"],
+    }
 
 
 @router.post("/playlists/{playlist_id}/items/reorder")

@@ -106,6 +106,13 @@ async def list_playlist_items(
     return playlist, await _active_items(session, playlist_id=playlist.id)
 
 
+async def list_deleted_playlist_items(
+    session: AsyncSession, *, user_uuid: str, playlist_id: str
+) -> tuple[MusicPlaylist, list[MusicPlaylistItem]]:
+    playlist = await _owned_playlist(session, user_uuid=user_uuid, playlist_id=playlist_id)
+    return playlist, await _deleted_items(session, playlist_id=playlist.id)
+
+
 async def append_playlist_items(
     session: AsyncSession,
     *,
@@ -194,6 +201,72 @@ async def reorder_playlist_items(
     return playlist, ordered
 
 
+async def delete_playlist_item(
+    session: AsyncSession,
+    *,
+    user_uuid: str,
+    playlist_id: str,
+    item_id: str,
+) -> tuple[MusicPlaylist, MusicPlaylistItem, list[MusicPlaylistItem]]:
+    playlist = await _owned_playlist(session, user_uuid=user_uuid, playlist_id=playlist_id)
+    item = await _owned_playlist_item(
+        session, user_uuid=user_uuid, playlist_id=playlist.id, item_id=item_id
+    )
+    if item.deleted_at_ms is not None:
+        raise AppError.bad_request(
+            "playlist_item_already_deleted", "playlist item is already deleted"
+        )
+    now_ms = _now_ms()
+    item.deleted_at_ms = now_ms
+    item.updated_at_ms = now_ms
+    item.op_clock = playlist.op_clock + 1
+    active_items = await _active_items(session, playlist_id=playlist.id)
+    for position, active_item in enumerate(active_items, start=1):
+        if active_item.position == position:
+            continue
+        active_item.position = position
+        active_item.updated_at_ms = now_ms
+        active_item.op_clock = playlist.op_clock + 1 + position
+    playlist.item_count = len(active_items)
+    playlist.updated_at_ms = now_ms
+    playlist.op_clock += 1 + len(active_items)
+    await session.flush()
+    return playlist, item, active_items
+
+
+async def restore_playlist_item(
+    session: AsyncSession,
+    *,
+    user_uuid: str,
+    playlist_id: str,
+    item_id: str,
+) -> tuple[MusicPlaylist, MusicPlaylistItem, list[MusicPlaylistItem]]:
+    playlist = await _owned_playlist(session, user_uuid=user_uuid, playlist_id=playlist_id)
+    item = await _owned_playlist_item(
+        session, user_uuid=user_uuid, playlist_id=playlist.id, item_id=item_id
+    )
+    if item.deleted_at_ms is None:
+        raise AppError.bad_request("playlist_item_not_deleted", "playlist item is not deleted")
+    active_count = await _active_item_count(session, playlist_id=playlist.id)
+    if active_count + 1 > MAX_PLAYLIST_ITEMS:
+        raise AppError.bad_request(
+            "playlist_item_limit_exceeded",
+            "playlist item limit is 2000",
+            "item_id",
+        )
+    now_ms = _now_ms()
+    item.deleted_at_ms = None
+    item.position = await _current_max_position(session, playlist_id=playlist.id) + 1
+    item.updated_at_ms = now_ms
+    item.op_clock = playlist.op_clock + 1
+    playlist.item_count = active_count + 1
+    playlist.updated_at_ms = now_ms
+    playlist.op_clock += 1
+    await session.flush()
+    restored_items = await _active_items(session, playlist_id=playlist.id)
+    return playlist, item, restored_items
+
+
 def playlist_response(playlist: MusicPlaylist) -> dict:
     return {
         "id": playlist.id,
@@ -232,6 +305,17 @@ async def _owned_playlist(
     return playlist
 
 
+async def _owned_playlist_item(
+    session: AsyncSession, *, user_uuid: str, playlist_id: str, item_id: str
+) -> MusicPlaylistItem:
+    item = await session.get(MusicPlaylistItem, item_id)
+    if item is None or item.playlist_id != playlist_id:
+        raise AppError.not_found("playlist_item_not_found", "playlist item not found")
+    if item.user_uuid != user_uuid:
+        raise AppError.forbidden("playlist item owner mismatch")
+    return item
+
+
 async def _active_items(session: AsyncSession, *, playlist_id: str) -> list[MusicPlaylistItem]:
     result = await session.execute(
         select(MusicPlaylistItem)
@@ -240,6 +324,20 @@ async def _active_items(session: AsyncSession, *, playlist_id: str) -> list[Musi
             MusicPlaylistItem.deleted_at_ms.is_(None),
         )
         .order_by(MusicPlaylistItem.position.asc(), MusicPlaylistItem.added_at_ms.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def _deleted_items(session: AsyncSession, *, playlist_id: str) -> list[MusicPlaylistItem]:
+    result = await session.execute(
+        select(MusicPlaylistItem)
+        .where(
+            MusicPlaylistItem.playlist_id == playlist_id,
+            MusicPlaylistItem.deleted_at_ms.is_not(None),
+        )
+        .order_by(
+            MusicPlaylistItem.deleted_at_ms.desc(), MusicPlaylistItem.updated_at_ms.desc()
+        )
     )
     return list(result.scalars().all())
 

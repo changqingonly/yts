@@ -326,6 +326,12 @@ def test_music_service_uses_playlist_and_song_upload_contracts() -> None:
         "requestJson(`/api/music/playlists/${playlistId}/items`",
         "reorderPlaylistItems",
         "requestJson(`/api/music/playlists/${playlistId}/items/reorder`",
+        "listDeletedPlaylistItems",
+        "requestJson(`/api/music/playlists/${playlistId}/items/deleted`",
+        "deletePlaylistItem",
+        "requestJson(`/api/music/playlists/${playlistId}/items/${itemId}`",
+        "restorePlaylistItem",
+        "requestJson(`/api/music/playlists/${playlistId}/items/${itemId}/restore`",
     ]:
         assert token in service
     assert "uploadLocalImport" not in service
@@ -338,6 +344,10 @@ def test_music_service_uses_playlist_and_song_upload_contracts() -> None:
         "ensureDefault",
         "loadItems",
         "appendItems",
+        "deletedItems",
+        "loadDeletedItems",
+        "deleteItem",
+        "restoreItem",
         "item_count",
         "meta_song",
     ]:
@@ -1097,6 +1107,7 @@ def test_music_page_uses_right_drawer_for_queue_and_history() -> None:
         "recordHistory",
         "showDrawer",
         "播放历史",
+        "删除历史",
         "播放列表",
     ]:
         assert token in music
@@ -1119,25 +1130,63 @@ def test_music_page_uses_right_drawer_for_queue_and_history() -> None:
     assert "transform: translateX(0);" in music
 
 
+def test_music_playlist_drawer_supports_delete_history_and_restore_actions() -> None:
+    music = read_source("pages/MusicPage.vue")
+    template = music.split("<template>", 1)[1].split("</template>", 1)[0]
+    drawer_block = template.split('<aside class="drawer-panel open"', 1)[1].split("</aside>", 1)[0]
+
+    for token in [
+        "deletedTracks",
+        "drawerMode === \"deleted\"",
+        "handleDeletePlaylistItem",
+        "handleRestorePlaylistItem",
+        "await playlist.deleteItem(track.id)",
+        "await playlist.restoreItem(track.id)",
+        "删除历史",
+        "移除",
+        "恢复",
+        "暂无删除历史",
+    ]:
+        assert token in music
+    assert '<Trash2 :size="16" /> 删除历史' in drawer_block
+    assert 'class="drawer-row-main"' in drawer_block
+    assert 'class="drawer-row-action danger"' in drawer_block
+    assert 'class="drawer-row-action restore"' in drawer_block
+    assert '@click.stop="handleDeletePlaylistItem(track)"' in drawer_block
+    assert '@click.stop="handleRestorePlaylistItem(track)"' in drawer_block
+
+
 def test_music_playlist_drawer_uses_compact_single_line_rows() -> None:
     music = read_source("pages/MusicPage.vue")
     drawer_list_rule = music.split(".drawer-list {", 1)[1].split("}", 1)[0]
+    drawer_tab_rule = music.split(".drawer-tab {", 1)[1].split("}", 1)[0]
     drawer_row_rule = music.split(".drawer-row {", 1)[1].split("}", 1)[0]
+    drawer_row_active_rule = music.split(".drawer-row:hover,", 1)[1].split("}", 1)[0]
     drawer_index_rule = music.split(".drawer-row span {", 1)[1].split("}", 1)[0]
     drawer_title_rule = music.split(".drawer-row strong {", 1)[1].split("}", 1)[0]
     drawer_meta_rule = music.split(".drawer-row small {", 1)[1].split("}", 1)[0]
 
     assert "align-content: start;" in drawer_list_rule
+    assert "gap: 4px;" in drawer_list_rule
     assert "grid-auto-rows: max-content;" in drawer_list_rule
+    assert "min-height: 38px;" in drawer_tab_rule
+    assert "border: 1px solid rgba(125, 211, 252, 0.12);" in drawer_tab_rule
     assert "box-sizing: border-box;" in drawer_row_rule
-    assert "grid-template-columns: 30px minmax(0, 1fr) minmax(58px, 90px);" in drawer_row_rule
+    assert "border: 0;" in drawer_row_rule
+    assert "border-radius: 6px;" in drawer_row_rule
+    assert "grid-template-columns: 24px minmax(0, 1fr) minmax(48px, 78px);" in drawer_row_rule
     assert "align-items: center;" in drawer_row_rule
-    assert "min-height: 44px;" in drawer_row_rule
-    assert "padding: 8px 10px;" in drawer_row_rule
+    assert "min-height: 34px;" in drawer_row_rule
+    assert "padding: 5px 8px;" in drawer_row_rule
     assert "width: 100%;" in drawer_row_rule
+    assert "box-shadow: inset 2px 0 0 rgba(34, 211, 238, 0.42);" in drawer_row_active_rule
     assert "grid-row: span 2;" not in drawer_index_rule
+    assert "font-size: 11px;" in drawer_index_rule
     assert "line-height: 1;" in drawer_index_rule
+    assert "font-size: 12px;" in drawer_title_rule
+    assert "font-size: 13px;" not in drawer_title_rule
     assert "line-height: 1.1;" in drawer_title_rule
+    assert "font-size: 11px;" in drawer_meta_rule
     assert "justify-self: end;" in drawer_meta_rule
     assert "line-height: 1;" in drawer_meta_rule
 
