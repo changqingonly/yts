@@ -1,0 +1,246 @@
+schema_version = 1
+vendor_dir = "desktop/vendor"
+
+[components.llama]
+enabled = true
+platforms = ["darwin-arm64"]
+dependencies = []
+
+[components.llama.source]
+kind = "external"
+url = "https://github.com/ggml-org/llama.cpp.git"
+commit = "72874f559c598b8f89fbb24864868337cf5afb4c"
+submodules = false
+source_dir = "llama.cpp"
+
+[components.llama.build]
+target = "llama-server"
+configure_argv = [
+  "cmake",
+  "-S",
+  "{source}",
+  "-B",
+  "{build}",
+  "-DCMAKE_BUILD_TYPE=Release",
+  "-DLLAMA_CURL=OFF",
+]
+build_argv = ["cmake", "--build", "{build}", "--config", "Release", "--target", "llama-server", "-j"]
+build_dir = "llama.cpp/build"
+artifact = "llama.cpp/build/bin/llama-server"
+
+[[components.llama.models]]
+id = "qwen"
+url = "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf?download=true"
+size = 4683074240
+sha256 = "65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423"
+path = "llm-models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+
+[components.llama.runtime]
+kind = "service"
+argv = ["{artifact}", "--host", "127.0.0.1", "--port", "8080", "--model", "{model:qwen}"]
+host = "127.0.0.1"
+port = 8080
+startup_timeout_seconds = 120
+shutdown_timeout_seconds = 15
+
+[components.llama.runtime.health]
+path = "/health"
+timeout_seconds = 2
+
+[components.llama.runtime.readiness]
+path = "/health"
+timeout_seconds = 2
+
+[components.stable-diffusion]
+enabled = true
+platforms = ["darwin-arm64"]
+dependencies = []
+
+[components.stable-diffusion.source]
+kind = "external"
+url = "https://github.com/leejet/stable-diffusion.cpp.git"
+commit = "e790073e1c311feb1ff423ba910f398df01bb60e"
+submodules = true
+source_dir = "stable-diffusion.cpp"
+
+[components.stable-diffusion.build]
+target = "sd-cli"
+configure_argv = [
+  "cmake",
+  "-S",
+  "{source}",
+  "-B",
+  "{build}",
+  "-DCMAKE_BUILD_TYPE=Release",
+]
+build_argv = ["cmake", "--build", "{build}", "--config", "Release", "--target", "sd-cli", "-j"]
+build_dir = "stable-diffusion.cpp/build"
+artifact = "stable-diffusion.cpp/build/bin/sd-cli"
+
+[[components.stable-diffusion.models]]
+id = "flux"
+url = "https://huggingface.co/Green-Sky/flux.1-schnell-GGUF/resolve/main/flux1-schnell-q4_k.gguf?download=true"
+size = 4712734528
+sha256 = "a0d1f005510e7417a0d698d3c5494490a3f001e16730d35464c5deb4fccfec37"
+path = "sd-models/flux1-schnell-q4_k.gguf"
+
+[[components.stable-diffusion.models]]
+id = "vae"
+url = "https://huggingface.co/Green-Sky/flux.1-schnell-GGUF/resolve/main/ae-f16.gguf?download=true"
+size = 167656704
+sha256 = "1bed7b05318709e46a8cb9accc211168fc7f0b61ab594661860bbfe4d785cc46"
+path = "sd-models/ae-f16.gguf"
+
+[[components.stable-diffusion.models]]
+id = "clip_l"
+url = "https://huggingface.co/Green-Sky/flux.1-schnell-GGUF/resolve/main/clip_l-q8_0.gguf?download=true"
+size = 130769600
+sha256 = "59cbe002c3e75d2b89d38787e81d12fb4e512fd76176884c470737ad87a1d309"
+path = "sd-models/clip_l-q8_0.gguf"
+
+[[components.stable-diffusion.models]]
+id = "t5xxl"
+url = "https://huggingface.co/Green-Sky/flux.1-schnell-GGUF/resolve/main/t5xxl_q4_k.gguf?download=true"
+size = 2752844256
+sha256 = "b235e9a108ccc1803c576464e937cf5ec4d8eb34d83776e5199450400d4e0bcb"
+path = "sd-models/t5xxl_q4_k.gguf"
+
+[components.stable-diffusion.runtime]
+kind = "command"
+argv = [
+  "{artifact}",
+  "--diffusion-model",
+  "{model:flux}",
+  "--vae",
+  "{model:vae}",
+  "--clip_l",
+  "{model:clip_l}",
+  "--t5xxl",
+  "{model:t5xxl}",
+  "--prompt",
+  "{prompt}",
+  "--output",
+  "{out}",
+  "--width",
+  "{width}",
+  "--height",
+  "{height}",
+  "--steps",
+  "{steps}",
+  "--cfg-scale",
+  "1.0",
+  "--sampling-method",
+  "euler",
+]
+execution_timeout_seconds = 600
+
+[components.acestep]
+enabled = false
+platforms = ["darwin-arm64"]
+dependencies = []
+
+[components.acestep.source]
+kind = "external"
+url = "https://github.com/ServeurpersoCom/acestep.cpp.git"
+commit = "da5bc90f8664c242a7bb42eaa0c778762c02c6e3"
+submodules = true
+source_dir = "acestep.cpp"
+
+[components.acestep.build]
+target = "ace-server"
+configure_argv = [
+  "cmake",
+  "-S",
+  "{source}",
+  "-B",
+  "{build}",
+  "-DCMAKE_BUILD_TYPE=Release",
+]
+build_argv = ["cmake", "--build", "{build}", "--config", "Release", "--target", "ace-server", "-j"]
+build_dir = "acestep.cpp/build"
+artifact = "acestep.cpp/build/ace-server"
+
+[[components.acestep.models]]
+id = "qwen3-embedding"
+url = "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf?download=true"
+size = 784144960
+sha256 = "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321"
+path = "acestep-models/Qwen3-Embedding-0.6B-Q8_0.gguf"
+
+[[components.acestep.models]]
+id = "acestep-lm"
+url = "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-5Hz-lm-0.6B-Q8_0.gguf?download=true"
+size = 709846656
+sha256 = "bdaf9e292d4470f31c19cafeaca1b74936a114667e3a85e5d33b65247e9908ec"
+path = "acestep-models/acestep-5Hz-lm-0.6B-Q8_0.gguf"
+
+[[components.acestep.models]]
+id = "acestep-turbo"
+url = "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-v15-turbo-Q8_0.gguf?download=true"
+size = 2549528000
+sha256 = "288f708a61cfc241013a98a62f98ba331f83fe34d0d3559acdd9b0f6a2f7cd6b"
+path = "acestep-models/acestep-v15-turbo-Q8_0.gguf"
+
+[[components.acestep.models]]
+id = "acestep-vae"
+url = "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/vae-BF16.gguf?download=true"
+size = 337420928
+sha256 = "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8"
+path = "acestep-models/vae-BF16.gguf"
+
+[components.acestep.runtime]
+kind = "service"
+argv = [
+  "{artifact}",
+  "--host",
+  "127.0.0.1",
+  "--port",
+  "8085",
+  "--models",
+  "{vendor}/acestep-models",
+]
+host = "127.0.0.1"
+port = 8085
+startup_timeout_seconds = 180
+shutdown_timeout_seconds = 15
+
+[components.acestep.runtime.health]
+path = "/health"
+timeout_seconds = 2
+
+[components.acestep.runtime.readiness]
+path = "/health"
+timeout_seconds = 2
+
+[components.infer-gateway]
+enabled = true
+platforms = ["darwin-arm64"]
+dependencies = ["llama", "stable-diffusion"]
+models = []
+
+[components.infer-gateway.source]
+kind = "workspace"
+source_dir = "desktop/infer-gateway"
+
+[components.infer-gateway.build]
+target = "infer-gateway"
+configure_argv = []
+build_argv = ["cargo", "build", "--manifest-path", "{source}/Cargo.toml", "--release"]
+build_dir = "desktop/infer-gateway/target/release"
+artifact = "desktop/infer-gateway/target/release/infer-gateway"
+
+[components.infer-gateway.runtime]
+kind = "service"
+argv = ["{artifact}"]
+host = "127.0.0.1"
+port = 8799
+startup_timeout_seconds = 60
+shutdown_timeout_seconds = 15
+
+[components.infer-gateway.runtime.health]
+path = "/health"
+timeout_seconds = 2
+
+[components.infer-gateway.runtime.readiness]
+path = "/ready"
+timeout_seconds = 2

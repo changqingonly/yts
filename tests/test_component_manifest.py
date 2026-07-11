@@ -1,0 +1,728 @@
+from __future__ import annotations
+
+import re
+from copy import deepcopy
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+from yts_core import components
+from yts_core.components import (
+    ComponentManifest,
+    expand_argv,
+    load_component_manifest,
+    resolve_component_paths,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+MANIFEST_PATH = REPO_ROOT / "desktop" / "components.toml"
+
+
+def _external_component(*, enabled: bool = True) -> dict[str, object]:
+    return {
+        "enabled": enabled,
+        "platforms": ["darwin-arm64"],
+        "dependencies": [],
+        "source": {
+            "kind": "external",
+            "url": "https://example.test/source.git",
+            "commit": "a" * 40,
+            "submodules": False,
+            "source_dir": "source",
+        },
+        "build": {
+            "target": "example-server",
+            "configure_argv": ["cmake", "-S", "{source}", "-B", "{build}"],
+            "build_argv": ["cmake", "--build", "{build}"],
+            "build_dir": "source/build",
+            "artifact": "source/build/example-server",
+        },
+        "models": [
+            {
+                "id": "example",
+                "url": "https://example.test/example.gguf",
+                "size": 1,
+                "sha256": "b" * 64,
+                "path": "models/example.gguf",
+            }
+        ],
+        "runtime": {
+            "kind": "service",
+            "argv": ["{artifact}", "--model", "{model:example}"],
+            "host": "127.0.0.1",
+            "port": 8080,
+            "health": {"path": "/health", "timeout_seconds": 2},
+            "readiness": {"path": "/ready", "timeout_seconds": 2},
+            "startup_timeout_seconds": 60,
+            "shutdown_timeout_seconds": 10,
+        },
+    }
+
+
+def _workspace_component(*, dependencies: list[str] | None = None) -> dict[str, object]:
+    return {
+        "enabled": True,
+        "platforms": ["darwin-arm64"],
+        "dependencies": [] if dependencies is None else dependencies,
+        "source": {
+            "kind": "workspace",
+            "source_dir": "desktop/example",
+        },
+        "build": {
+            "target": "example",
+            "configure_argv": [],
+            "build_argv": ["cargo", "build", "--release"],
+            "build_dir": "desktop/example/target/release",
+            "artifact": "desktop/example/target/release/example",
+        },
+        "models": [],
+        "runtime": {
+            "kind": "command",
+            "argv": ["{artifact}", "--prompt", "{prompt}", "--out", "{out}"],
+            "execution_timeout_seconds": 30,
+        },
+    }
+
+
+def _manifest_data(
+    components_data: dict[str, dict[str, object]] | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "vendor_dir": "desktop/vendor",
+        "components": components_data or {"example": _external_component()},
+    }
+
+
+def test_real_manifest_records_audited_component_facts() -> None:
+    manifest = load_component_manifest(MANIFEST_PATH)
+
+    assert manifest.schema_version == 1
+    assert manifest.vendor_dir == "desktop/vendor"
+    assert list(manifest.components) == [
+        "llama",
+        "stable-diffusion",
+        "acestep",
+        "infer-gateway",
+    ]
+    assert manifest.components["llama"].source.commit == (
+        "72874f559c598b8f89fbb24864868337cf5afb4c"
+    )
+    assert manifest.components["stable-diffusion"].source.commit == (
+        "e790073e1c311feb1ff423ba910f398df01bb60e"
+    )
+    assert manifest.components["acestep"].source.commit == (
+        "da5bc90f8664c242a7bb42eaa0c778762c02c6e3"
+    )
+    assert manifest.components["acestep"].enabled is False
+    assert manifest.components["infer-gateway"].source.kind == "workspace"
+    assert manifest.components["infer-gateway"].dependencies == [
+        "llama",
+        "stable-diffusion",
+    ]
+    assert manifest.start_order() == ["llama", "stable-diffusion", "infer-gateway"]
+
+
+def test_real_manifest_records_audited_runtime_argv() -> None:
+    manifest = load_component_manifest(MANIFEST_PATH)
+
+    assert manifest.components["stable-diffusion"].runtime.argv == [
+        "{artifact}",
+        "--diffusion-model",
+        "{model:flux}",
+        "--vae",
+        "{model:vae}",
+        "--clip_l",
+        "{model:clip_l}",
+        "--t5xxl",
+        "{model:t5xxl}",
+        "--prompt",
+        "{prompt}",
+        "--output",
+        "{out}",
+        "--width",
+        "{width}",
+        "--height",
+        "{height}",
+        "--steps",
+        "{steps}",
+        "--cfg-scale",
+        "1.0",
+        "--sampling-method",
+        "euler",
+    ]
+    assert manifest.components["acestep"].runtime.argv == [
+        "{artifact}",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8085",
+        "--models",
+        "{vendor}/acestep-models",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("component_name", "model_id", "expected"),
+    [
+        (
+            "llama",
+            "qwen",
+            (
+                "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                4_683_074_240,
+                "65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423",
+            ),
+        ),
+        (
+            "stable-diffusion",
+            "flux",
+            (
+                "flux1-schnell-q4_k.gguf",
+                4_712_734_528,
+                "a0d1f005510e7417a0d698d3c5494490a3f001e16730d35464c5deb4fccfec37",
+            ),
+        ),
+        (
+            "stable-diffusion",
+            "vae",
+            (
+                "ae-f16.gguf",
+                167_656_704,
+                "1bed7b05318709e46a8cb9accc211168fc7f0b61ab594661860bbfe4d785cc46",
+            ),
+        ),
+        (
+            "stable-diffusion",
+            "clip_l",
+            (
+                "clip_l-q8_0.gguf",
+                130_769_600,
+                "59cbe002c3e75d2b89d38787e81d12fb4e512fd76176884c470737ad87a1d309",
+            ),
+        ),
+        (
+            "stable-diffusion",
+            "t5xxl",
+            (
+                "t5xxl_q4_k.gguf",
+                2_752_844_256,
+                "b235e9a108ccc1803c576464e937cf5ec4d8eb34d83776e5199450400d4e0bcb",
+            ),
+        ),
+        (
+            "acestep",
+            "qwen3-embedding",
+            (
+                "Qwen3-Embedding-0.6B-Q8_0.gguf",
+                784_144_960,
+                "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321",
+            ),
+        ),
+        (
+            "acestep",
+            "acestep-lm",
+            (
+                "acestep-5Hz-lm-0.6B-Q8_0.gguf",
+                709_846_656,
+                "bdaf9e292d4470f31c19cafeaca1b74936a114667e3a85e5d33b65247e9908ec",
+            ),
+        ),
+        (
+            "acestep",
+            "acestep-turbo",
+            (
+                "acestep-v15-turbo-Q8_0.gguf",
+                2_549_528_000,
+                "288f708a61cfc241013a98a62f98ba331f83fe34d0d3559acdd9b0f6a2f7cd6b",
+            ),
+        ),
+        (
+            "acestep",
+            "acestep-vae",
+            (
+                "vae-BF16.gguf",
+                337_420_928,
+                "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8",
+            ),
+        ),
+    ],
+)
+def test_real_manifest_records_exact_model_integrity(
+    component_name: str,
+    model_id: str,
+    expected: tuple[str, int, str],
+) -> None:
+    manifest = load_component_manifest(MANIFEST_PATH)
+    model = next(
+        model for model in manifest.components[component_name].models if model.id == model_id
+    )
+
+    filename, size, sha256 = expected
+    assert model.path.endswith(filename)
+    assert model.url.startswith("https://")
+    assert model.size == size
+    assert model.sha256 == sha256
+
+
+def test_models_forbid_unknown_fields_and_type_coercion() -> None:
+    data = _manifest_data()
+    data["unknown"] = "value"
+
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        ComponentManifest.model_validate(data)
+
+    data = _manifest_data()
+    data["schema_version"] = "1"
+    with pytest.raises(ValidationError, match="int_type"):
+        ComponentManifest.model_validate(data)
+
+
+def test_component_requires_explicit_boolean_enabled() -> None:
+    component = _external_component()
+    component.pop("enabled")
+
+    with pytest.raises(ValidationError, match=r"components\.example\.enabled"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+    component["enabled"] = "true"
+    with pytest.raises(ValidationError, match="bool_type"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("url", "http://example.test/source.git", "HTTPS"),
+        ("commit", "a" * 39, "40-character lowercase"),
+        ("commit", "A" * 40, "40-character lowercase"),
+        ("source_dir", "../source", "relative path without traversal"),
+    ],
+)
+def test_external_source_rejects_invalid_remote_contract(
+    field: str,
+    value: object,
+    error: str,
+) -> None:
+    component = _external_component()
+    source = component["source"]
+    assert isinstance(source, dict)
+    source[field] = value
+
+    with pytest.raises(ValidationError, match=error):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_external_source_requires_explicit_submodule_policy() -> None:
+    component = _external_component()
+    source = component["source"]
+    assert isinstance(source, dict)
+    source.pop("submodules")
+
+    with pytest.raises(ValidationError, match="external source requires submodules"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+@pytest.mark.parametrize("remote_field", ["url", "commit", "submodules"])
+def test_workspace_source_forbids_remote_fields(remote_field: str) -> None:
+    component = _workspace_component()
+    source = component["source"]
+    assert isinstance(source, dict)
+    source[remote_field] = {
+        "url": "https://example.test/source.git",
+        "commit": "a" * 40,
+        "submodules": False,
+    }[remote_field]
+
+    with pytest.raises(ValidationError, match=r"workspace source forbids remote fields"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+@pytest.mark.parametrize("argv_field", ["configure_argv", "build_argv"])
+def test_build_commands_require_structured_argv(argv_field: str) -> None:
+    component = _external_component()
+    build = component["build"]
+    assert isinstance(build, dict)
+    build[argv_field] = "cmake --build source/build"
+
+    with pytest.raises(ValidationError, match="list_type"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_runtime_rejects_shell_command_strings() -> None:
+    component = _external_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime["argv"] = "example-server --port 8080"
+
+    with pytest.raises(ValidationError, match="list_type"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "host",
+        "port",
+        "health",
+        "readiness",
+        "startup_timeout_seconds",
+        "shutdown_timeout_seconds",
+    ],
+)
+def test_service_runtime_requires_network_and_timeout_fields(missing_field: str) -> None:
+    component = _external_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime.pop(missing_field)
+
+    with pytest.raises(ValidationError, match=rf"service runtime requires {missing_field}"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_command_runtime_requires_execution_timeout_and_forbids_service_fields() -> None:
+    component = _workspace_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime.pop("execution_timeout_seconds")
+
+    with pytest.raises(ValidationError, match="command runtime requires execution_timeout_seconds"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+    runtime["execution_timeout_seconds"] = 30
+    runtime["port"] = 8080
+    with pytest.raises(ValidationError, match="command runtime forbids service fields"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("url", "http://example.test/example.gguf", "HTTPS"),
+        ("size", 0, "greater than 0"),
+        ("sha256", "b" * 63, "64-character lowercase"),
+        ("sha256", "B" * 64, "64-character lowercase"),
+    ],
+)
+def test_model_assets_require_exact_integrity_fields(
+    field: str,
+    value: object,
+    error: str,
+) -> None:
+    component = _external_component()
+    models = component["models"]
+    assert isinstance(models, list)
+    model = models[0]
+    assert isinstance(model, dict)
+    model[field] = value
+
+    with pytest.raises(ValidationError, match=error):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+@pytest.mark.parametrize("duplicate_field", ["id", "path"])
+def test_component_rejects_duplicate_model_ids_and_paths(duplicate_field: str) -> None:
+    component = _external_component()
+    models = component["models"]
+    assert isinstance(models, list)
+    duplicate = deepcopy(models[0])
+    duplicate["id"] = "second"
+    duplicate["path"] = "models/second.gguf"
+    duplicate[duplicate_field] = models[0][duplicate_field]
+    models.append(duplicate)
+
+    with pytest.raises(ValidationError, match=f"duplicate model {duplicate_field}"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_manifest_rejects_model_ids_and_paths_shared_by_components() -> None:
+    first = _external_component()
+    second = _external_component()
+    second_models = second["models"]
+    assert isinstance(second_models, list)
+    second_model = second_models[0]
+    assert isinstance(second_model, dict)
+    second_model["path"] = "models/second.gguf"
+
+    with pytest.raises(ValidationError, match=r"model id example.*first.*second"):
+        ComponentManifest.model_validate(_manifest_data({"first": first, "second": second}))
+
+    second_model["id"] = "second"
+    second_model["path"] = "models/example.gguf"
+    second_runtime = second["runtime"]
+    assert isinstance(second_runtime, dict)
+    second_runtime["argv"] = ["{artifact}", "--model", "{model:second}"]
+    with pytest.raises(ValidationError, match=r"model path models/example.gguf.*first.*second"):
+        ComponentManifest.model_validate(_manifest_data({"first": first, "second": second}))
+
+
+def test_manifest_rejects_unknown_and_self_dependencies() -> None:
+    component = _external_component()
+    component["dependencies"] = ["missing"]
+    with pytest.raises(ValidationError, match="unknown dependency missing"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+    component["dependencies"] = ["example"]
+    with pytest.raises(ValidationError, match="cannot depend on itself"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_manifest_rejects_dependency_cycles() -> None:
+    first = _workspace_component(dependencies=["second"])
+    second = _workspace_component(dependencies=["first"])
+
+    with pytest.raises(ValidationError, match=r"dependency cycle.*first.*second"):
+        ComponentManifest.model_validate(_manifest_data({"first": first, "second": second}))
+
+
+def test_enabled_component_cannot_depend_on_disabled_component() -> None:
+    disabled = _external_component(enabled=False)
+    enabled = _workspace_component(dependencies=["disabled"])
+
+    with pytest.raises(ValidationError, match=r"enabled component enabled.*disabled component"):
+        ComponentManifest.model_validate(_manifest_data({"disabled": disabled, "enabled": enabled}))
+
+
+def test_manifest_rejects_unknown_and_duplicate_platforms() -> None:
+    component = _external_component()
+    component["platforms"] = ["windows-x86_64"]
+    with pytest.raises(ValidationError, match="unsupported platform windows-x86_64"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+    component["platforms"] = ["darwin-arm64", "darwin-arm64"]
+    with pytest.raises(ValidationError, match="duplicate platform darwin-arm64"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_topological_start_order_is_deterministic_and_enabled_only() -> None:
+    disabled = _external_component(enabled=False)
+    alpha = _workspace_component()
+    beta = _workspace_component()
+    final = _workspace_component(dependencies=["alpha", "beta"])
+    manifest = ComponentManifest.model_validate(
+        _manifest_data(
+            {
+                "final": final,
+                "beta": beta,
+                "disabled": disabled,
+                "alpha": alpha,
+            }
+        )
+    )
+
+    assert manifest.start_order() == ["alpha", "beta", "final"]
+
+
+@pytest.mark.parametrize(
+    ("system", "machine", "expected"),
+    [
+        ("Darwin", "arm64", "darwin-arm64"),
+        ("Darwin", "x86_64", "darwin-x86_64"),
+        ("Linux", "x86_64", "linux-x86_64"),
+    ],
+)
+def test_current_platform_maps_supported_pairs(
+    monkeypatch: pytest.MonkeyPatch,
+    system: str,
+    machine: str,
+    expected: str,
+) -> None:
+    monkeypatch.setattr(components.platform, "system", lambda: system)
+    monkeypatch.setattr(components.platform, "machine", lambda: machine)
+
+    assert components.current_platform() == expected
+
+
+def test_current_platform_rejects_unsupported_pair(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(components.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(components.platform, "machine", lambda: "aarch64")
+
+    with pytest.raises(ValueError, match=r"unsupported platform: Linux/aarch64"):
+        components.current_platform()
+
+
+def test_load_manifest_reports_path_for_toml_and_validation_errors(tmp_path: Path) -> None:
+    duplicate_path = tmp_path / "duplicate.toml"
+    duplicate_path.write_text(
+        """
+schema_version = 1
+vendor_dir = "desktop/vendor"
+[components.example]
+enabled = true
+[components.example]
+enabled = false
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=rf"{duplicate_path}.*TOML"):
+        load_component_manifest(duplicate_path)
+
+    invalid_path = tmp_path / "invalid.toml"
+    invalid_path.write_text(
+        'schema_version = 1\nvendor_dir = "desktop/vendor"\n[components.example]\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=re.escape(str(invalid_path))) as error:
+        load_component_manifest(invalid_path)
+    assert "components.example.enabled" in str(error.value)
+
+
+def test_resolve_component_paths_uses_root_and_vendor_bases(tmp_path: Path) -> None:
+    external = _external_component()
+    workspace = _workspace_component()
+    manifest = ComponentManifest.model_validate(
+        _manifest_data({"external": external, "workspace": workspace})
+    )
+
+    resolved_external = resolve_component_paths(tmp_path, manifest, "external")
+    assert resolved_external.root == tmp_path.resolve()
+    assert resolved_external.vendor == (tmp_path / "desktop/vendor").resolve()
+    assert resolved_external.source_dir == (tmp_path / "desktop/vendor/source").resolve()
+    assert resolved_external.build_dir == (tmp_path / "desktop/vendor/source/build").resolve()
+    assert (
+        resolved_external.artifact
+        == (tmp_path / "desktop/vendor/source/build/example-server").resolve()
+    )
+    assert resolved_external.models == {
+        "example": (tmp_path / "desktop/vendor/models/example.gguf").resolve()
+    }
+
+    resolved_workspace = resolve_component_paths(tmp_path, manifest, "workspace")
+    assert resolved_workspace.source_dir == (tmp_path / "desktop/example").resolve()
+    assert resolved_workspace.build_dir == (tmp_path / "desktop/example/target/release").resolve()
+    assert (
+        resolved_workspace.artifact
+        == (tmp_path / "desktop/example/target/release/example").resolve()
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("vendor_dir", "../vendor"),
+        ("source_dir", "../../outside"),
+        ("build_dir", "../../outside"),
+        ("artifact", "../../outside"),
+        ("model", "../../outside.gguf"),
+    ],
+)
+def test_resolve_component_paths_rejects_traversal(
+    tmp_path: Path,
+    field: str,
+    value: str,
+) -> None:
+    manifest = ComponentManifest.model_validate(_manifest_data())
+    if field == "vendor_dir":
+        manifest = manifest.model_copy(update={"vendor_dir": value})
+    else:
+        component = manifest.components["example"]
+        if field == "source_dir":
+            source = component.source.model_copy(update={"source_dir": value})
+            component = component.model_copy(update={"source": source})
+        elif field in {"build_dir", "artifact"}:
+            build = component.build.model_copy(update={field: value})
+            component = component.model_copy(update={"build": build})
+        else:
+            model = component.models[0].model_copy(update={"path": value})
+            component = component.model_copy(update={"models": [model]})
+        manifest = manifest.model_copy(update={"components": {"example": component}})
+
+    with pytest.raises(ValueError, match="escapes"):
+        resolve_component_paths(tmp_path, manifest, "example")
+
+
+def test_resolve_component_paths_rejects_unknown_component(tmp_path: Path) -> None:
+    manifest = ComponentManifest.model_validate(_manifest_data())
+
+    with pytest.raises(ValueError, match="unknown component missing"):
+        resolve_component_paths(tmp_path, manifest, "missing")
+
+
+def test_expand_argv_expands_declared_tokens_without_reparsing_values() -> None:
+    argv = [
+        "{artifact}",
+        "--model={model:qwen}",
+        "--root",
+        "{root}",
+        "--prompt",
+        "{prompt}",
+        "--out",
+        "{out}",
+        "--width",
+        "{width}",
+        "--height",
+        "{height}",
+        "--steps",
+        "{steps}",
+        "--seconds",
+        "{seconds}",
+    ]
+    tokens = {
+        "artifact": "/repo/vendor/bin/tool",
+        "model:qwen": "/repo/vendor/models/model with spaces;$(touch nope).gguf",
+        "root": "/repo/{unknown}",
+    }
+
+    assert expand_argv(argv, tokens) == [
+        "/repo/vendor/bin/tool",
+        "--model=/repo/vendor/models/model with spaces;$(touch nope).gguf",
+        "--root",
+        "/repo/{unknown}",
+        "--prompt",
+        "{prompt}",
+        "--out",
+        "{out}",
+        "--width",
+        "{width}",
+        "--height",
+        "{height}",
+        "--steps",
+        "{steps}",
+        "--seconds",
+        "{seconds}",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("argv", "tokens", "error"),
+    [
+        (["{unknown}"], {}, "unknown argv token unknown"),
+        (["{root}"], {}, "undeclared argv token root"),
+        (["{model:qwen}"], {}, "undeclared argv token model:qwen"),
+        (["{root!r}"], {"root": "/repo"}, "conversion"),
+        (["{root:>20}"], {"root": "/repo"}, "format specifier"),
+        (["{root}"], {"root": "/repo", "other": "value"}, "invalid token declaration other"),
+    ],
+)
+def test_expand_argv_rejects_unknown_or_undeclared_tokens(
+    argv: list[str],
+    tokens: dict[str, str],
+    error: str,
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        expand_argv(argv, tokens)
+
+
+def test_manifest_rejects_unknown_or_undeclared_argv_tokens() -> None:
+    component = _external_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime["argv"] = ["{artifact}", "{model:missing}"]
+
+    with pytest.raises(ValidationError, match="undeclared model token model:missing"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+    runtime["argv"] = ["{artifact}", "{unknown}"]
+    with pytest.raises(ValidationError, match="unknown argv token unknown"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_manifest_allows_request_tokens_only_for_command_components() -> None:
+    component = _external_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime["argv"] = ["{artifact}", "{prompt}"]
+
+    with pytest.raises(ValidationError, match="request token prompt requires command runtime"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
