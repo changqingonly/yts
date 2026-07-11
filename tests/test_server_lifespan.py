@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
-from conftest import reset_cached_db_engine
+from conftest import reset_cached_db_engine, write_test_local_config
 from fastapi.testclient import TestClient
 from yts_server import main as server_main
 
 
 @pytest.fixture(autouse=True)
-def isolated_lifespan_settings(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[None]:
+def isolated_lifespan_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_cached_settings: Path,
+) -> Iterator[None]:
     db_path = tmp_path / "lifespan.db"
+    write_test_local_config(reset_cached_settings)
     monkeypatch.setenv("YTS_PROFILE", "local")
     monkeypatch.setenv("YTS_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     monkeypatch.setenv("YTS_INFERENCE_BACKEND", "local")

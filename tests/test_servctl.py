@@ -16,6 +16,11 @@ if str(_REPO_ROOT) not in sys.path:
 servctl = importlib.import_module("scripts.servctl")
 
 
+@pytest.fixture(autouse=True)
+def _use_servctl_root_profile_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("YTS_CONFIG_DIR")
+
+
 def _write_profile_config(root: Path, profile: str = "cloud") -> None:
     conf_dir = root / "conf"
     conf_dir.mkdir()
@@ -24,8 +29,13 @@ def _write_profile_config(root: Path, profile: str = "cloud") -> None:
             [
                 f"YTS_PROFILE={profile}",
                 "YTS_INFERENCE_BACKEND=cloud",
+                "YTS_DEFAULT_TEXT_MODEL=deepseek/deepseek-chat",
+                "YTS_DEEPSEEK_API_KEY=sk-deepseek-test",
+                "YTS_OPENAI_API_KEY=sk-openai-test",
                 "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
                 "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
+                "YTS_LANGGRAPH_CHECKPOINT_BACKEND=memory",
+                "YTS_GATEWAY_BASE_URL=http://127.0.0.1:8799",
             ]
         ),
         encoding="utf-8",
@@ -78,9 +88,15 @@ def test_load_profile_env_parses_values_without_shell_fallback(tmp_path: Path) -
         "\n".join(
             [
                 "YTS_PROFILE=cloud",
+                "YTS_INFERENCE_BACKEND=cloud",
+                "YTS_DEFAULT_TEXT_MODEL=deepseek/deepseek-chat",
+                "YTS_DEEPSEEK_API_KEY=sk-deepseek-test",
+                "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
+                "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
+                "YTS_LANGGRAPH_CHECKPOINT_BACKEND=memory",
                 "YTS_OPENAI_API_KEY='sk-test'",
                 'YTS_OPENAI_TEXT_MODEL="gpt-4.1-mini"',
-                "YTS_EMPTY=",
+                "YTS_OPENAI_BASE_URL=",
                 "# ignored",
             ]
         ),
@@ -92,7 +108,45 @@ def test_load_profile_env_parses_values_without_shell_fallback(tmp_path: Path) -
     assert env["YTS_PROFILE"] == "cloud"
     assert env["YTS_OPENAI_API_KEY"] == "sk-test"
     assert env["YTS_OPENAI_TEXT_MODEL"] == "gpt-4.1-mini"
-    assert env["YTS_EMPTY"] == ""
+    assert env["YTS_OPENAI_BASE_URL"] == ""
+
+
+def test_load_profile_env_translates_strict_duplicate_error(tmp_path: Path) -> None:
+    _write_profile_config(tmp_path)
+    config_path = tmp_path / "conf" / "cloud.env"
+    with config_path.open("a", encoding="utf-8") as handle:
+        handle.write("\nYTS_DATABASE_URL=sqlite+aiosqlite:///./duplicate.db\n")
+
+    with pytest.raises(servctl.ServctlError, match=r"duplicate.*YTS_DATABASE_URL"):
+        servctl.load_profile_env(tmp_path, "cloud")
+
+
+def test_command_env_uses_explicit_profile_config_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    _write_profile_config(root)
+
+    external_root = tmp_path / "external"
+    external_root.mkdir()
+    _write_profile_config(external_root)
+    external_config_dir = external_root / "conf"
+    external_config_path = external_config_dir / "cloud.env"
+    external_config_path.write_text(
+        external_config_path.read_text(encoding="utf-8").replace(
+            "sqlite+aiosqlite:///./test.db",
+            "sqlite+aiosqlite:///./external.db",
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("YTS_CONFIG_DIR", str(external_config_dir))
+
+    env = servctl._command_env(root, "cloud")
+
+    assert env["YTS_DATABASE_URL"] == "sqlite+aiosqlite:///./external.db"
+    assert env["YTS_CONFIG_DIR"] == str(external_config_path.parent)
 
 
 def test_servctl_product_inference_backends_are_local_and_cloud_only() -> None:
@@ -109,6 +163,7 @@ def test_validate_profile_config_rejects_unsupported_inference_backend(tmp_path:
                 "YTS_INFERENCE_BACKEND=deepseek",
                 "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
                 "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
+                "YTS_LANGGRAPH_CHECKPOINT_BACKEND=memory",
             ]
         ),
         encoding="utf-8",
@@ -128,6 +183,8 @@ def test_validate_profile_config_accepts_product_local_backend(tmp_path: Path) -
                 "YTS_INFERENCE_BACKEND=local",
                 "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
                 "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
+                "YTS_LANGGRAPH_CHECKPOINT_BACKEND=memory",
+                "YTS_GATEWAY_BASE_URL=http://127.0.0.1:8799",
             ]
         ),
         encoding="utf-8",
@@ -150,6 +207,7 @@ def test_validate_profile_config_rejects_removed_inference_backends(
                 f"YTS_INFERENCE_BACKEND={backend}",
                 "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
                 "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
+                "YTS_LANGGRAPH_CHECKPOINT_BACKEND=memory",
             ]
         ),
         encoding="utf-8",
@@ -173,6 +231,7 @@ def test_validate_profile_config_rejects_missing_deepseek_key_for_cloud_backend(
                 "YTS_DEEPSEEK_API_KEY=",
                 "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
                 "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
+                "YTS_LANGGRAPH_CHECKPOINT_BACKEND=memory",
             ]
         ),
         encoding="utf-8",
@@ -194,6 +253,7 @@ def test_validate_profile_config_rejects_missing_deepseek_key_for_v4_model(tmp_p
                 "YTS_DEEPSEEK_API_KEY=",
                 "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
                 "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
+                "YTS_LANGGRAPH_CHECKPOINT_BACKEND=memory",
             ]
         ),
         encoding="utf-8",
@@ -219,6 +279,7 @@ def test_validate_profile_config_rejects_missing_openai_key_for_cloud_backend(
                 "YTS_OPENAI_API_KEY=",
                 "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
                 "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
+                "YTS_LANGGRAPH_CHECKPOINT_BACKEND=memory",
             ]
         ),
         encoding="utf-8",

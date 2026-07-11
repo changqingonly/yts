@@ -4,6 +4,15 @@ import os
 from pathlib import Path
 from string import Formatter
 
+from yts_core.config import (
+    SUPPORTED_INFERENCE_BACKENDS as _CORE_SUPPORTED_INFERENCE_BACKENDS,
+)
+from yts_core.config import _is_deepseek_model as _core_is_deepseek_model
+from yts_core.config import (
+    _is_openai_compatible_model as _core_is_openai_compatible_model,
+)
+from yts_core.config import load_profile_config as _load_canonical_profile_config
+
 from .errors import ServctlError
 
 DEFAULT_HOST = "127.0.0.1"
@@ -13,73 +22,28 @@ DEFAULT_FRONTEND_HOST = "127.0.0.1"
 DEFAULT_FRONTEND_PORT = 1420
 DEFAULT_HEALTH_TIMEOUT_SECONDS = 30.0
 REMOVED_CONFIG_ENV_NAMES = ("YTS_CONFIG_FILE", "YTS_CONFIG_HOME")
-SUPPORTED_INFERENCE_BACKENDS = ("local", "cloud")
+SUPPORTED_INFERENCE_BACKENDS = _CORE_SUPPORTED_INFERENCE_BACKENDS
 SKIP_STARTUP_DB_BOOTSTRAP_ENV = "YTS_SKIP_STARTUP_DB_BOOTSTRAP"
 
 
 def require_profile_config(root: Path, profile: str) -> Path:
-    config_path = root / "conf" / f"{profile}.env"
-    if not config_path.is_file():
-        raise ServctlError(
-            f"missing required config file: {config_path}; copy conf/{profile}.example.env and fill real values"
-        )
-    return config_path
+    return _loaded_profile_config(root, profile).path
 
 
 def load_profile_env(root: Path, profile: str) -> dict[str, str]:
-    config_path = require_profile_config(root, profile)
-    parsed: dict[str, str] = {}
-    for line_number, raw_line in enumerate(
-        config_path.read_text(encoding="utf-8").splitlines(), start=1
-    ):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].strip()
-        if "=" not in line:
-            raise ServctlError(f"invalid env line in {config_path}:{line_number}: missing '='")
-        name, value = line.split("=", 1)
-        name = name.strip()
-        if not name:
-            raise ServctlError(
-                f"invalid env line in {config_path}:{line_number}: empty variable name"
-            )
-        parsed[name] = _unquote_env_value(value.strip())
-    return parsed
+    return dict(_loaded_profile_config(root, profile).values)
 
 
 def validate_profile_config(root: Path, profile: str) -> None:
-    env = load_profile_env(root, profile)
-    backend = env.get("YTS_INFERENCE_BACKEND", "").strip()
-    if backend and backend not in SUPPORTED_INFERENCE_BACKENDS:
-        supported = ", ".join(SUPPORTED_INFERENCE_BACKENDS)
-        raise ServctlError(
-            f"unsupported YTS_INFERENCE_BACKEND={backend}; supported values: {supported}. "
-            "For DeepSeek via LiteLLM, use YTS_INFERENCE_BACKEND=cloud and "
-            "YTS_DEFAULT_TEXT_MODEL=deepseek/deepseek-chat"
-        )
-    default_text_model = env.get("YTS_DEFAULT_TEXT_MODEL", "").strip()
-    if backend == "cloud" and _is_deepseek_model(default_text_model):
-        if not env.get("YTS_DEEPSEEK_API_KEY", "").strip():
-            raise ServctlError(
-                "YTS_DEEPSEEK_API_KEY must be configured when "
-                "YTS_INFERENCE_BACKEND=cloud and YTS_DEFAULT_TEXT_MODEL uses DeepSeek"
-            )
-    if backend == "cloud" and _is_openai_compatible_model(default_text_model):
-        if not env.get("YTS_OPENAI_API_KEY", "").strip():
-            raise ServctlError(
-                "YTS_OPENAI_API_KEY must be configured when "
-                "YTS_INFERENCE_BACKEND=cloud and YTS_DEFAULT_TEXT_MODEL uses OpenAI-compatible"
-            )
+    _loaded_profile_config(root, profile)
 
 
 def _is_deepseek_model(model: str) -> bool:
-    return model.startswith("deepseek/") or model.startswith("deepseek-")
+    return _core_is_deepseek_model(model)
 
 
 def _is_openai_compatible_model(model: str) -> bool:
-    return model.startswith("openai/") or model.startswith(("gpt-", "chatgpt-", "o1", "o3", "o4"))
+    return _core_is_openai_compatible_model(model)
 
 
 def _resolve_backend_port(profile: str, requested_port: int | None) -> int:
@@ -92,12 +56,11 @@ def _resolve_backend_port(profile: str, requested_port: int | None) -> int:
 
 
 def _command_env(root: Path, profile: str) -> dict[str, str]:
-    _reject_removed_config_env()
-    validate_profile_config(root, profile)
+    loaded = _loaded_profile_config(root, profile)
     env = dict(os.environ)
-    env.update(load_profile_env(root, profile))
+    env.update(loaded.values)
     env["YTS_PROFILE"] = profile
-    env["YTS_CONFIG_DIR"] = str(root / "conf")
+    env["YTS_CONFIG_DIR"] = str(loaded.path.parent)
     env["PATH"] = _tool_path(root, env.get("PATH", ""))
     return env
 
@@ -131,12 +94,26 @@ def _reject_removed_config_env() -> None:
 
 
 def _profile_settings(root: Path, profile: str):
-    from yts_core.config import settings_from_env_mapping
+    return _loaded_profile_config(root, profile).settings
 
-    env = load_profile_env(root, profile)
-    env["YTS_PROFILE"] = profile
+
+def _loaded_profile_config(root: Path, profile: str):
+    _reject_removed_config_env()
+    configured_dir = os.environ.get("YTS_CONFIG_DIR", "").strip()
+    config_dir = None if configured_dir else root / "conf"
     try:
-        return settings_from_env_mapping(env)
+        return _load_canonical_profile_config(
+            profile,
+            config_dir=config_dir,
+            environ=os.environ,
+        )
+    except FileNotFoundError as exc:
+        selected_dir = Path(configured_dir).expanduser() if configured_dir else root / "conf"
+        config_path = selected_dir / f"{profile}.env"
+        raise ServctlError(
+            f"missing required config file: {config_path}; "
+            f"copy conf/{profile}.example.env and fill real values: {exc}"
+        ) from exc
     except Exception as exc:
         raise ServctlError(f"invalid profile config for {profile}: {exc}") from exc
 

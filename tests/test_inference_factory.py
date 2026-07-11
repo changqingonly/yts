@@ -35,9 +35,14 @@ def test_get_settings_reads_profile_config_file(monkeypatch, tmp_path) -> None:
     config_file.write_text(
         "\n".join(
             [
+                "YTS_PROFILE=cloud",
+                "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
                 "YTS_INFERENCE_BACKEND=cloud",
+                "YTS_DEFAULT_TEXT_MODEL=openai/gpt-4.1",
                 "YTS_OPENAI_API_KEY=sk-from-file",
                 "YTS_OPENAI_TEXT_MODEL=gpt-4.1",
+                "YTS_AUTH_JWT_SECRET=test-secret-that-is-long-enough-for-hs256",
+                "YTS_LANGGRAPH_CHECKPOINT_BACKEND=memory",
             ]
         ),
         encoding="utf-8",
@@ -55,10 +60,24 @@ def test_get_settings_rejects_short_jwt_secret(monkeypatch, tmp_path) -> None:
     config_dir = tmp_path / "conf"
     config_dir.mkdir()
     config_file = config_dir / "cloud.env"
-    config_file.write_text("YTS_AUTH_JWT_SECRET=too-short\n", encoding="utf-8")
+    config_file.write_text(
+        "\n".join(
+            [
+                "YTS_PROFILE=cloud",
+                "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
+                "YTS_INFERENCE_BACKEND=cloud",
+                "YTS_DEFAULT_TEXT_MODEL=deepseek/deepseek-chat",
+                "YTS_DEEPSEEK_API_KEY=sk-deepseek-test",
+                "YTS_AUTH_JWT_SECRET=too-short",
+                "YTS_LANGGRAPH_CHECKPOINT_BACKEND=memory",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("YTS_CONFIG_DIR", str(config_dir))
 
-    with pytest.raises(ValueError, match="auth_jwt_secret must be at least 32 bytes"):
+    with pytest.raises(ValueError, match="YTS_AUTH_JWT_SECRET must be at least 32 bytes"):
         get_settings()
 
 

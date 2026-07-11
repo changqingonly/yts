@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
-from conftest import reset_cached_db_engine
+from conftest import reset_cached_db_engine, write_test_local_config
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
 from yts_core.inference import TextResult
@@ -15,8 +16,13 @@ from yts_server.routes import workflow as workflow_route
 
 
 @pytest.fixture(autouse=True)
-def local_workflow_profile(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[None]:
+def local_workflow_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    reset_cached_settings: Path,
+) -> Iterator[None]:
     db_path = tmp_path / "yts-workflow-test.db"
+    write_test_local_config(reset_cached_settings)
     monkeypatch.setenv("YTS_PROFILE", "local")
     monkeypatch.setenv("YTS_BILLING_ENABLED", "false")
     monkeypatch.setenv("YTS_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")

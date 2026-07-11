@@ -80,11 +80,11 @@ def test_build_langgraph_checkpointer_uses_memory_backend() -> None:
     assert second is first
 
 
-def test_default_checkpoint_settings_use_local_postgres() -> None:
+def test_default_checkpoint_settings_do_not_embed_postgres_dsn() -> None:
     settings = Settings()
 
     assert settings.langgraph_checkpoint_backend == "postgres"
-    assert settings.langgraph_checkpoint_postgres_dsn == LOCAL_POSTGRES_DSN
+    assert settings.langgraph_checkpoint_postgres_dsn == ""
 
 
 def test_build_langgraph_checkpointer_uses_local_postgres_dsn(monkeypatch) -> None:
@@ -95,7 +95,9 @@ def test_build_langgraph_checkpointer_uses_local_postgres_dsn(monkeypatch) -> No
     monkeypatch.setitem(sys.modules, "langgraph.checkpoint.postgres", postgres_module)
     FakePostgresSaver.observed = observed
 
-    checkpointer = build_langgraph_checkpointer(Settings())
+    checkpointer = build_langgraph_checkpointer(
+        Settings(langgraph_checkpoint_postgres_dsn=LOCAL_POSTGRES_DSN)
+    )
     close_langgraph_checkpointer()
 
     assert checkpointer == "postgres-checkpointer"
@@ -109,7 +111,7 @@ def test_setup_langgraph_checkpointer_runs_postgres_setup(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "langgraph.checkpoint.postgres", postgres_module)
     FakePostgresSaver.observed = observed
 
-    setup_langgraph_checkpointer(Settings())
+    setup_langgraph_checkpointer(Settings(langgraph_checkpoint_postgres_dsn=LOCAL_POSTGRES_DSN))
 
     assert observed["dsn"] == LOCAL_POSTGRES_DSN
     assert observed["setup_called"] is True

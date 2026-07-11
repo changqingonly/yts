@@ -1,8 +1,406 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
-from pydantic import SecretStr
+import yts_core.config as config
+from pydantic import SecretStr, ValidationError
 from yts_core.config import Profile, Settings, get_settings, reload_settings
+
+_TEST_JWT_SECRET = "test-secret-that-is-long-enough-for-hs256"
+
+
+def _write_strict_profile(
+    config_dir: Path,
+    profile: Profile,
+    *,
+    overrides: dict[str, str] | None = None,
+    omitted: set[str] | None = None,
+) -> Path:
+    values = {
+        "YTS_PROFILE": profile.value,
+        "YTS_DATABASE_URL": "sqlite+aiosqlite:///./test.db",
+        "YTS_INFERENCE_BACKEND": profile.value,
+        "YTS_AUTH_JWT_SECRET": _TEST_JWT_SECRET,
+        "YTS_LANGGRAPH_CHECKPOINT_BACKEND": "memory",
+    }
+    if profile == Profile.LOCAL:
+        values["YTS_GATEWAY_BASE_URL"] = "http://127.0.0.1:8799"
+    else:
+        values.update(
+            {
+                "YTS_DEFAULT_TEXT_MODEL": "deepseek/deepseek-chat",
+                "YTS_DEEPSEEK_API_KEY": "sk-deepseek-test",
+                "YTS_OPENAI_API_KEY": "sk-openai-test",
+            }
+        )
+    values.update(overrides or {})
+    for name in omitted or set():
+        values.pop(name, None)
+
+    config_dir.mkdir(parents=True, exist_ok=True)
+    path = config_dir / f"{profile.value}.env"
+    path.write_text(
+        "\n".join(f"{name}={value}" for name, value in values.items()) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_load_profile_config_returns_path_values_and_typed_settings(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    path = _write_strict_profile(config_dir, Profile.LOCAL)
+
+    loaded = config.load_profile_config(
+        Profile.LOCAL,
+        config_dir=config_dir,
+        environ={"YTS_PROFILE": "local"},
+    )
+
+    assert loaded.path == path
+    assert loaded.settings.profile == Profile.LOCAL
+    assert loaded.values["YTS_DATABASE_URL"].startswith("sqlite+")
+    assert loaded.settings.database_url == loaded.values["YTS_DATABASE_URL"]
+
+
+def test_load_profile_config_uses_python_dotenv_for_multiline_values(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(
+        config_dir,
+        Profile.LOCAL,
+        overrides={
+            "YTS_OPENAI_BASE_URL": '"https://example.test/v1\npreview"',
+        },
+    )
+
+    loaded = config.load_profile_config(
+        Profile.LOCAL,
+        config_dir=config_dir,
+        environ={"YTS_PROFILE": "local"},
+    )
+
+    assert loaded.values["YTS_OPENAI_BASE_URL"] == "https://example.test/v1\npreview"
+
+
+def test_load_profile_config_requires_selected_profile_file(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    config_dir.mkdir()
+
+    with pytest.raises(FileNotFoundError, match=r"local\.env"):
+        config.load_profile_config(
+            Profile.LOCAL,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "local"},
+        )
+
+
+def test_load_profile_config_rejects_duplicate_assignment_names(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    path = _write_strict_profile(config_dir, Profile.LOCAL)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("YTS_DATABASE_URL=sqlite+aiosqlite:///./duplicate.db\n")
+
+    with pytest.raises(ValueError, match=r"duplicate.*YTS_DATABASE_URL"):
+        config.load_profile_config(
+            Profile.LOCAL,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "local"},
+        )
+
+
+def test_load_profile_config_rejects_invalid_assignment_lines(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    path = _write_strict_profile(config_dir, Profile.LOCAL)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("this is not an assignment\n")
+
+    with pytest.raises(ValueError, match="invalid env assignment"):
+        config.load_profile_config(
+            Profile.LOCAL,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "local"},
+        )
+
+
+def test_load_profile_config_rejects_unknown_file_name(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    path = _write_strict_profile(config_dir, Profile.LOCAL)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("YTS_UNKNOWN_SETTING=value\n")
+
+    with pytest.raises(ValueError, match=r"unknown.*YTS_UNKNOWN_SETTING"):
+        config.load_profile_config(
+            Profile.LOCAL,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "local"},
+        )
+
+
+def test_load_profile_config_rejects_unknown_process_yts_name(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(config_dir, Profile.LOCAL)
+
+    with pytest.raises(ValueError, match=r"unknown.*YTS_UNKNOWN_PROCESS_SETTING"):
+        config.load_profile_config(
+            Profile.LOCAL,
+            config_dir=config_dir,
+            environ={
+                "YTS_PROFILE": "local",
+                "YTS_UNKNOWN_PROCESS_SETTING": "value",
+            },
+        )
+
+
+def test_load_profile_config_allows_documented_process_controls(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(config_dir, Profile.LOCAL)
+
+    loaded = config.load_profile_config(
+        Profile.LOCAL,
+        config_dir=config_dir,
+        environ={
+            "YTS_PROFILE": "local",
+            "YTS_CONFIG_DIR": str(config_dir),
+            "YTS_SKIP_STARTUP_DB_BOOTSTRAP": "1",
+            "YTS_PORT": "8765",
+            "YTS_RUNTIME_DIR": "run/test-runtime",
+        },
+    )
+
+    assert loaded.settings.profile == Profile.LOCAL
+    assert "YTS_RUNTIME_DIR" not in loaded.values
+
+
+def test_load_profile_config_rejects_file_profile_mismatch(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    path = _write_strict_profile(config_dir, Profile.LOCAL)
+    contents = path.read_text(encoding="utf-8")
+    path.write_text(contents.replace("YTS_PROFILE=local", "YTS_PROFILE=cloud"), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"YTS_PROFILE.*cloud.*selected profile local"):
+        config.load_profile_config(
+            Profile.LOCAL,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "local"},
+        )
+
+
+def test_load_profile_config_rejects_process_profile_mismatch(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(config_dir, Profile.LOCAL)
+
+    with pytest.raises(ValueError, match=r"process YTS_PROFILE.*cloud.*selected profile local"):
+        config.load_profile_config(
+            Profile.LOCAL,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "cloud"},
+        )
+
+
+@pytest.mark.parametrize("jwt_secret", ["", "too-short"])
+def test_load_profile_config_rejects_empty_or_short_jwt(
+    tmp_path: Path,
+    jwt_secret: str,
+) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(
+        config_dir,
+        Profile.LOCAL,
+        overrides={"YTS_AUTH_JWT_SECRET": jwt_secret},
+    )
+
+    with pytest.raises(ValueError, match="YTS_AUTH_JWT_SECRET"):
+        config.load_profile_config(
+            Profile.LOCAL,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "local"},
+        )
+
+
+def test_load_profile_config_rejects_missing_database_url(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(
+        config_dir,
+        Profile.LOCAL,
+        omitted={"YTS_DATABASE_URL"},
+    )
+
+    with pytest.raises(ValueError, match="YTS_DATABASE_URL must be configured"):
+        config.load_profile_config(
+            Profile.LOCAL,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "local"},
+        )
+
+
+def test_load_profile_config_rejects_postgres_checkpoint_without_dsn(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(
+        config_dir,
+        Profile.LOCAL,
+        overrides={"YTS_LANGGRAPH_CHECKPOINT_BACKEND": "postgres"},
+        omitted={"YTS_LANGGRAPH_CHECKPOINT_POSTGRES_DSN"},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="YTS_LANGGRAPH_CHECKPOINT_POSTGRES_DSN must be configured",
+    ):
+        config.load_profile_config(
+            Profile.LOCAL,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "local"},
+        )
+
+
+def test_load_profile_config_rejects_local_backend_without_gateway_url(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(
+        config_dir,
+        Profile.LOCAL,
+        omitted={"YTS_GATEWAY_BASE_URL"},
+    )
+
+    with pytest.raises(ValueError, match="YTS_GATEWAY_BASE_URL must be configured"):
+        config.load_profile_config(
+            Profile.LOCAL,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "local"},
+        )
+
+
+def test_load_profile_config_rejects_deepseek_model_without_key(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(
+        config_dir,
+        Profile.CLOUD,
+        overrides={"YTS_DEEPSEEK_API_KEY": ""},
+    )
+
+    with pytest.raises(ValueError, match="YTS_DEEPSEEK_API_KEY must be configured"):
+        config.load_profile_config(
+            Profile.CLOUD,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "cloud"},
+        )
+
+
+def test_load_profile_config_rejects_openai_fallback_without_key(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(
+        config_dir,
+        Profile.CLOUD,
+        overrides={
+            "YTS_MODEL_FALLBACKS": '["openai/gpt-4.1-mini"]',
+            "YTS_OPENAI_API_KEY": "",
+        },
+    )
+
+    with pytest.raises(ValueError, match="YTS_OPENAI_API_KEY must be configured"):
+        config.load_profile_config(
+            Profile.CLOUD,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "cloud"},
+        )
+
+
+def test_load_profile_config_rejects_deepseek_fallback_without_key(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(
+        config_dir,
+        Profile.CLOUD,
+        overrides={
+            "YTS_DEFAULT_TEXT_MODEL": "openai/gpt-4.1-mini",
+            "YTS_MODEL_FALLBACKS": '["deepseek/deepseek-chat"]',
+            "YTS_DEEPSEEK_API_KEY": "",
+            "YTS_OPENAI_API_KEY": "sk-openai-test",
+        },
+    )
+
+    with pytest.raises(ValueError, match="YTS_DEEPSEEK_API_KEY must be configured"):
+        config.load_profile_config(
+            Profile.CLOUD,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "cloud"},
+        )
+
+
+@pytest.mark.parametrize("model", ["openai/gpt-4.1-mini", "gpt-5.5"])
+def test_load_profile_config_rejects_openai_compatible_model_without_key(
+    tmp_path: Path,
+    model: str,
+) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(
+        config_dir,
+        Profile.CLOUD,
+        overrides={
+            "YTS_DEFAULT_TEXT_MODEL": model,
+            "YTS_DEEPSEEK_API_KEY": "",
+            "YTS_OPENAI_API_KEY": "",
+        },
+    )
+
+    with pytest.raises(ValueError, match="YTS_OPENAI_API_KEY must be configured"):
+        config.load_profile_config(
+            Profile.CLOUD,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "cloud"},
+        )
+
+
+def test_load_profile_config_process_environment_overrides_file(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    _write_strict_profile(config_dir, Profile.LOCAL)
+
+    loaded = config.load_profile_config(
+        Profile.LOCAL,
+        config_dir=config_dir,
+        environ={
+            "YTS_PROFILE": "local",
+            "YTS_DATABASE_URL": "sqlite+aiosqlite:///./override.db",
+        },
+    )
+
+    assert loaded.values["YTS_DATABASE_URL"] == "sqlite+aiosqlite:///./override.db"
+    assert loaded.settings.database_url == "sqlite+aiosqlite:///./override.db"
+
+
+def test_settings_rejects_unknown_constructor_fields() -> None:
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        Settings(unknown_setting=True)
+
+
+def test_core_declares_strict_profile_parser_dependencies() -> None:
+    pyproject_path = Path(__file__).resolve().parents[1] / "core" / "pyproject.toml"
+    pyproject = pyproject_path.read_text(encoding="utf-8")
+
+    assert '"python-dotenv>=1.0"' in pyproject
+    assert '"tomli>=2.0"' in pyproject
+
+
+@pytest.mark.parametrize("profile", [Profile.LOCAL, Profile.CLOUD])
+def test_example_profile_lists_every_supported_name_once(profile: Profile) -> None:
+    example_path = (
+        Path(__file__).resolve().parents[1] / "conf" / f"{profile.value}.example.env"
+    )
+    assignments = [
+        line.split("=", 1)
+        for line in example_path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    names = [name for name, _ in assignments]
+    values = dict(assignments)
+    expected_names = {"YTS_PROFILE", *config._LEGACY_ENV_MAP}
+
+    assert len(names) == len(set(names))
+    assert set(names) == expected_names
+    assert values["YTS_PROFILE"] == profile.value
+    assert values["YTS_DEEPSEEK_API_KEY"] == ""
+    assert values["YTS_OPENAI_API_KEY"] == ""
+    assert values["YTS_AUTH_JWT_SECRET"] == ""
+    assert values["YTS_LANGGRAPH_CHECKPOINT_POSTGRES_DSN"] == ""
+    assert not any("_CMD" in name or "_ARGV" in name for name in names)
 
 
 def test_settings_exposes_typed_config_sections() -> None:
@@ -141,6 +539,8 @@ def test_settings_reads_profile_config_file_and_env_override(
     config_file.write_text(
         "\n".join(
             [
+                "YTS_PROFILE=cloud",
+                "YTS_DATABASE_URL=sqlite+aiosqlite:///./test.db",
                 "YTS_INFERENCE_BACKEND=cloud",
                 "YTS_DEFAULT_TEXT_MODEL=deepseek/deepseek-chat",
                 "YTS_DEEPSEEK_API_KEY=sk-deepseek-file",
@@ -162,6 +562,8 @@ def test_settings_reads_profile_config_file_and_env_override(
                 "YTS_AUDIO_EFFECT_MODEL=sound-effects-v1",
                 "YTS_MUSIC_PROVIDER=suno",
                 "YTS_MUSIC_MODEL=suno-v4.5",
+                f"YTS_AUTH_JWT_SECRET={_TEST_JWT_SECRET}",
+                "YTS_LANGGRAPH_CHECKPOINT_BACKEND=memory",
             ]
         ),
         encoding="utf-8",
@@ -218,7 +620,7 @@ def test_cloud_profile_settings_are_explicit_overrides() -> None:
     assert settings.features.billing_enabled is True
 
 
-def test_get_settings_applies_local_profile_defaults(
+def test_get_settings_requires_local_profile_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     config_dir = tmp_path / "conf"
@@ -226,13 +628,8 @@ def test_get_settings_applies_local_profile_defaults(
     monkeypatch.setenv("YTS_PROFILE", "local")
     monkeypatch.setenv("YTS_CONFIG_DIR", str(config_dir))
 
-    settings = reload_settings()
-
-    assert settings.profile == Profile.LOCAL
-    assert settings.database.url == "sqlite+aiosqlite:///./yts_local.db"
-    assert settings.inference.backend == "local"
-    assert settings.features.allow_custom_skills is True
-    assert settings.features.billing_enabled is False
+    with pytest.raises(FileNotFoundError, match=r"local\.env"):
+        reload_settings()
 
 
 def test_get_settings_reads_default_local_profile_file(
@@ -244,9 +641,14 @@ def test_get_settings_reads_default_local_profile_file(
     local_file.write_text(
         "\n".join(
             [
+                "YTS_PROFILE=local",
+                "YTS_DATABASE_URL=sqlite+aiosqlite:///./local.db",
                 "YTS_OPENAI_API_KEY=sk-local-file",
                 "YTS_OPENAI_TEXT_MODEL=gpt-local-file",
+                "YTS_DEFAULT_TEXT_MODEL=openai/gpt-local-file",
                 "YTS_INFERENCE_BACKEND=cloud",
+                f"YTS_AUTH_JWT_SECRET={_TEST_JWT_SECRET}",
+                "YTS_LANGGRAPH_CHECKPOINT_BACKEND=memory",
             ]
         ),
         encoding="utf-8",

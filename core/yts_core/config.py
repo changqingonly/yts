@@ -1,20 +1,25 @@
 """
-运行配置入口。所有 Python 侧配置统一由 Pydantic Settings 装配。
+运行配置入口。所有 Python 侧配置统一由严格 profile loader 和 Pydantic Settings 装配。
 
-配置来源顺序由 pydantic-settings 处理:初始化参数 > 环境变量 > profile env file > 默认值。
+profile 文件由 python-dotenv 解析,进程环境只覆盖已声明的 profile 字段。
 默认按 profile 读取项目 `conf/{profile}.env`;如需替换配置目录,显式设置 `YTS_CONFIG_DIR`。
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from dotenv.parser import Binding, parse_stream
+from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 _LEGACY_ENV_MAP = {
@@ -62,6 +67,20 @@ _LEGACY_ENV_MAP = {
 }
 
 _JSON_LIST_ENV_NAMES = {"YTS_MODEL_FALLBACKS", "YTS_SERVER_ALLOWED_ORIGINS"}
+_PROFILE_ENV_NAMES = frozenset({"YTS_PROFILE", *_LEGACY_ENV_MAP})
+_PROCESS_CONTROL_ENV_NAMES = frozenset(
+    {
+        "YTS_CONFIG_DIR",
+        "YTS_SKIP_STARTUP_DB_BOOTSTRAP",
+        "YTS_PORT",
+        "YTS_RUNTIME_DIR",
+    }
+)
+_ASSIGNMENT_PATTERN = re.compile(
+    r"^(?:export[ \t]+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)[ \t]*="
+)
+
+SUPPORTED_INFERENCE_BACKENDS = ("local", "cloud")
 
 
 class Profile(str, Enum):
@@ -127,7 +146,7 @@ class ObservabilitySettings(BaseModel):
 
 
 class AuthSettings(BaseModel):
-    jwt_secret: SecretStr = SecretStr("dev-yts-auth-secret-that-is-long-enough-for-hs256")
+    jwt_secret: SecretStr = SecretStr("")
     access_token_ttl_seconds: int = 60 * 60 * 24 * 30
 
     @property
@@ -142,9 +161,7 @@ class StorageSettings(BaseModel):
 
 class LangGraphSettings(BaseModel):
     checkpoint_backend: str = "postgres"
-    checkpoint_postgres_dsn: str = (
-        "postgresql://hongcq:hongcq@127.0.0.1/lss?connect_timeout=5&gssencmode=disable"
-    )
+    checkpoint_postgres_dsn: str = ""
 
 
 class LoggingSettings(BaseModel):
@@ -170,7 +187,7 @@ class Settings(BaseSettings):
         env_prefix="YTS_",
         env_file=None,
         env_nested_delimiter="__",
-        extra="ignore",
+        extra="forbid",
         validate_default=True,
     )
 
@@ -207,8 +224,6 @@ class Settings(BaseSettings):
             init_settings,
             env_settings,
             _legacy_env_settings_source,
-            dotenv_settings,
-            _legacy_dotenv_settings_source(dotenv_settings),
             _ProfileDefaultsSettingsSource(settings_cls),
             file_secret_settings,
         )
@@ -226,12 +241,6 @@ class Settings(BaseSettings):
     def for_local(self) -> Settings:
         """返回本地档覆盖(桌面 sidecar 用)。"""
         return _apply_profile_defaults(self, Profile.LOCAL)
-
-    @model_validator(mode="after")
-    def validate_security_settings(self) -> Settings:
-        if len(self.auth.jwt_secret_value.encode("utf-8")) < 32:
-            raise ValueError("auth_jwt_secret must be at least 32 bytes for HS256")
-        return self
 
     @property
     def database_url(self) -> str:
@@ -398,6 +407,31 @@ class Settings(BaseSettings):
         return self.server.allowed_origins
 
 
+@dataclass(frozen=True)
+class LoadedProfileConfig:
+    path: Path
+    values: dict[str, str]
+    settings: Settings
+
+
+def load_profile_config(
+    profile: Profile | str,
+    *,
+    config_dir: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> LoadedProfileConfig:
+    selected_profile = Profile(profile)
+    selected_environ = dict(os.environ if environ is None else environ)
+    selected_dir = _resolve_config_dir(config_dir, selected_environ)
+    path = selected_dir / f"{selected_profile.value}.env"
+    file_values = _parse_profile_file(path)
+    _validate_profile_name(file_values, selected_profile, path)
+    merged = _apply_profile_environment(file_values, selected_environ, selected_profile)
+    settings = settings_from_env_mapping(merged)
+    _validate_profile_requirements(settings, merged)
+    return LoadedProfileConfig(path=path, values=merged, settings=settings)
+
+
 def settings_from_env_mapping(mapping: Mapping[str, Any]) -> Settings:
     profile_value = _mapping_value(mapping, "YTS_PROFILE")
     profile = Profile(profile_value) if profile_value else Profile.CLOUD
@@ -410,8 +444,7 @@ def settings_from_env_mapping(mapping: Mapping[str, Any]) -> Settings:
 def get_settings() -> Settings:
     _reject_removed_config_knobs()
     profile = _configured_profile()
-    env_file = _profile_config_file(profile)
-    return Settings(_env_file=env_file)
+    return load_profile_config(profile, config_dir=_config_dir()).settings
 
 
 def reload_settings() -> Settings:
@@ -420,8 +453,6 @@ def reload_settings() -> Settings:
 
 
 def _reject_removed_config_knobs() -> None:
-    import os
-
     removed_names = ("YTS_CONFIG_FILE", "YTS_CONFIG_HOME")
     configured = [name for name in removed_names if os.environ.get(name, "").strip()]
     if configured:
@@ -432,36 +463,182 @@ def _reject_removed_config_knobs() -> None:
         )
 
 
-def _profile_config_file(profile: Profile) -> Path | None:
-    path = _profile_config_path(profile)
-    if path.is_file():
-        return path
-    return None
-
-
 def _profile_config_path(profile: Profile) -> Path:
     return _config_dir() / f"{profile.value}.env"
 
 
 def _config_dir() -> Path:
-    import os
-
-    configured = os.environ.get("YTS_CONFIG_DIR", "").strip()
-    if configured:
-        path = Path(configured).expanduser()
-        if not path.is_dir():
-            raise FileNotFoundError(f"YTS_CONFIG_DIR does not exist or is not a directory: {path}")
-        return path
-    return Path(__file__).resolve().parents[2] / "conf"
+    return _resolve_config_dir(None, os.environ)
 
 
 def _configured_profile() -> Profile:
-    import os
-
     env_profile = os.environ.get("YTS_PROFILE", "").strip()
     if env_profile:
         return Profile(env_profile)
     return Profile.CLOUD
+
+
+def _resolve_config_dir(
+    config_dir: Path | None,
+    environ: Mapping[str, str],
+) -> Path:
+    if config_dir is not None:
+        path = Path(config_dir).expanduser()
+    else:
+        configured = environ.get("YTS_CONFIG_DIR", "").strip()
+        path = (
+            Path(configured).expanduser()
+            if configured
+            else Path(__file__).resolve().parents[2] / "conf"
+        )
+    if not path.is_dir():
+        raise FileNotFoundError(f"YTS_CONFIG_DIR does not exist or is not a directory: {path}")
+    return path
+
+
+def _parse_profile_file(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        raise FileNotFoundError(f"missing required profile config file: {path}")
+    source = path.read_text(encoding="utf-8")
+    return _scan_profile_assignments(path, list(parse_stream(StringIO(source))))
+
+
+def _scan_profile_assignments(path: Path, bindings: list[Binding]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    first_lines: dict[str, int] = {}
+    for binding in bindings:
+        line_number = binding.original.line
+        raw_assignment = binding.original.string
+        if binding.error:
+            raise ValueError(
+                f"invalid env assignment in {path}:{line_number}: {raw_assignment!r}"
+            )
+        if binding.key is None:
+            continue
+        match = _ASSIGNMENT_PATTERN.match(raw_assignment.strip())
+        if match is None:
+            raise ValueError(
+                f"invalid env assignment in {path}:{line_number}: {raw_assignment!r}"
+            )
+        name = match.group("name")
+        if binding.key != name or binding.value is None:
+            raise ValueError(
+                f"invalid env assignment in {path}:{line_number}: {raw_assignment!r}"
+            )
+        if name not in _PROFILE_ENV_NAMES:
+            raise ValueError(f"unknown profile variable {name} in {path}:{line_number}")
+        first_line = first_lines.get(name)
+        if first_line is not None:
+            raise ValueError(
+                f"duplicate profile variable {name} in {path}:{line_number}; "
+                f"first defined at line {first_line}"
+            )
+        first_lines[name] = line_number
+        values[name] = binding.value
+    return values
+
+
+def _validate_profile_name(
+    values: Mapping[str, str],
+    selected_profile: Profile,
+    path: Path,
+) -> None:
+    configured_profile = values.get("YTS_PROFILE", "")
+    if configured_profile != selected_profile.value:
+        raise ValueError(
+            f"YTS_PROFILE={configured_profile!r} in {path} does not match "
+            f"selected profile {selected_profile.value}"
+        )
+
+
+def _apply_profile_environment(
+    file_values: Mapping[str, str],
+    environ: Mapping[str, str],
+    selected_profile: Profile,
+) -> dict[str, str]:
+    unknown_names = sorted(
+        name
+        for name in environ
+        if name.startswith("YTS_")
+        and name not in _PROFILE_ENV_NAMES
+        and name not in _PROCESS_CONTROL_ENV_NAMES
+    )
+    if unknown_names:
+        raise ValueError(f"unknown YTS_ process variable: {', '.join(unknown_names)}")
+
+    process_profile = environ.get("YTS_PROFILE")
+    if process_profile is not None and process_profile.strip() != selected_profile.value:
+        raise ValueError(
+            f"process YTS_PROFILE={process_profile!r} does not match "
+            f"selected profile {selected_profile.value}"
+        )
+
+    merged = dict(file_values)
+    for name in _PROFILE_ENV_NAMES:
+        if name in environ:
+            merged[name] = environ[name]
+    return merged
+
+
+def _validate_profile_requirements(
+    settings: Settings,
+    values: Mapping[str, str],
+) -> None:
+    jwt_secret = _required_profile_value(values, "YTS_AUTH_JWT_SECRET")
+    if len(jwt_secret.encode("utf-8")) < 32:
+        raise ValueError("YTS_AUTH_JWT_SECRET must be at least 32 bytes for HS256")
+
+    _required_profile_value(values, "YTS_DATABASE_URL")
+
+    checkpoint_backend = settings.langgraph_checkpoint_backend.strip().lower()
+    if checkpoint_backend == "postgres":
+        _required_profile_value(values, "YTS_LANGGRAPH_CHECKPOINT_POSTGRES_DSN")
+
+    backend = settings.inference_backend.strip().lower()
+    if backend not in SUPPORTED_INFERENCE_BACKENDS:
+        supported = ", ".join(SUPPORTED_INFERENCE_BACKENDS)
+        raise ValueError(
+            f"unsupported YTS_INFERENCE_BACKEND={settings.inference_backend}; "
+            f"supported values: {supported}"
+        )
+    if backend == "local":
+        _required_profile_value(values, "YTS_GATEWAY_BASE_URL")
+        return
+
+    models = [settings.default_text_model, *settings.model_fallbacks]
+    if any(_is_deepseek_model(model.strip()) for model in models) and not (
+        settings.deepseek_api_key.strip()
+    ):
+        raise ValueError(
+            "YTS_DEEPSEEK_API_KEY must be configured when "
+            "YTS_INFERENCE_BACKEND=cloud and YTS_DEFAULT_TEXT_MODEL/YTS_MODEL_FALLBACKS "
+            "includes a DeepSeek model"
+        )
+    if any(_is_openai_compatible_model(model.strip()) for model in models) and not (
+        settings.openai_api_key.strip()
+    ):
+        raise ValueError(
+            "YTS_OPENAI_API_KEY must be configured when "
+            "YTS_INFERENCE_BACKEND=cloud and YTS_DEFAULT_TEXT_MODEL/YTS_MODEL_FALLBACKS "
+            "includes an OpenAI-compatible model"
+        )
+
+
+def _required_profile_value(values: Mapping[str, str], name: str) -> str:
+    value = values.get(name)
+    if value is None or not value.strip():
+        raise ValueError(f"{name} must be configured")
+    return value
+
+
+def _is_deepseek_model(model: str) -> bool:
+    return model.startswith("deepseek/") or model.startswith("deepseek-")
+
+
+def _is_openai_compatible_model(model: str) -> bool:
+    return model.startswith("openai/") or model.startswith(
+        ("gpt-", "chatgpt-", "o1", "o3", "o4")
+    )
 
 
 def _profile_defaults(profile: Profile) -> dict[str, Any]:
@@ -584,13 +761,6 @@ def _legacy_env_settings_source() -> dict[str, Any]:
     import os
 
     return _legacy_settings_from_mapping(os.environ)
-
-
-def _legacy_dotenv_settings_source(dotenv_settings) -> Any:
-    def load() -> dict[str, Any]:
-        return _legacy_settings_from_mapping(getattr(dotenv_settings, "env_vars", {}))
-
-    return load
 
 
 def _legacy_settings_from_mapping(mapping: Any) -> dict[str, Any]:
