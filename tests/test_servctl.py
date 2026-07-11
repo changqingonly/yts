@@ -121,6 +121,28 @@ def test_load_profile_env_translates_strict_duplicate_error(tmp_path: Path) -> N
         servctl.load_profile_env(tmp_path, "cloud")
 
 
+def test_load_profile_env_does_not_expose_malformed_secret_value(tmp_path: Path) -> None:
+    _write_profile_config(tmp_path)
+    config_path = tmp_path / "conf" / "cloud.env"
+    secret_marker = "UNIQUE_MALFORMED_API_KEY_SECRET_MARKER"
+    source = config_path.read_text(encoding="utf-8")
+    config_path.write_text(
+        source.replace(
+            "YTS_OPENAI_API_KEY=sk-openai-test",
+            f'YTS_OPENAI_API_KEY="{secret_marker}',
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(servctl.ServctlError) as exc_info:
+        servctl.load_profile_env(tmp_path, "cloud")
+
+    message = str(exc_info.value)
+    assert f"{config_path}:5" in message
+    assert "YTS_OPENAI_API_KEY" in message
+    assert secret_marker not in message
+
+
 def test_command_env_uses_explicit_profile_config_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

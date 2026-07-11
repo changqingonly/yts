@@ -82,6 +82,47 @@ def test_load_profile_config_uses_python_dotenv_for_multiline_values(tmp_path: P
     assert loaded.values["YTS_OPENAI_BASE_URL"] == "https://example.test/v1\npreview"
 
 
+def test_load_profile_config_rejects_dotenv_interpolation(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    placeholder = "${YTS_OPENAI_BASE_URL}"
+    path = _write_strict_profile(
+        config_dir,
+        Profile.LOCAL,
+        overrides={"YTS_GATEWAY_BASE_URL": placeholder},
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        config.load_profile_config(
+            Profile.LOCAL,
+            config_dir=config_dir,
+            environ={"YTS_PROFILE": "local"},
+        )
+
+    message = str(exc_info.value)
+    assert "interpolation is unsupported" in message
+    assert f"{path}:6" in message
+    assert "YTS_GATEWAY_BASE_URL" in message
+    assert placeholder not in message
+
+
+def test_load_profile_config_allows_literal_dollar_signs(tmp_path: Path) -> None:
+    config_dir = tmp_path / "conf"
+    gateway_url = "http://127.0.0.1:8799/$catalog"
+    _write_strict_profile(
+        config_dir,
+        Profile.LOCAL,
+        overrides={"YTS_GATEWAY_BASE_URL": gateway_url},
+    )
+
+    loaded = config.load_profile_config(
+        Profile.LOCAL,
+        config_dir=config_dir,
+        environ={"YTS_PROFILE": "local"},
+    )
+
+    assert loaded.values["YTS_GATEWAY_BASE_URL"] == gateway_url
+
+
 def test_load_profile_config_requires_selected_profile_file(tmp_path: Path) -> None:
     config_dir = tmp_path / "conf"
     config_dir.mkdir()

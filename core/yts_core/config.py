@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv.parser import Binding, parse_stream
+from dotenv.variables import Variable, parse_variables
 from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
@@ -510,21 +511,15 @@ def _scan_profile_assignments(path: Path, bindings: list[Binding]) -> dict[str, 
         line_number = binding.original.line
         raw_assignment = binding.original.string
         if binding.error:
-            raise ValueError(
-                f"invalid env assignment in {path}:{line_number}: {raw_assignment!r}"
-            )
+            raise _invalid_assignment_error(path, line_number, raw_assignment)
         if binding.key is None:
             continue
         match = _ASSIGNMENT_PATTERN.match(raw_assignment.strip())
         if match is None:
-            raise ValueError(
-                f"invalid env assignment in {path}:{line_number}: {raw_assignment!r}"
-            )
+            raise _invalid_assignment_error(path, line_number, raw_assignment)
         name = match.group("name")
         if binding.key != name or binding.value is None:
-            raise ValueError(
-                f"invalid env assignment in {path}:{line_number}: {raw_assignment!r}"
-            )
+            raise _invalid_assignment_error(path, line_number, raw_assignment)
         if name not in _PROFILE_ENV_NAMES:
             raise ValueError(f"unknown profile variable {name} in {path}:{line_number}")
         first_line = first_lines.get(name)
@@ -533,9 +528,19 @@ def _scan_profile_assignments(path: Path, bindings: list[Binding]) -> dict[str, 
                 f"duplicate profile variable {name} in {path}:{line_number}; "
                 f"first defined at line {first_line}"
             )
+        if any(isinstance(atom, Variable) for atom in parse_variables(binding.value)):
+            raise ValueError(
+                f"dotenv interpolation is unsupported for {name} in {path}:{line_number}"
+            )
         first_lines[name] = line_number
         values[name] = binding.value
     return values
+
+
+def _invalid_assignment_error(path: Path, line_number: int, source: str) -> ValueError:
+    match = _ASSIGNMENT_PATTERN.match(source.strip())
+    variable = f" for {match.group('name')}" if match is not None else ""
+    return ValueError(f"invalid env assignment{variable} in {path}:{line_number}")
 
 
 def _validate_profile_name(
