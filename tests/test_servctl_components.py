@@ -3,7 +3,10 @@ from __future__ import annotations
 import hashlib
 import importlib
 import os
+import shlex
+import shutil
 import subprocess
+import traceback
 import urllib.error
 from dataclasses import dataclass
 from pathlib import Path
@@ -183,6 +186,68 @@ def _create_source(root: Path, component: ManifestComponent, *, remote: str | No
     return _git(source_dir, "rev-parse", "HEAD")
 
 
+def _create_source_with_ignored_dirty_submodule(
+    root: Path,
+) -> tuple[ManifestComponent, Path]:
+    submodule = root / "submodule-seed"
+    submodule.mkdir()
+    _git(submodule, "init", "--quiet")
+    _git(submodule, "config", "user.email", "servctl@example.test")
+    _git(submodule, "config", "user.name", "servctl tests")
+    (submodule / "dependency.txt").write_text("dependency\n", encoding="utf-8")
+    _git(submodule, "add", "dependency.txt")
+    _git(submodule, "commit", "--quiet", "-m", "dependency")
+
+    parent = root / "parent-seed"
+    parent.mkdir()
+    _git(parent, "init", "--quiet")
+    _git(parent, "config", "user.email", "servctl@example.test")
+    _git(parent, "config", "user.name", "servctl tests")
+    (parent / ".gitignore").write_text("build/\n", encoding="utf-8")
+    _git(parent, "add", ".gitignore")
+    _git(parent, "commit", "--quiet", "-m", "parent")
+    _git(
+        parent,
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        str(submodule),
+        "deps/submodule",
+    )
+    _git(parent, "config", "-f", ".gitmodules", "submodule.deps/submodule.ignore", "all")
+    _git(parent, "add", ".gitmodules")
+    _git(parent, "commit", "--quiet", "-am", "add ignored submodule")
+    commit = _git(parent, "rev-parse", "HEAD")
+
+    component = ManifestComponent(commit=commit, submodules=True)
+    source_dir = root / "desktop" / "vendor" / component.source_dir
+    source_dir.parent.mkdir(parents=True)
+    subprocess.check_call(
+        [
+            "git",
+            "-c",
+            "protocol.file.allow=always",
+            "clone",
+            "--quiet",
+            "--recurse-submodules",
+            str(parent),
+            str(source_dir),
+        ]
+    )
+    _git(source_dir, "remote", "set-url", "origin", component.source_url)
+    (source_dir / "deps" / "submodule" / "dependency.txt").write_text(
+        "dirty dependency\n",
+        encoding="utf-8",
+    )
+    assert _git(source_dir, "status", "--porcelain") == ""
+    assert _git(source_dir, "status", "--porcelain", "--ignore-submodules=none")
+    _write_manifest(root, component)
+    _write_artifact(root, component)
+    _write_model(root, component)
+    return component, source_dir
+
+
 def _write_artifact(root: Path, component: ManifestComponent, *, executable: bool = True) -> Path:
     base = root if component.source_kind == "workspace" else root / "desktop" / "vendor"
     artifact = base / component.artifact
@@ -326,6 +391,35 @@ def test_verify_rejects_uninitialized_recursive_submodule(tmp_path: Path) -> Non
 
     assert result[0].state == "invalid"
     assert "submodule is not initialized" in result[0].detail
+
+
+def test_verify_rejects_dirty_submodule_ignored_by_gitmodules(tmp_path: Path) -> None:
+    _, source_dir = _create_source_with_ignored_dirty_submodule(tmp_path)
+
+    result = verify_components(tmp_path, names=["llama"])
+
+    assert result[0].state == "invalid"
+    assert "source tree is dirty" in result[0].detail
+    assert (source_dir / "deps" / "submodule" / "dependency.txt").read_text(
+        encoding="utf-8"
+    ) == "dirty dependency\n"
+
+
+def test_install_rejects_dirty_ignored_submodule_before_runner_command(
+    tmp_path: Path,
+) -> None:
+    _create_source_with_ignored_dirty_submodule(tmp_path)
+    commands: list[list[str]] = []
+
+    with pytest.raises(servctl.ServctlError, match="source tree is dirty"):
+        install_components(
+            tmp_path,
+            names=["llama"],
+            run_command=lambda command, **kwargs: commands.append(command),
+            download=lambda url, destination: pytest.fail("existing model must not download"),
+        )
+
+    assert commands == []
 
 
 @pytest.mark.parametrize(
@@ -526,12 +620,24 @@ def test_install_clones_pinned_source_builds_and_atomically_installs_model(
         assert not (destination.parent / "llama.gguf").exists()
         destination.write_bytes(MODEL_BYTES)
 
-    replacements: list[tuple[Path, Path]] = []
+    replacements: list[tuple[str, str]] = []
     real_replace = os.replace
 
-    def replace(source: Path, destination: Path) -> None:
-        replacements.append((Path(source), Path(destination)))
-        real_replace(source, destination)
+    def replace(
+        source: str,
+        destination: str,
+        *,
+        src_dir_fd: int,
+        dst_dir_fd: int,
+    ) -> None:
+        assert src_dir_fd == dst_dir_fd
+        replacements.append((source, destination))
+        real_replace(
+            source,
+            destination,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
 
     monkeypatch.setattr(component_commands.os, "replace", replace)
 
@@ -559,7 +665,7 @@ def test_install_clones_pinned_source_builds_and_atomically_installs_model(
     model = tmp_path / "desktop" / "vendor" / "models" / "llama.gguf"
     partial = model.with_name(f"{model.name}.partial")
     assert downloads == [(MODEL_URL, partial)]
-    assert replacements == [(partial, model)]
+    assert replacements == [(partial.name, model.name)]
     assert model.read_bytes() == MODEL_BYTES
     assert not partial.exists()
     assert result == [
@@ -605,6 +711,76 @@ def test_install_rejects_wrong_remote_before_checkout_or_build(tmp_path: Path) -
     assert commands == []
 
 
+def test_install_fetches_missing_pinned_commit_before_detached_checkout(tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", "--quiet", str(remote))
+
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _git(seed, "init", "--quiet")
+    _git(seed, "config", "user.email", "servctl@example.test")
+    _git(seed, "config", "user.name", "servctl tests")
+    (seed / "source.txt").write_text("first\n", encoding="utf-8")
+    (seed / ".gitignore").write_text("build/\n", encoding="utf-8")
+    _git(seed, "add", "source.txt", ".gitignore")
+    _git(seed, "commit", "--quiet", "-m", "first")
+    _git(seed, "remote", "add", "origin", str(remote))
+    _git(seed, "push", "--quiet", "-u", "origin", "HEAD")
+
+    source_dir = tmp_path / "desktop" / "vendor" / "llama-src"
+    source_dir.parent.mkdir(parents=True)
+    subprocess.check_call(["git", "clone", "--quiet", str(remote), str(source_dir)])
+    _git(source_dir, "remote", "set-url", "origin", SOURCE_URL)
+
+    (seed / "source.txt").write_text("second\n", encoding="utf-8")
+    _git(seed, "add", "source.txt")
+    _git(seed, "commit", "--quiet", "-m", "second")
+    pinned_commit = _git(seed, "rev-parse", "HEAD")
+    _git(seed, "push", "--quiet", "origin", "HEAD")
+    assert (
+        subprocess.run(
+            ["git", "cat-file", "-e", f"{pinned_commit}^{{commit}}"],
+            cwd=source_dir,
+            check=False,
+        ).returncode
+        != 0
+    )
+
+    component = ManifestComponent(
+        commit=pinned_commit,
+        model_bytes=None,
+        runtime_kind="command",
+    )
+    _write_manifest(tmp_path, component)
+    commands: list[list[str]] = []
+
+    def run_command(command: list[str], *, cwd: Path) -> None:
+        commands.append(command)
+        if command[:2] == ["git", "fetch"]:
+            subprocess.check_call(
+                ["git", "fetch", "--no-tags", str(remote), pinned_commit],
+                cwd=cwd,
+            )
+        elif command[:2] == ["git", "checkout"]:
+            subprocess.check_call(command, cwd=cwd)
+        elif command[:2] == ["cmake", "--build"]:
+            _write_artifact(tmp_path, component)
+
+    result = install_components(
+        tmp_path,
+        names=["llama"],
+        run_command=run_command,
+    )
+
+    assert commands[:2] == [
+        ["git", "fetch", "--no-tags", "origin", pinned_commit],
+        ["git", "checkout", "--detach", pinned_commit],
+    ]
+    assert result == [
+        ComponentResult(name="llama", enabled=True, state="ready", detail="assets verified")
+    ]
+
+
 def test_verify_translates_missing_git_tool_to_servctl_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -644,6 +820,44 @@ def test_install_translates_missing_build_tool_to_servctl_error(tmp_path: Path) 
                 FileNotFoundError("cmake is missing")
             ),
         )
+
+
+def test_install_api_redacts_clone_called_process_error_and_exception_chain(
+    tmp_path: Path,
+) -> None:
+    marker = "clone-api-secret-marker"
+    source_url = f"{SOURCE_URL}?token={marker}"
+    _write_manifest(tmp_path, ManifestComponent(source_url=source_url))
+
+    def fail_clone(command: list[str], *, cwd: Path) -> None:
+        raise subprocess.CalledProcessError(
+            7,
+            command,
+            output=f"child stdout {marker}",
+            stderr=f"child stderr {marker}",
+        )
+
+    with pytest.raises(servctl.ServctlError) as error:
+        install_components(
+            tmp_path,
+            names=["llama"],
+            run_command=fail_clone,
+        )
+
+    assert str(error.value) == "component llama clone command failed with exit code 7"
+    public_surface = "\n".join(
+        (
+            str(error.value),
+            repr(error.value),
+            repr(error.value.args),
+            repr(error.value.__dict__),
+            "".join(traceback.format_exception(error.value)),
+        )
+    )
+    assert marker not in public_surface
+    assert source_url not in public_surface
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
 
 
 def test_cli_component_command_failure_does_not_expose_manifest_url_query(
@@ -702,13 +916,52 @@ def test_default_clone_child_output_cannot_expose_manifest_url_query(
         install_components=install,
     )
 
-    assert servctl.main(["components", "install", "llama"], api=api) == 7
+    assert servctl.main(["components", "install", "llama"], api=api) == 1
     captured = capfd.readouterr()
     combined = f"{captured.out}\n{captured.err}"
     assert "command failed with exit code 7" in captured.err
-    assert "git clone" in captured.err
+    assert "component llama clone" in captured.err
     assert secret not in combined
     assert source_url not in combined
+
+
+def test_default_submodule_update_child_output_is_suppressed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    component = ManifestComponent(submodules=True)
+    commit = _create_source(tmp_path, component)
+    configured = ManifestComponent(commit=commit, submodules=True)
+    _write_manifest(tmp_path, configured)
+
+    real_git = shutil.which("git")
+    assert real_git is not None
+    marker = "submodule-child-secret-marker"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_git = bin_dir / "git"
+    fake_git.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "submodule" ] && [ "$2" = "update" ]; then\n'
+        f'  echo "{marker} stdout"\n'
+        f'  echo "{marker} stderr" >&2\n'
+        "  exit 7\n"
+        "fi\n"
+        f"exec {shlex.quote(real_git)} \"$@\"\n",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+    with pytest.raises(servctl.ServctlError) as error:
+        install_components(tmp_path, names=["llama"])
+
+    captured = capfd.readouterr()
+    assert marker not in f"{captured.out}\n{captured.err}"
+    assert str(error.value) == (
+        "component llama submodule update command failed with exit code 7"
+    )
 
 
 def test_install_stops_before_dependents_when_build_artifact_is_missing(tmp_path: Path) -> None:
@@ -897,6 +1150,83 @@ def test_install_rejects_preexisting_partial_symlink_before_download(tmp_path: P
     assert outside.read_bytes() == b"must remain unchanged"
 
 
+def test_install_rejects_preexisting_hardlinked_partial_before_download(tmp_path: Path) -> None:
+    component = ManifestComponent(
+        source_kind="workspace",
+        source_dir="workspace/llama",
+        artifact="workspace/llama/build/llama-tool",
+        runtime_kind="command",
+    )
+    _write_manifest(tmp_path, component)
+    (tmp_path / component.source_dir).mkdir(parents=True)
+    model_dir = tmp_path / "desktop" / "vendor" / "models"
+    model_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-model"
+    sentinel = b"outside sentinel must remain unchanged"
+    outside.write_bytes(sentinel)
+    partial = model_dir / "llama.gguf.partial"
+    os.link(outside, partial)
+    outside_inode = outside.stat().st_ino
+
+    def run_command(command: list[str], *, cwd: Path) -> None:
+        if command[:2] == ["cmake", "--build"]:
+            _write_artifact(tmp_path, component)
+
+    with pytest.raises(servctl.ServctlError, match="partial download path already exists"):
+        install_components(
+            tmp_path,
+            names=["llama"],
+            run_command=run_command,
+            download=lambda url, destination: pytest.fail(
+                "pre-existing hard-linked partial must be rejected before download"
+            ),
+        )
+
+    assert outside.read_bytes() == sentinel
+    assert outside.stat().st_ino == outside_inode
+    assert partial.stat().st_ino == outside_inode
+    assert not (model_dir / "llama.gguf").exists()
+
+
+def test_install_rejects_model_parent_swapped_to_external_symlink_during_download(
+    tmp_path: Path,
+) -> None:
+    component = ManifestComponent(
+        source_kind="workspace",
+        source_dir="workspace/llama",
+        artifact="workspace/llama/build/llama-tool",
+        runtime_kind="command",
+    )
+    _write_manifest(tmp_path, component)
+    (tmp_path / component.source_dir).mkdir(parents=True)
+    model_dir = tmp_path / "desktop" / "vendor" / "models"
+    model_dir.mkdir(parents=True)
+    displaced_model_dir = tmp_path / "pinned-models"
+    outside = tmp_path / "outside-models"
+    outside.mkdir()
+
+    def run_command(command: list[str], *, cwd: Path) -> None:
+        if command[:2] == ["cmake", "--build"]:
+            _write_artifact(tmp_path, component)
+
+    def swap_parent_and_download(url: str, destination: Path) -> None:
+        model_dir.rename(displaced_model_dir)
+        model_dir.symlink_to(outside, target_is_directory=True)
+        destination.write_bytes(MODEL_BYTES)
+
+    with pytest.raises(servctl.ServctlError, match="model parent directory identity changed"):
+        install_components(
+            tmp_path,
+            names=["llama"],
+            run_command=run_command,
+            download=swap_parent_and_download,
+        )
+
+    assert not (outside / "llama.gguf").exists()
+    assert (outside / "llama.gguf.partial").read_bytes() == MODEL_BYTES
+    assert not (displaced_model_dir / "llama.gguf").exists()
+
+
 def test_install_raises_when_atomic_replace_does_not_create_final(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -914,7 +1244,11 @@ def test_install_raises_when_atomic_replace_does_not_create_final(
         if command[:2] == ["cmake", "--build"]:
             _write_artifact(tmp_path, component)
 
-    monkeypatch.setattr(component_commands.os, "replace", lambda source, destination: None)
+    monkeypatch.setattr(
+        component_commands.os,
+        "replace",
+        lambda source, destination, **kwargs: None,
+    )
 
     with pytest.raises(servctl.ServctlError, match=r"component llama.*atomic model install failed"):
         install_components(

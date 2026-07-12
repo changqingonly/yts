@@ -70,9 +70,18 @@ def _sha256_stream(handle: BinaryIO) -> str:
 
 
 def _download_model(url: str, destination: Path) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+    parent_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent_descriptor = os.open(destination.parent, parent_flags)
+    try:
+        _download_model_at(url, destination.name, parent_descriptor)
+    finally:
+        os.close(parent_descriptor)
+
+
+def _download_model_at(url: str, destination_name: str, parent_descriptor: int) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
     with urllib.request.urlopen(url) as response:
-        descriptor = os.open(destination, flags, 0o600)
+        descriptor = os.open(destination_name, flags, 0o600, dir_fd=parent_descriptor)
         with os.fdopen(descriptor, "wb") as output:
             while chunk := response.read(_DOWNLOAD_CHUNK_SIZE):
                 output.write(chunk)
@@ -374,7 +383,12 @@ def _display_url(url: str) -> str:
 
 
 def _inspect_external_dirty(resolved: ResolvedComponent) -> _Inspection:
-    status = _git_output(resolved.source_dir, "status", "--porcelain")
+    status = _git_output(
+        resolved.source_dir,
+        "status",
+        "--porcelain",
+        "--ignore-submodules=none",
+    )
     if status is None:
         return _Inspection("invalid", f"source Git status failed: {resolved.source_dir}")
     if status:
@@ -486,6 +500,21 @@ def _prepare_source(resolved: ResolvedComponent, run_command: Callable[..., None
     if precondition.state != "ready":
         raise ServctlError(f"component {resolved.name}: {precondition.detail}")
 
+    commit_object = _git_output(
+        resolved.source_dir,
+        "cat-file",
+        "-e",
+        f"{source.commit}^{{commit}}",
+    )
+    if commit_object is None:
+        _run_component_command(
+            run_command,
+            ["git", "fetch", "--no-tags", "origin", source.commit],
+            resolved.source_dir,
+            resolved.name,
+            "fetch",
+        )
+
     _run_component_command(
         run_command,
         ["git", "checkout", "--detach", source.commit],
@@ -540,13 +569,20 @@ def _run_component_command(
 ) -> None:
     output_options = (
         {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-        if run_command is _DEFAULT_RUN_COMMAND and operation == "clone"
+        if run_command is _DEFAULT_RUN_COMMAND and argv and argv[0] == "git"
         else {}
     )
+    return_code: int | None = None
     try:
         run_command(argv, cwd=cwd, **output_options)
+    except subprocess.CalledProcessError as exc:
+        return_code = exc.returncode
     except OSError as exc:
         raise ServctlError(f"component {component_name} {operation} command failed: {exc}") from exc
+    if return_code is not None:
+        raise ServctlError(
+            f"component {component_name} {operation} command failed with exit code {return_code}"
+        )
 
 
 def _install_model(
@@ -555,25 +591,128 @@ def _install_model(
     model_path: Path,
     download: Callable[[str, Path], None],
 ) -> None:
-    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_parent = model_path.parent
+    try:
+        model_parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ServctlError(
+            f"component {component_name}: cannot create model parent directory: "
+            f"{model_parent}: {exc}"
+        ) from exc
+
     partial_path = model_path.with_name(f"{model_path.name}.partial")
-    if partial_path.is_symlink():
+    parent_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        parent_descriptor = os.open(model_parent, parent_flags)
+    except OSError as exc:
+        raise ServctlError(
+            f"component {component_name}: cannot pin model parent directory: "
+            f"{model_parent}: {exc}"
+        ) from exc
+    try:
+        pinned_parent_stat = os.fstat(parent_descriptor)
+    except OSError as exc:
+        os.close(parent_descriptor)
+        raise ServctlError(
+            f"component {component_name}: cannot inspect pinned model parent directory: "
+            f"{model_parent}: {exc}"
+        ) from exc
+
+    try:
+        _require_model_parent_identity(
+            component_name,
+            model_parent,
+            parent_descriptor,
+            pinned_parent_stat,
+        )
+        _reject_existing_partial(
+            component_name,
+            partial_path,
+            parent_descriptor,
+        )
+        try:
+            if download is _download_model:
+                _download_model_at(model_spec.url, partial_path.name, parent_descriptor)
+            else:
+                download(model_spec.url, partial_path)
+        except OSError as exc:
+            raise ServctlError(
+                f"component {component_name}: model download failed for {model_spec.id} "
+                f"({type(exc).__name__})"
+            ) from exc
+        _require_model_parent_identity(
+            component_name,
+            model_parent,
+            parent_descriptor,
+            pinned_parent_stat,
+        )
+        _verify_and_install_download(
+            component_name,
+            model_spec,
+            partial_path,
+            model_path,
+            parent_descriptor,
+            pinned_parent_stat,
+        )
+    finally:
+        os.close(parent_descriptor)
+
+
+def _require_model_parent_identity(
+    component_name: str,
+    model_parent: Path,
+    parent_descriptor: int,
+    pinned_parent_stat: os.stat_result,
+) -> None:
+    try:
+        opened_parent_stat = os.fstat(parent_descriptor)
+        path_parent_stat = os.stat(model_parent, follow_symlinks=False)
+    except OSError as exc:
+        raise ServctlError(
+            f"component {component_name}: cannot verify model parent directory identity: "
+            f"{model_parent}: {exc}"
+        ) from exc
+    if (
+        not stat.S_ISDIR(opened_parent_stat.st_mode)
+        or not stat.S_ISDIR(path_parent_stat.st_mode)
+        or not _same_file(pinned_parent_stat, opened_parent_stat)
+        or not _same_file(pinned_parent_stat, path_parent_stat)
+    ):
+        raise ServctlError(
+            f"component {component_name}: model parent directory identity changed: {model_parent}"
+        )
+
+
+def _reject_existing_partial(
+    component_name: str,
+    partial_path: Path,
+    parent_descriptor: int,
+) -> None:
+    try:
+        partial_stat = os.stat(
+            partial_path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise ServctlError(
+            f"component {component_name}: cannot inspect partial download path: "
+            f"{partial_path}: {exc}"
+        ) from exc
+    if stat.S_ISLNK(partial_stat.st_mode):
         raise ServctlError(
             f"component {component_name}: partial download path is a symlink: {partial_path}"
         )
-    if partial_path.exists() and not partial_path.is_file():
+    if not stat.S_ISREG(partial_stat.st_mode):
         raise ServctlError(
             f"component {component_name}: partial download path is not a regular file: "
             f"{partial_path}"
         )
-    try:
-        download(model_spec.url, partial_path)
-    except OSError as exc:
-        raise ServctlError(
-            f"component {component_name}: model download failed for {model_spec.id} "
-            f"({type(exc).__name__})"
-        ) from exc
-    _verify_and_install_download(component_name, model_spec, partial_path, model_path)
+    raise ServctlError(
+        f"component {component_name}: partial download path already exists: {partial_path}"
+    )
 
 
 def _verify_and_install_download(
@@ -581,9 +720,15 @@ def _verify_and_install_download(
     model_spec: ModelAsset,
     partial_path: Path,
     model_path: Path,
+    parent_descriptor: int,
+    pinned_parent_stat: os.stat_result,
 ) -> None:
     try:
-        descriptor = os.open(partial_path, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = os.open(
+            partial_path.name,
+            os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=parent_descriptor,
+        )
     except OSError as exc:
         raise ServctlError(
             f"component {component_name}: downloaded model is invalid for {model_spec.id}: "
@@ -595,6 +740,11 @@ def _verify_and_install_download(
         if not stat.S_ISREG(opened_stat.st_mode):
             raise ServctlError(
                 f"component {component_name}: downloaded model is not a regular file for "
+                f"{model_spec.id}: {partial_path}"
+            )
+        if opened_stat.st_nlink != 1:
+            raise ServctlError(
+                f"component {component_name}: downloaded model has multiple hard links for "
                 f"{model_spec.id}: {partial_path}"
             )
         if opened_stat.st_size != model_spec.size:
@@ -610,31 +760,72 @@ def _verify_and_install_download(
             )
 
         try:
-            path_stat = os.stat(partial_path, follow_symlinks=False)
+            opened_stat_after_hash = os.fstat(handle.fileno())
+            path_stat = os.stat(
+                partial_path.name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
         except OSError as exc:
             raise ServctlError(
                 f"component {component_name}: downloaded model identity check failed for "
                 f"{model_spec.id}: {partial_path}: {exc}"
             ) from exc
-        if not stat.S_ISREG(path_stat.st_mode) or not _same_file(opened_stat, path_stat):
+        if (
+            not stat.S_ISREG(opened_stat_after_hash.st_mode)
+            or not stat.S_ISREG(path_stat.st_mode)
+            or opened_stat_after_hash.st_nlink != 1
+            or path_stat.st_nlink != 1
+            or not _same_file(opened_stat, opened_stat_after_hash)
+            or not _same_file(opened_stat, path_stat)
+        ):
             raise ServctlError(
                 f"component {component_name}: downloaded model identity changed before install "
                 f"for {model_spec.id}: {partial_path}"
             )
 
+        _require_model_parent_identity(
+            component_name,
+            model_path.parent,
+            parent_descriptor,
+            pinned_parent_stat,
+        )
         try:
-            os.replace(partial_path, model_path)
-            installed_stat = os.stat(model_path, follow_symlinks=False)
+            os.replace(
+                partial_path.name,
+                model_path.name,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+            )
+            opened_installed_stat = os.fstat(handle.fileno())
+            installed_stat = os.stat(
+                model_path.name,
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
         except OSError as exc:
             raise ServctlError(
                 f"component {component_name}: atomic model install failed for "
                 f"{model_spec.id}: {exc}"
             ) from exc
-        if not stat.S_ISREG(installed_stat.st_mode) or not _same_file(opened_stat, installed_stat):
+        if (
+            not stat.S_ISREG(opened_installed_stat.st_mode)
+            or not stat.S_ISREG(installed_stat.st_mode)
+            or opened_installed_stat.st_nlink != 1
+            or installed_stat.st_nlink != 1
+            or not _same_file(opened_stat, opened_installed_stat)
+            or not _same_file(opened_stat, installed_stat)
+        ):
             raise ServctlError(
                 f"component {component_name}: installed model identity mismatch for "
                 f"{model_spec.id}: {model_path}"
             )
+        _require_model_parent_identity(
+            component_name,
+            model_path.parent,
+            parent_descriptor,
+            pinned_parent_stat,
+        )
 
 
 def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
