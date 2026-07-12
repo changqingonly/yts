@@ -170,7 +170,8 @@ def test_real_manifest_records_audited_runtime_argv() -> None:
             "llama",
             "qwen",
             (
-                "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+                "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/8911e8a47f92bac19d6f5c64a2e2095bd2f7d031/Qwen2.5-7B-Instruct-Q4_K_M.gguf?download=true",
+                "llm-models/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
                 4_683_074_240,
                 "65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423",
             ),
@@ -179,7 +180,8 @@ def test_real_manifest_records_audited_runtime_argv() -> None:
             "stable-diffusion",
             "flux",
             (
-                "flux1-schnell-q4_k.gguf",
+                "https://huggingface.co/Green-Sky/flux.1-schnell-GGUF/resolve/646b4e7a585efbfeb5b57132def0395df5756854/flux1-schnell-q4_k.gguf?download=true",
+                "sd-models/flux1-schnell-q4_k.gguf",
                 6_884_606_880,
                 "0c7148f5b7e47edaea99a6cec058a8e2bc8ded52e3bba55519c81aa1a38df5d3",
             ),
@@ -188,7 +190,8 @@ def test_real_manifest_records_audited_runtime_argv() -> None:
             "stable-diffusion",
             "vae",
             (
-                "ae-f16.gguf",
+                "https://huggingface.co/Green-Sky/flux.1-schnell-GGUF/resolve/646b4e7a585efbfeb5b57132def0395df5756854/ae-f16.gguf?download=true",
+                "sd-models/ae-f16.gguf",
                 167_656_704,
                 "1bed7b05318709e46a8cb9accc211168fc7f0b61ab594661860bbfe4d785cc46",
             ),
@@ -197,7 +200,8 @@ def test_real_manifest_records_audited_runtime_argv() -> None:
             "stable-diffusion",
             "clip_l",
             (
-                "clip_l-q8_0.gguf",
+                "https://huggingface.co/Green-Sky/flux.1-schnell-GGUF/resolve/646b4e7a585efbfeb5b57132def0395df5756854/clip_l-q8_0.gguf?download=true",
+                "sd-models/clip_l-q8_0.gguf",
                 130_769_600,
                 "59cbe002c3e75d2b89d38787e81d12fb4e512fd76176884c470737ad87a1d309",
             ),
@@ -206,7 +210,8 @@ def test_real_manifest_records_audited_runtime_argv() -> None:
             "stable-diffusion",
             "t5xxl",
             (
-                "t5xxl_q4_k.gguf",
+                "https://huggingface.co/Green-Sky/flux.1-schnell-GGUF/resolve/646b4e7a585efbfeb5b57132def0395df5756854/t5xxl_q4_k.gguf?download=true",
+                "sd-models/t5xxl_q4_k.gguf",
                 2_752_844_256,
                 "b235e9a108ccc1803c576464e937cf5ec4d8eb34d83776e5199450400d4e0bcb",
             ),
@@ -215,7 +220,8 @@ def test_real_manifest_records_audited_runtime_argv() -> None:
             "acestep",
             "qwen3-embedding",
             (
-                "Qwen3-Embedding-0.6B-Q8_0.gguf",
+                "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/9b3707625776cc4cf775e9b12ab82f9fe48335ff/Qwen3-Embedding-0.6B-Q8_0.gguf?download=true",
+                "acestep-models/Qwen3-Embedding-0.6B-Q8_0.gguf",
                 784_144_960,
                 "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321",
             ),
@@ -224,7 +230,8 @@ def test_real_manifest_records_audited_runtime_argv() -> None:
             "acestep",
             "acestep-lm",
             (
-                "acestep-5Hz-lm-0.6B-Q8_0.gguf",
+                "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/9b3707625776cc4cf775e9b12ab82f9fe48335ff/acestep-5Hz-lm-0.6B-Q8_0.gguf?download=true",
+                "acestep-models/acestep-5Hz-lm-0.6B-Q8_0.gguf",
                 709_846_656,
                 "bdaf9e292d4470f31c19cafeaca1b74936a114667e3a85e5d33b65247e9908ec",
             ),
@@ -233,7 +240,8 @@ def test_real_manifest_records_audited_runtime_argv() -> None:
             "acestep",
             "acestep-turbo",
             (
-                "acestep-v15-turbo-Q8_0.gguf",
+                "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/9b3707625776cc4cf775e9b12ab82f9fe48335ff/acestep-v15-turbo-Q8_0.gguf?download=true",
+                "acestep-models/acestep-v15-turbo-Q8_0.gguf",
                 2_549_528_000,
                 "288f708a61cfc241013a98a62f98ba331f83fe34d0d3559acdd9b0f6a2f7cd6b",
             ),
@@ -242,7 +250,8 @@ def test_real_manifest_records_audited_runtime_argv() -> None:
             "acestep",
             "acestep-vae",
             (
-                "vae-BF16.gguf",
+                "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/9b3707625776cc4cf775e9b12ab82f9fe48335ff/vae-BF16.gguf?download=true",
+                "acestep-models/vae-BF16.gguf",
                 337_420_928,
                 "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8",
             ),
@@ -252,16 +261,16 @@ def test_real_manifest_records_audited_runtime_argv() -> None:
 def test_real_manifest_records_exact_model_integrity(
     component_name: str,
     model_id: str,
-    expected: tuple[str, int, str],
+    expected: tuple[str, str, int, str],
 ) -> None:
     manifest = load_component_manifest(MANIFEST_PATH)
     model = next(
         model for model in manifest.components[component_name].models if model.id == model_id
     )
 
-    filename, size, sha256 = expected
-    assert model.path.endswith(filename)
-    assert model.url.startswith("https://")
+    url, path, size, sha256 = expected
+    assert model.url == url
+    assert model.path == path
     assert model.size == size
     assert model.sha256 == sha256
 
@@ -429,6 +438,79 @@ def test_model_assets_require_exact_integrity_fields(
 
     with pytest.raises(ValidationError, match=error):
         ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+@pytest.mark.parametrize("target", ["source", "model"])
+@pytest.mark.parametrize(
+    ("url", "error"),
+    [
+        pytest.param("https://@/a", "URL", id="empty-host"),
+        pytest.param("https://example.test:bad/a", "URL", id="invalid-port"),
+        pytest.param(
+            "https://user:password@example.test/a",
+            "user information",
+            id="userinfo",
+        ),
+        pytest.param("https://example.test/a#fragment", "fragment", id="fragment"),
+        pytest.param("https://example.test/a\x01b", "control", id="ascii-control"),
+    ],
+)
+def test_remote_urls_reject_malformed_or_unsafe_values(
+    target: str,
+    url: str,
+    error: str,
+) -> None:
+    component = _external_component()
+    if target == "source":
+        source = component["source"]
+        assert isinstance(source, dict)
+        source["url"] = url
+    else:
+        models = component["models"]
+        assert isinstance(models, list)
+        model = models[0]
+        assert isinstance(model, dict)
+        model["url"] = url
+
+    with pytest.raises(ValidationError, match=error):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_load_manifest_redacts_user_information_from_url_errors(tmp_path: Path) -> None:
+    original_url = "https://github.com/ggml-org/llama.cpp.git"
+    credential_url = "https://manifest-user:private-password@example.test/source.git"
+    source = MANIFEST_PATH.read_text(encoding="utf-8")
+    assert original_url in source
+    credential_path = tmp_path / "credential.toml"
+    credential_path.write_text(source.replace(original_url, credential_url), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"components\.llama\.source\.url") as error:
+        load_component_manifest(credential_path)
+
+    message = str(error.value)
+    assert "manifest-user" not in message
+    assert "private-password" not in message
+
+
+@pytest.mark.parametrize("target", ["source", "model"])
+def test_remote_urls_are_stored_as_canonical_strings(target: str) -> None:
+    component = _external_component()
+    if target == "source":
+        source = component["source"]
+        assert isinstance(source, dict)
+        source["url"] = "HTTPS://EXAMPLE.TEST/source.git"
+    else:
+        models = component["models"]
+        assert isinstance(models, list)
+        model = models[0]
+        assert isinstance(model, dict)
+        model["url"] = "HTTPS://EXAMPLE.TEST/example.gguf"
+
+    manifest = ComponentManifest.model_validate(_manifest_data({"example": component}))
+    if target == "source":
+        assert manifest.components["example"].source.url == "https://example.test/source.git"
+    else:
+        assert manifest.components["example"].models[0].url == ("https://example.test/example.gguf")
 
 
 @pytest.mark.parametrize("duplicate_field", ["id", "path"])
@@ -641,6 +723,52 @@ def test_resolve_component_paths_rejects_traversal(
 
     with pytest.raises(ValueError, match="escapes"):
         resolve_component_paths(tmp_path, manifest, "example")
+
+
+@pytest.mark.parametrize(
+    ("field", "error"),
+    [
+        ("vendor_dir", "vendor_dir"),
+        ("source_dir", "source_dir"),
+        ("build_dir", "build_dir"),
+        ("artifact", "artifact"),
+        ("model", "model example path"),
+    ],
+)
+def test_resolve_component_paths_rejects_existing_symlink_escapes(
+    tmp_path: Path,
+    field: str,
+    error: str,
+) -> None:
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    vendor = root / "desktop" / "vendor"
+
+    if field == "vendor_dir":
+        vendor.parent.mkdir(parents=True)
+        vendor.symlink_to(outside, target_is_directory=True)
+    else:
+        vendor.mkdir(parents=True)
+        if field == "source_dir":
+            (vendor / "source").symlink_to(outside, target_is_directory=True)
+        elif field == "build_dir":
+            (vendor / "source").mkdir()
+            (vendor / "source" / "build").symlink_to(outside, target_is_directory=True)
+        elif field == "artifact":
+            (vendor / "source" / "build").mkdir(parents=True)
+            outside_artifact = outside / "example-server"
+            outside_artifact.write_text("outside", encoding="utf-8")
+            (vendor / "source" / "build" / "example-server").symlink_to(outside_artifact)
+        else:
+            (vendor / "models").mkdir()
+            outside_model = outside / "example.gguf"
+            outside_model.write_text("outside", encoding="utf-8")
+            (vendor / "models" / "example.gguf").symlink_to(outside_model)
+
+    manifest = ComponentManifest.model_validate(_manifest_data())
+    with pytest.raises(ValueError, match=rf"{re.escape(error)} escapes"):
+        resolve_component_paths(root, manifest, "example")
 
 
 def test_resolve_component_paths_rejects_unknown_component(tmp_path: Path) -> None:

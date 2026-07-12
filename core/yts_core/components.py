@@ -14,7 +14,16 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 import tomli
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 _COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
@@ -29,6 +38,7 @@ _SUPPORTED_PLATFORMS = frozenset(
 _PATH_TOKENS = frozenset({"root", "vendor", "source", "build", "artifact"})
 _REQUEST_TOKENS = frozenset({"prompt", "out", "width", "height", "steps", "seconds"})
 _FORMATTER = Formatter()
+_HTTP_URL_ADAPTER = TypeAdapter(HttpUrl)
 
 
 class _StrictManifestModel(BaseModel):
@@ -51,8 +61,7 @@ class ModelAsset(_StrictManifestModel):
     @field_validator("url")
     @classmethod
     def _validate_url(cls, value: str) -> str:
-        _require_https_url(value, "model URL")
-        return value
+        return _require_https_url(value, "model URL")
 
     @field_validator("sha256")
     @classmethod
@@ -85,7 +94,7 @@ class SourceSpec(_StrictManifestModel):
     @classmethod
     def _validate_url(cls, value: str | None) -> str | None:
         if value is not None:
-            _require_https_url(value, "source URL")
+            return _require_https_url(value, "source URL")
         return value
 
     @field_validator("commit")
@@ -351,14 +360,6 @@ class ResolvedComponent:
     artifact: Path
     models: Mapping[str, Path]
 
-    @property
-    def source(self) -> Path:
-        return self.source_dir
-
-    @property
-    def build(self) -> Path:
-        return self.build_dir
-
     def argv_tokens(self) -> Mapping[str, str]:
         values = {
             "root": str(self.root),
@@ -369,9 +370,6 @@ class ResolvedComponent:
         }
         values.update({f"model:{model_id}": str(path) for model_id, path in self.models.items()})
         return MappingProxyType(values)
-
-
-ResolvedComponentPaths = ResolvedComponent
 
 
 def load_component_manifest(path: str | Path) -> ComponentManifest:
@@ -391,7 +389,8 @@ def load_component_manifest(path: str | Path) -> ComponentManifest:
     try:
         return ComponentManifest.model_validate(raw_manifest)
     except ValidationError as exc:
-        raise ValueError(f"invalid component manifest {manifest_path}: {exc}") from exc
+        details = _format_validation_errors(exc)
+        raise ValueError(f"invalid component manifest {manifest_path}: {details}") from None
 
 
 def current_platform() -> str:
@@ -479,10 +478,31 @@ def _require_identifier(value: str, label: str) -> None:
         raise ValueError(f"{label} must match {_IDENTIFIER_PATTERN.pattern}")
 
 
-def _require_https_url(value: str, label: str) -> None:
-    parsed = urlsplit(value)
-    if parsed.scheme != "https" or not parsed.netloc:
-        raise ValueError(f"{label} must be an absolute HTTPS URL")
+def _require_https_url(value: str, label: str) -> str:
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError(f"{label} must not contain ASCII control characters")
+    try:
+        parsed = _HTTP_URL_ADAPTER.validate_python(value, strict=True)
+    except ValidationError:
+        raise ValueError(f"{label} must be a valid absolute HTTPS URL") from None
+    if parsed.scheme != "https":
+        raise ValueError(f"{label} must use HTTPS")
+    if parsed.host is None:
+        raise ValueError(f"{label} must have a valid hostname")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{label} must not include user information")
+    if parsed.fragment is not None:
+        raise ValueError(f"{label} must not include a fragment")
+    return str(parsed)
+
+
+def _format_validation_errors(error: ValidationError) -> str:
+    details: list[str] = []
+    for item in error.errors(include_input=False, include_url=False):
+        location = ".".join(str(part) for part in item["loc"])
+        message = item["msg"]
+        details.append(f"{location}: {message}" if location else message)
+    return "; ".join(details)
 
 
 def _require_relative_path(value: str, label: str) -> None:
