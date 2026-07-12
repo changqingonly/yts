@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import cli, commands, config, health, net, process
+from . import cli, commands, component_commands, config, health, net, process
 from .cli import _add_frontend_args, _add_server_args, _build_parser, main
 from .commands import (
     ProgressReporter,
@@ -29,6 +29,12 @@ from .commands import (
     stop,
     stop_frontend,
     stop_server,
+)
+from .component_commands import (
+    ComponentResult,
+    install_components,
+    status_components,
+    verify_components,
 )
 from .config import (
     DEFAULT_FRONTEND_HOST,
@@ -102,6 +108,7 @@ __all__ = [
     "DEFAULT_HEALTH_TIMEOUT_SECONDS",
     "DEFAULT_HOST",
     "DEFAULT_PORT",
+    "ComponentResult",
     "FrontendProcessConfig",
     "PROFILE_DEFAULT_PORTS",
     "Path",
@@ -157,10 +164,12 @@ __all__ = [
     "check_frontend_start_preconditions",
     "cli",
     "commands",
+    "component_commands",
     "config",
     "deploy",
     "health",
     "install",
+    "install_components",
     "load_profile_env",
     "main",
     "net",
@@ -177,6 +186,7 @@ __all__ = [
     "start_frontend",
     "start_server",
     "status",
+    "status_components",
     "status_frontend",
     "status_server",
     "stop",
@@ -186,6 +196,7 @@ __all__ = [
     "time",
     "urllib",
     "validate_profile_config",
+    "verify_components",
     "wait_for_frontend",
     "wait_for_health",
 ]
