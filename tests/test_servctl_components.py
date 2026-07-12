@@ -172,6 +172,32 @@ def _git(cwd: Path, *arguments: str) -> str:
     ).strip()
 
 
+def _git_without_environment_overrides(cwd: Path, *arguments: str) -> str:
+    environment = {
+        name: value for name, value in os.environ.items() if not name.startswith("GIT_")
+    }
+    return subprocess.check_output(
+        ["git", *arguments],
+        cwd=cwd,
+        env=environment,
+        text=True,
+        stderr=subprocess.STDOUT,
+    ).strip()
+
+
+def _redirect_git_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    source_dir: Path,
+) -> None:
+    monkeypatch.setenv("GIT_DIR", str(source_dir / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(source_dir))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(source_dir / ".git" / "index"))
+    monkeypatch.setenv("GIT_OBJECT_DIRECTORY", str(source_dir / ".git" / "objects"))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "status.showUntrackedFiles")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "no")
+
+
 def _create_source(root: Path, component: ManifestComponent, *, remote: str | None = None) -> str:
     source_dir = root / "desktop" / "vendor" / component.source_dir
     source_dir.mkdir(parents=True)
@@ -369,6 +395,33 @@ def test_verify_does_not_expose_observed_remote_credentials(tmp_path: Path) -> N
     assert SOURCE_URL in result[0].detail
     assert observed_remote not in result[0].detail
     assert secret not in result[0].detail
+
+
+def test_verify_and_status_ignore_external_git_repository_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_root = tmp_path / "target"
+    external_root = tmp_path / "external"
+    draft = ManifestComponent()
+    commit = _create_source(external_root, draft)
+    component = ManifestComponent(commit=commit)
+    external_source = external_root / "desktop" / "vendor" / component.source_dir
+
+    target_source = target_root / "desktop" / "vendor" / component.source_dir
+    target_source.mkdir(parents=True)
+    _write_manifest(target_root, component)
+    _write_artifact(target_root, component)
+    _write_model(target_root, component)
+    _redirect_git_environment(monkeypatch, external_source)
+
+    verified = verify_components(target_root, names=["llama"])
+    status = status_components(target_root, "local", names=["llama"])
+
+    assert verified[0].state == "invalid"
+    assert "source is not a readable Git repository" in verified[0].detail
+    assert status[0].state == "invalid"
+    assert "source is not a readable Git repository" in status[0].detail
 
 
 def test_verify_rejects_uninitialized_recursive_submodule(tmp_path: Path) -> None:
@@ -829,6 +882,127 @@ def test_install_fetches_missing_pinned_commit_before_detached_checkout(tmp_path
     assert result == [
         ComponentResult(name="llama", enabled=True, state="ready", detail="assets verified")
     ]
+
+
+def test_default_git_fetch_and_checkout_ignore_external_repository_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    remote = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", "--quiet", str(remote))
+
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _git(seed, "init", "--quiet")
+    _git(seed, "config", "user.email", "servctl@example.test")
+    _git(seed, "config", "user.name", "servctl tests")
+    (seed / "source.txt").write_text("first\n", encoding="utf-8")
+    (seed / ".gitignore").write_text("build/\n", encoding="utf-8")
+    _git(seed, "add", "source.txt", ".gitignore")
+    _git(seed, "commit", "--quiet", "-m", "first")
+    _git(seed, "remote", "add", "origin", str(remote))
+    _git(seed, "push", "--quiet", "-u", "origin", "HEAD")
+
+    target_root = tmp_path / "target"
+    target_source = target_root / "desktop" / "vendor" / "llama-src"
+    target_source.parent.mkdir(parents=True)
+    subprocess.check_call(["git", "clone", "--quiet", str(remote), str(target_source)])
+    _git(target_source, "remote", "set-url", "origin", SOURCE_URL)
+    first_commit = _git(target_source, "rev-parse", "HEAD")
+
+    (seed / "source.txt").write_text("second\n", encoding="utf-8")
+    _git(seed, "add", "source.txt")
+    _git(seed, "commit", "--quiet", "-m", "second")
+    pinned_commit = _git(seed, "rev-parse", "HEAD")
+    _git(seed, "push", "--quiet", "origin", "HEAD")
+    assert pinned_commit != first_commit
+
+    external_source = tmp_path / "external-source"
+    subprocess.check_call(["git", "clone", "--quiet", str(remote), str(external_source)])
+    _git(external_source, "remote", "set-url", "origin", SOURCE_URL)
+    assert _git(external_source, "rev-parse", "HEAD") == pinned_commit
+
+    component = ManifestComponent(
+        commit=pinned_commit,
+        model_bytes=None,
+        runtime_kind="command",
+    )
+    _write_manifest(target_root, component)
+    _write_artifact(target_root, component)
+
+    real_git = shutil.which("git")
+    assert real_git is not None
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_git = bin_dir / "git"
+    fake_git.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "fetch" ] && [ "$2" = "--no-tags" ] '
+        '&& [ "$3" = "origin" ]; then\n'
+        f"  exec {shlex.quote(real_git)} fetch --no-tags {shlex.quote(str(remote))} \"$4\"\n"
+        "fi\n"
+        f"exec {shlex.quote(real_git)} \"$@\"\n",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    fake_cmake = bin_dir / "cmake"
+    fake_cmake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_cmake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    _redirect_git_environment(monkeypatch, external_source)
+
+    result = install_components(target_root, names=["llama"])
+
+    assert result == [
+        ComponentResult(name="llama", enabled=True, state="ready", detail="assets verified")
+    ]
+    assert _git_without_environment_overrides(target_source, "rev-parse", "HEAD") == pinned_commit
+    assert _git_without_environment_overrides(external_source, "rev-parse", "HEAD") == (
+        pinned_commit
+    )
+
+
+def test_default_git_clone_removes_all_inherited_git_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_manifest(tmp_path, ManifestComponent())
+    external_source = tmp_path / "external-source"
+    external_source.mkdir()
+    _git(external_source, "init", "--quiet")
+    _redirect_git_environment(monkeypatch, external_source)
+    monkeypatch.setenv("GIT_COMMON_DIR", str(external_source / ".git"))
+    monkeypatch.setenv("GIT_NAMESPACE", "redirected")
+    monkeypatch.setenv("GIT_REPLACE_REF_BASE", "refs/redirected-replace")
+    monkeypatch.setenv("GIT_SHALLOW_FILE", str(external_source / "redirected-shallow"))
+    monkeypatch.setenv("GIT_CONFIG_KEY_7", "url.https://redirected.test/.insteadOf")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_7", "https://example.test/")
+
+    captured_environment = tmp_path / "git-environment.txt"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_git = bin_dir / "git"
+    fake_git.write_text(
+        "#!/bin/sh\n"
+        f"/usr/bin/env > {shlex.quote(str(captured_environment))}\n"
+        "exit 7\n",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    with pytest.raises(
+        servctl.ServctlError,
+        match="component llama clone command failed with exit code 7",
+    ):
+        install_components(tmp_path, names=["llama"])
+
+    inherited_git_environment = [
+        line
+        for line in captured_environment.read_text(encoding="utf-8").splitlines()
+        if line.startswith("GIT_")
+    ]
+    assert inherited_git_environment == []
 
 
 def test_verify_translates_missing_git_tool_to_servctl_error(
@@ -1673,6 +1847,28 @@ def test_status_reports_stopped_service_when_pid_file_is_missing(tmp_path: Path)
             detail=f"missing pid file: {tmp_path / 'run' / 'yts-component-llama-local.pid'}",
         )
     ]
+
+
+def test_http_probe_brackets_bare_ipv6_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[tuple[str, int]] = []
+
+    class Response:
+        status = 204
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+    def urlopen(url: str, *, timeout: int) -> Response:
+        requests.append((url, timeout))
+        return Response()
+
+    monkeypatch.setattr(component_commands.urllib.request, "urlopen", urlopen)
+
+    assert component_commands._http_probe("2001:db8::1", 8080, "/ready", 2) is True
+    assert requests == [("http://[2001:db8::1]:8080/ready", 2)]
 
 
 @pytest.mark.parametrize(

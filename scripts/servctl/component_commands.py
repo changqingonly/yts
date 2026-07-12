@@ -95,7 +95,8 @@ def _download_model_at(url: str, destination_name: str, parent_descriptor: int) 
 
 
 def _http_probe(host: str, port: int, path: str, timeout_seconds: int) -> bool:
-    url = f"http://{host}:{port}{path}"
+    url_host = f"[{host}]" if ":" in host else host
+    url = f"http://{url_host}:{port}{path}"
     try:
         with urllib.request.urlopen(url, timeout=timeout_seconds) as response:
             return 200 <= response.status < 300
@@ -426,6 +427,7 @@ def _git_output(source_dir: Path, *arguments: str) -> str | None:
         completed = subprocess.run(
             ["git", *arguments],
             cwd=source_dir,
+            env=_git_environment(source_dir),
             check=False,
             capture_output=True,
             text=True,
@@ -435,6 +437,16 @@ def _git_output(source_dir: Path, *arguments: str) -> str | None:
     if completed.returncode != 0:
         return None
     return completed.stdout.strip()
+
+
+def _git_environment(source_dir: Path | None) -> dict[str, str]:
+    environment = {
+        name: value for name, value in os.environ.items() if not name.startswith("GIT_")
+    }
+    if source_dir is not None:
+        environment["GIT_DIR"] = str(source_dir / ".git")
+        environment["GIT_WORK_TREE"] = str(source_dir)
+    return environment
 
 
 def _inspect_artifact(path: Path) -> _Inspection:
@@ -575,11 +587,14 @@ def _run_component_command(
     component_name: str,
     operation: str,
 ) -> None:
-    output_options = (
-        {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
-        if run_command is _DEFAULT_RUN_COMMAND and argv and argv[0] == "git"
-        else {}
-    )
+    output_options: dict[str, object] = {}
+    if run_command is _DEFAULT_RUN_COMMAND and argv and argv[0] == "git":
+        source_dir = None if operation == "clone" else cwd
+        output_options = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "env": _git_environment(source_dir),
+        }
     return_code: int | None = None
     try:
         run_command(argv, cwd=cwd, **output_options)

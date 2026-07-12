@@ -400,6 +400,67 @@ def test_service_runtime_requires_network_and_timeout_fields(missing_field: str)
         ComponentManifest.model_validate(_manifest_data({"example": component}))
 
 
+@pytest.mark.parametrize(
+    "host",
+    [
+        pytest.param("bad host", id="whitespace"),
+        pytest.param("http://example.test", id="scheme"),
+        pytest.param("user@example.test", id="userinfo"),
+        pytest.param("example.test:8080", id="port"),
+        pytest.param("[::1]", id="bracketed-ipv6"),
+        pytest.param("2001:db8::1]", id="unbalanced-bracket"),
+        pytest.param("bad..example", id="empty-label"),
+        pytest.param("-bad.example", id="leading-hyphen"),
+        pytest.param("bad-.example", id="trailing-hyphen"),
+        pytest.param("bad_example", id="invalid-label-character"),
+        pytest.param("example.test\x01", id="control-character"),
+        pytest.param("example.\u6d4b\u8bd5", id="non-ascii"),
+    ],
+)
+def test_service_runtime_rejects_invalid_host(host: str) -> None:
+    component = _external_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime["host"] = host
+
+    with pytest.raises(ValidationError, match="service host"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("127.0.0.1", "127.0.0.1"),
+        ("2001:0DB8:0:0:0:0:0:1", "2001:db8::1"),
+        ("LOCALHOST", "localhost"),
+        ("API.Example.TEST", "api.example.test"),
+    ],
+)
+def test_service_runtime_normalizes_valid_host(host: str, expected: str) -> None:
+    component = _external_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime["host"] = host
+
+    manifest = ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+    assert manifest.components["example"].runtime.host == expected
+
+
+def test_load_manifest_rejects_invalid_service_host(tmp_path: Path) -> None:
+    source = MANIFEST_PATH.read_text(encoding="utf-8")
+    original = 'host = "127.0.0.1"'
+    assert original in source
+    invalid_path = tmp_path / "invalid-host.toml"
+    invalid_path.write_text(
+        source.replace(original, 'host = "bad host"', 1),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"runtime\.host.*service host"):
+        load_component_manifest(invalid_path)
+
+
 def test_command_runtime_requires_execution_timeout_and_forbids_service_fields() -> None:
     component = _workspace_component()
     runtime = component["runtime"]

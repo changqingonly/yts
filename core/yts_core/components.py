@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import platform
 import re
 from collections.abc import Mapping, Sequence
@@ -26,6 +27,7 @@ from pydantic import (
 )
 
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+_DNS_LABEL_PATTERN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 _COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _SUPPORTED_PLATFORMS = frozenset(
@@ -173,6 +175,13 @@ class RuntimeSpec(_StrictManifestModel):
         if any(not argument for argument in value):
             raise ValueError("runtime argv entries must not be empty")
         return value
+
+    @field_validator("host")
+    @classmethod
+    def _validate_host(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_service_host(value)
 
     @model_validator(mode="after")
     def _validate_kind_contract(self) -> RuntimeSpec:
@@ -494,6 +503,38 @@ def _require_https_url(value: str, label: str) -> str:
     if parsed.fragment is not None:
         raise ValueError(f"{label} must not include a fragment")
     return str(parsed)
+
+
+def _require_service_host(value: str) -> str:
+    error = (
+        "service host must be a valid IPv4 address, bare IPv6 address, "
+        "or ASCII DNS hostname"
+    )
+    if (
+        not value.isascii()
+        or any(ord(character) <= 32 or ord(character) == 127 for character in value)
+        or "%" in value
+    ):
+        raise ValueError(error)
+
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        pass
+
+    if any(character in value for character in "/@[]:"):
+        raise ValueError(error)
+    trailing_dot = value.endswith(".")
+    hostname = value[:-1] if trailing_dot else value
+    if (
+        not hostname
+        or len(hostname) > 253
+        or ("." in hostname and all(character in "0123456789." for character in hostname))
+        or any(_DNS_LABEL_PATTERN.fullmatch(label) is None for label in hostname.split("."))
+    ):
+        raise ValueError(error)
+    normalized = hostname.lower()
+    return f"{normalized}." if trailing_dot else normalized
 
 
 def _format_validation_errors(error: ValidationError) -> str:
