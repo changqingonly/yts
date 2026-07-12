@@ -111,6 +111,7 @@ def test_real_manifest_records_audited_component_facts() -> None:
     assert manifest.components["stable-diffusion"].source.commit == (
         "e790073e1c311feb1ff423ba910f398df01bb60e"
     )
+    assert "-DSD_METAL=ON" in manifest.components["stable-diffusion"].build.configure_argv
     assert manifest.components["acestep"].source.commit == (
         "da5bc90f8664c242a7bb42eaa0c778762c02c6e3"
     )
@@ -179,8 +180,8 @@ def test_real_manifest_records_audited_runtime_argv() -> None:
             "flux",
             (
                 "flux1-schnell-q4_k.gguf",
-                4_712_734_528,
-                "a0d1f005510e7417a0d698d3c5494490a3f001e16730d35464c5deb4fccfec37",
+                6_884_606_880,
+                "0c7148f5b7e47edaea99a6cec058a8e2bc8ded52e3bba55519c81aa1a38df5d3",
             ),
         ),
         (
@@ -263,6 +264,16 @@ def test_real_manifest_records_exact_model_integrity(
     assert model.url.startswith("https://")
     assert model.size == size
     assert model.sha256 == sha256
+
+
+def test_real_manifest_pins_hugging_face_models_to_immutable_revisions() -> None:
+    manifest = load_component_manifest(MANIFEST_PATH)
+    immutable_revision = re.compile(r"/resolve/[0-9a-f]{40}/")
+
+    for component in manifest.components.values():
+        for model in component.models:
+            if model.url.startswith("https://huggingface.co/"):
+                assert immutable_revision.search(model.url) is not None, model.url
 
 
 def test_models_forbid_unknown_fields_and_type_coercion() -> None:
