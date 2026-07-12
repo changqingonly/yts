@@ -56,6 +56,13 @@ class _Inspection:
     detail: str
 
 
+@dataclass(frozen=True)
+class _PinnedDirectory:
+    entry_name: str | None
+    descriptor: int
+    identity: os.stat_result
+
+
 def _sha256_file(path: Path) -> str:
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     with os.fdopen(descriptor, "rb") as handle:
@@ -126,7 +133,7 @@ def install_components(
             existing = _inspect_model(model_path, model_spec, _sha256_file)
             if existing.state == "ready":
                 continue
-            _install_model(name, model_spec, model_path, download)
+            _install_model(name, model_spec, resolved.root, model_path, download)
 
         inspection = _inspect_component(resolved, _sha256_file)
         if inspection.state != "ready":
@@ -388,6 +395,7 @@ def _inspect_external_dirty(resolved: ResolvedComponent) -> _Inspection:
         "status",
         "--porcelain",
         "--ignore-submodules=none",
+        "--untracked-files=all",
     )
     if status is None:
         return _Inspection("invalid", f"source Git status failed: {resolved.source_dir}")
@@ -588,42 +596,20 @@ def _run_component_command(
 def _install_model(
     component_name: str,
     model_spec: ModelAsset,
+    root: Path,
     model_path: Path,
     download: Callable[[str, Path], None],
 ) -> None:
     model_parent = model_path.parent
-    try:
-        model_parent.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise ServctlError(
-            f"component {component_name}: cannot create model parent directory: "
-            f"{model_parent}: {exc}"
-        ) from exc
-
     partial_path = model_path.with_name(f"{model_path.name}.partial")
-    parent_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    try:
-        parent_descriptor = os.open(model_parent, parent_flags)
-    except OSError as exc:
-        raise ServctlError(
-            f"component {component_name}: cannot pin model parent directory: "
-            f"{model_parent}: {exc}"
-        ) from exc
-    try:
-        pinned_parent_stat = os.fstat(parent_descriptor)
-    except OSError as exc:
-        os.close(parent_descriptor)
-        raise ServctlError(
-            f"component {component_name}: cannot inspect pinned model parent directory: "
-            f"{model_parent}: {exc}"
-        ) from exc
+    pinned_directories = _pin_model_directory_ancestry(component_name, root, model_parent)
+    parent_descriptor = pinned_directories[-1].descriptor
 
     try:
-        _require_model_parent_identity(
+        _require_model_directory_ancestry(
             component_name,
             model_parent,
-            parent_descriptor,
-            pinned_parent_stat,
+            pinned_directories,
         )
         _reject_existing_partial(
             component_name,
@@ -640,11 +626,10 @@ def _install_model(
                 f"component {component_name}: model download failed for {model_spec.id} "
                 f"({type(exc).__name__})"
             ) from exc
-        _require_model_parent_identity(
+        _require_model_directory_ancestry(
             component_name,
             model_parent,
-            parent_descriptor,
-            pinned_parent_stat,
+            pinned_directories,
         )
         _verify_and_install_download(
             component_name,
@@ -652,35 +637,170 @@ def _install_model(
             partial_path,
             model_path,
             parent_descriptor,
-            pinned_parent_stat,
+            pinned_directories,
         )
     finally:
-        os.close(parent_descriptor)
+        _close_pinned_directories(pinned_directories)
 
 
-def _require_model_parent_identity(
+def _pin_model_directory_ancestry(
     component_name: str,
+    root: Path,
     model_parent: Path,
-    parent_descriptor: int,
-    pinned_parent_stat: os.stat_result,
-) -> None:
+) -> list[_PinnedDirectory]:
     try:
-        opened_parent_stat = os.fstat(parent_descriptor)
-        path_parent_stat = os.stat(model_parent, follow_symlinks=False)
+        relative_parent = model_parent.relative_to(root)
+    except ValueError as exc:
+        raise ServctlError(
+            f"component {component_name}: model directory ancestry escapes trusted root: "
+            f"{model_parent}"
+        ) from exc
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        root_descriptor = os.open(root, directory_flags)
     except OSError as exc:
         raise ServctlError(
-            f"component {component_name}: cannot verify model parent directory identity: "
-            f"{model_parent}: {exc}"
+            f"component {component_name}: cannot pin trusted root for model directory ancestry: "
+            f"{root}: {exc}"
         ) from exc
-    if (
-        not stat.S_ISDIR(opened_parent_stat.st_mode)
-        or not stat.S_ISDIR(path_parent_stat.st_mode)
-        or not _same_file(pinned_parent_stat, opened_parent_stat)
-        or not _same_file(pinned_parent_stat, path_parent_stat)
-    ):
+
+    try:
+        root_identity = os.fstat(root_descriptor)
+    except OSError as exc:
+        os.close(root_descriptor)
         raise ServctlError(
-            f"component {component_name}: model parent directory identity changed: {model_parent}"
+            f"component {component_name}: cannot inspect trusted root for model directory "
+            f"ancestry: {root}: {exc}"
+        ) from exc
+
+    pinned_directories = [_PinnedDirectory(None, root_descriptor, root_identity)]
+    complete = False
+    current_path = root
+    try:
+        for entry_name in relative_parent.parts:
+            current_path /= entry_name
+            descriptor = _open_model_directory_entry(
+                component_name,
+                entry_name,
+                pinned_directories[-1].descriptor,
+                current_path,
+                directory_flags,
+            )
+            try:
+                identity = os.fstat(descriptor)
+            except OSError as exc:
+                os.close(descriptor)
+                raise ServctlError(
+                    f"component {component_name}: cannot inspect model directory ancestry at "
+                    f"{current_path}: {exc}"
+                ) from exc
+            pinned_directories.append(_PinnedDirectory(entry_name, descriptor, identity))
+
+        _require_model_directory_ancestry(
+            component_name,
+            model_parent,
+            pinned_directories,
         )
+        complete = True
+        return pinned_directories
+    finally:
+        if not complete:
+            _close_pinned_directories(pinned_directories)
+
+
+def _open_model_directory_entry(
+    component_name: str,
+    entry_name: str,
+    parent_descriptor: int,
+    display_path: Path,
+    directory_flags: int,
+) -> int:
+    try:
+        return os.open(
+            entry_name,
+            directory_flags,
+            dir_fd=parent_descriptor,
+        )
+    except FileNotFoundError:
+        try:
+            os.mkdir(entry_name, 0o755, dir_fd=parent_descriptor)
+        except OSError as exc:
+            raise ServctlError(
+                f"component {component_name}: cannot create model directory ancestry at "
+                f"{display_path}: {exc}"
+            ) from exc
+        try:
+            return os.open(
+                entry_name,
+                directory_flags,
+                dir_fd=parent_descriptor,
+            )
+        except OSError as exc:
+            raise ServctlError(
+                f"component {component_name}: cannot pin newly created model directory "
+                f"ancestry at {display_path}: {exc}"
+            ) from exc
+    except OSError as exc:
+        raise ServctlError(
+            f"component {component_name}: cannot pin model directory ancestry at "
+            f"{display_path}: {exc}"
+        ) from exc
+
+
+def _require_model_directory_ancestry(
+    component_name: str,
+    model_parent: Path,
+    pinned_directories: Sequence[_PinnedDirectory],
+) -> None:
+    for index, pinned_directory in enumerate(pinned_directories):
+        try:
+            opened_identity = os.fstat(pinned_directory.descriptor)
+        except OSError as exc:
+            raise ServctlError(
+                f"component {component_name}: cannot verify model directory ancestry: "
+                f"{model_parent}: {exc}"
+            ) from exc
+        if not stat.S_ISDIR(opened_identity.st_mode) or not _same_file(
+            pinned_directory.identity,
+            opened_identity,
+        ):
+            raise ServctlError(
+                f"component {component_name}: model parent directory identity changed in "
+                f"pinned ancestry: {model_parent}"
+            )
+        if index == 0:
+            continue
+
+        entry_name = pinned_directory.entry_name
+        if entry_name is None:
+            raise ServctlError(
+                f"component {component_name}: invalid pinned model directory ancestry"
+            )
+        try:
+            linked_identity = os.stat(
+                entry_name,
+                dir_fd=pinned_directories[index - 1].descriptor,
+                follow_symlinks=False,
+            )
+        except OSError as exc:
+            raise ServctlError(
+                f"component {component_name}: cannot verify model directory ancestry: "
+                f"{model_parent}: {exc}"
+            ) from exc
+        if not stat.S_ISDIR(linked_identity.st_mode) or not _same_file(
+            pinned_directory.identity,
+            linked_identity,
+        ):
+            raise ServctlError(
+                f"component {component_name}: model parent directory identity changed in "
+                f"pinned ancestry: {model_parent}"
+            )
+
+
+def _close_pinned_directories(pinned_directories: Sequence[_PinnedDirectory]) -> None:
+    for pinned_directory in reversed(pinned_directories):
+        os.close(pinned_directory.descriptor)
 
 
 def _reject_existing_partial(
@@ -721,7 +841,7 @@ def _verify_and_install_download(
     partial_path: Path,
     model_path: Path,
     parent_descriptor: int,
-    pinned_parent_stat: os.stat_result,
+    pinned_directories: Sequence[_PinnedDirectory],
 ) -> None:
     try:
         descriptor = os.open(
@@ -784,11 +904,10 @@ def _verify_and_install_download(
                 f"for {model_spec.id}: {partial_path}"
             )
 
-        _require_model_parent_identity(
+        _require_model_directory_ancestry(
             component_name,
             model_path.parent,
-            parent_descriptor,
-            pinned_parent_stat,
+            pinned_directories,
         )
         try:
             os.replace(
@@ -820,11 +939,10 @@ def _verify_and_install_download(
                 f"component {component_name}: installed model identity mismatch for "
                 f"{model_spec.id}: {model_path}"
             )
-        _require_model_parent_identity(
+        _require_model_directory_ancestry(
             component_name,
             model_path.parent,
-            parent_descriptor,
-            pinned_parent_stat,
+            pinned_directories,
         )
 
 

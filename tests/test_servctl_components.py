@@ -248,6 +248,29 @@ def _create_source_with_ignored_dirty_submodule(
     return component, source_dir
 
 
+def _create_source_with_config_hidden_untracked_file(
+    root: Path,
+) -> tuple[ManifestComponent, Path]:
+    draft = ManifestComponent()
+    commit = _create_source(root, draft)
+    component = ManifestComponent(commit=commit)
+    source_dir = root / "desktop" / "vendor" / component.source_dir
+    _git(source_dir, "config", "status.showUntrackedFiles", "no")
+    (source_dir / "hidden-untracked.txt").write_text("untracked\n", encoding="utf-8")
+    assert _git(source_dir, "status", "--porcelain", "--ignore-submodules=none") == ""
+    assert "?? hidden-untracked.txt" in _git(
+        source_dir,
+        "status",
+        "--porcelain",
+        "--ignore-submodules=none",
+        "--untracked-files=all",
+    )
+    _write_manifest(root, component)
+    _write_artifact(root, component)
+    _write_model(root, component)
+    return component, source_dir
+
+
 def _write_artifact(root: Path, component: ManifestComponent, *, executable: bool = True) -> Path:
     base = root if component.source_kind == "workspace" else root / "desktop" / "vendor"
     artifact = base / component.artifact
@@ -417,6 +440,33 @@ def test_install_rejects_dirty_ignored_submodule_before_runner_command(
             names=["llama"],
             run_command=lambda command, **kwargs: commands.append(command),
             download=lambda url, destination: pytest.fail("existing model must not download"),
+        )
+
+    assert commands == []
+
+
+def test_verify_rejects_untracked_file_hidden_by_git_config(tmp_path: Path) -> None:
+    _, source_dir = _create_source_with_config_hidden_untracked_file(tmp_path)
+
+    result = verify_components(tmp_path, names=["llama"])
+
+    assert result[0].state == "invalid"
+    assert "source tree is dirty" in result[0].detail
+    assert (source_dir / "hidden-untracked.txt").read_text(encoding="utf-8") == "untracked\n"
+
+
+def test_install_rejects_config_hidden_untracked_file_before_runner_command(
+    tmp_path: Path,
+) -> None:
+    _create_source_with_config_hidden_untracked_file(tmp_path)
+    commands: list[list[str]] = []
+
+    with pytest.raises(servctl.ServctlError, match="source tree is dirty"):
+        install_components(
+            tmp_path,
+            names=["llama"],
+            run_command=lambda command, **kwargs: commands.append(command),
+            download=lambda url, destination: pytest.fail("dirty source must not download"),
         )
 
     assert commands == []
@@ -1225,6 +1275,105 @@ def test_install_rejects_model_parent_swapped_to_external_symlink_during_downloa
     assert not (outside / "llama.gguf").exists()
     assert (outside / "llama.gguf.partial").read_bytes() == MODEL_BYTES
     assert not (displaced_model_dir / "llama.gguf").exists()
+
+
+def test_install_rejects_vendor_ancestor_swapped_before_custom_download(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    component = ManifestComponent(
+        source_kind="workspace",
+        source_dir="workspace/llama",
+        artifact="workspace/llama/build/llama-tool",
+        runtime_kind="command",
+    )
+    _write_manifest(root, component)
+    (root / component.source_dir).mkdir(parents=True)
+    vendor = root / "desktop" / "vendor"
+    (vendor / "models").mkdir(parents=True)
+    displaced_vendor = root / "desktop" / "pinned-vendor"
+    outside = tmp_path / "outside-model-cache"
+    outside.mkdir()
+    downloads: list[Path] = []
+
+    def run_command(command: list[str], *, cwd: Path) -> None:
+        if command[:2] == ["cmake", "--build"]:
+            _write_artifact(root, component)
+            vendor.rename(displaced_vendor)
+            vendor.symlink_to(outside, target_is_directory=True)
+
+    def download(url: str, destination: Path) -> None:
+        downloads.append(destination)
+        destination.write_bytes(MODEL_BYTES)
+
+    with pytest.raises(servctl.ServctlError, match="model directory ancestry"):
+        install_components(
+            root,
+            names=["llama"],
+            run_command=run_command,
+            download=download,
+        )
+
+    assert downloads == []
+    assert not (outside / "models" / "llama.gguf.partial").exists()
+    assert not (outside / "models" / "llama.gguf").exists()
+
+
+def test_default_downloader_rejects_vendor_ancestor_swapped_after_resolve(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    component = ManifestComponent(
+        source_kind="workspace",
+        source_dir="workspace/llama",
+        artifact="workspace/llama/build/llama-tool",
+        runtime_kind="command",
+    )
+    _write_manifest(root, component)
+    (root / component.source_dir).mkdir(parents=True)
+    vendor = root / "desktop" / "vendor"
+    (vendor / "models").mkdir(parents=True)
+    displaced_vendor = root / "desktop" / "pinned-vendor"
+    outside = tmp_path / "outside-default-cache"
+    outside.mkdir()
+    requests: list[str] = []
+    chunks = iter([MODEL_BYTES, b""])
+
+    class Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
+        def read(self, size: int) -> bytes:
+            return next(chunks)
+
+    def urlopen(url: str) -> Response:
+        requests.append(url)
+        return Response()
+
+    monkeypatch.setattr(component_commands.urllib.request, "urlopen", urlopen)
+
+    def run_command(command: list[str], *, cwd: Path) -> None:
+        if command[:2] == ["cmake", "--build"]:
+            _write_artifact(root, component)
+            vendor.rename(displaced_vendor)
+            vendor.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(servctl.ServctlError, match="model directory ancestry"):
+        install_components(
+            root,
+            names=["llama"],
+            run_command=run_command,
+        )
+
+    assert requests == []
+    assert not (outside / "models" / "llama.gguf.partial").exists()
+    assert not (outside / "models" / "llama.gguf").exists()
 
 
 def test_install_raises_when_atomic_replace_does_not_create_final(
