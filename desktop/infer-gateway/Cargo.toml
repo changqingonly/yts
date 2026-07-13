@@ -21,3 +21,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 hound = "3.5"          # 读取 producer 输出的 WAV(acestep.cpp 输出 48kHz WAV)
 image = { version = "0.25", default-features = false, features = ["png"] }  # 读/编码 PNG(sd.cpp 输出)
 base64 = "0.22"        # /image 返回 base64 PNG
+tempfile = "3"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
