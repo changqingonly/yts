@@ -245,10 +245,19 @@ fn decode_wav_mono_f32(bytes: &[u8]) -> Result<Vec<f32>, String> {
     if channels == 1 {
         return Ok(samples);
     }
-    Ok(samples
-        .chunks_exact(channels)
-        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-        .collect())
+    let mut downmixed = Vec::with_capacity(samples.len() / channels);
+    for frame in samples.chunks_exact(channels) {
+        let sum = frame.iter().map(|sample| *sample as f64).sum::<f64>();
+        if !sum.is_finite() || sum.abs() > f32::MAX as f64 {
+            return Err("audio producer WAV stereo downmix accumulation is not finite f32".into());
+        }
+        let sample = (sum / channels as f64) as f32;
+        if !sample.is_finite() {
+            return Err("audio producer WAV stereo downmix produced a non-finite sample".into());
+        }
+        downmixed.push(sample);
+    }
+    Ok(downmixed)
 }
 
 fn validate_start(prompt: &str, seconds: f32, accept: &Accept) -> Result<u16, String> {
@@ -392,6 +401,23 @@ mod tests {
         };
         let mut writer = hound::WavWriter::new(file.reopen().unwrap(), spec).unwrap();
         writer.write_sample(f32::NAN).unwrap();
+        writer.finalize().unwrap();
+
+        assert!(super::read_wav_mono_f32(file.path().to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn rejects_non_finite_stereo_downmix_result() {
+        let file = wav_path();
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 48_000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut writer = hound::WavWriter::new(file.reopen().unwrap(), spec).unwrap();
+        writer.write_sample(f32::MAX).unwrap();
+        writer.write_sample(f32::MAX).unwrap();
         writer.finalize().unwrap();
 
         assert!(super::read_wav_mono_f32(file.path().to_str().unwrap()).is_err());

@@ -7,6 +7,104 @@ use anyhow::{anyhow, bail, Context, Result};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 const DRAIN_CAPTURE_LIMIT: usize = 64 * 1024;
+const PROCESS_CLEANUP_TIMEOUT: Duration = Duration::from_secs(1);
+
+struct ProcessGroup {
+    id: i32,
+    armed: bool,
+}
+
+impl ProcessGroup {
+    fn for_child(child: &tokio::process::Child) -> Result<Self> {
+        let id = child
+            .id()
+            .ok_or_else(|| anyhow!("spawned producer has no process id"))?;
+        let id = i32::try_from(id).context("producer process id exceeds i32")?;
+        Ok(Self { id, armed: true })
+    }
+
+    fn terminate(&mut self) -> Result<()> {
+        if !self.armed {
+            return Ok(());
+        }
+        let result = unsafe { libc::kill(-self.id, libc::SIGKILL) };
+        if result == 0 {
+            self.armed = false;
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            self.armed = false;
+            return Ok(());
+        }
+        Err(error).context("terminate producer process group")
+    }
+}
+
+impl Drop for ProcessGroup {
+    fn drop(&mut self) {
+        if self.armed {
+            unsafe {
+                libc::kill(-self.id, libc::SIGKILL);
+            }
+        }
+    }
+}
+
+struct DrainTasks {
+    task: tokio::task::JoinHandle<std::io::Result<(Vec<u8>, Vec<u8>)>>,
+    finished: bool,
+}
+
+impl DrainTasks {
+    fn spawn(
+        stdout: impl AsyncRead + Unpin + Send + 'static,
+        stderr: impl AsyncRead + Unpin + Send + 'static,
+    ) -> Self {
+        Self {
+            task: tokio::spawn(async move { tokio::try_join!(drain(stdout), drain(stderr)) }),
+            finished: false,
+        }
+    }
+
+    async fn collect_until(
+        &mut self,
+        deadline: tokio::time::Instant,
+        kind: ProducerKind,
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
+        match tokio::time::timeout_at(deadline, &mut self.task).await {
+            Ok(result) => {
+                self.finished = true;
+                result
+                    .with_context(|| format!("{} stdout/stderr drain task failed", kind.name()))?
+                    .with_context(|| format!("read {} stdout/stderr", kind.name()))
+            }
+            Err(_) => bail!("{} timed out while draining stdout/stderr", kind.name()),
+        }
+    }
+
+    async fn abort_and_join_until(&mut self, deadline: tokio::time::Instant) -> Result<()> {
+        if self.finished {
+            return Ok(());
+        }
+        self.task.abort();
+        match tokio::time::timeout_at(deadline, &mut self.task).await {
+            Ok(Err(error)) if error.is_cancelled() => {
+                self.finished = true;
+                Ok(())
+            }
+            Ok(Ok(_)) => {
+                self.finished = true;
+                Ok(())
+            }
+            Ok(Err(error)) => {
+                self.finished = true;
+                Err(error).context("join aborted producer drain task")
+            }
+            Err(_) => bail!("timed out joining aborted producer drain task"),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProducerKind {
@@ -108,6 +206,20 @@ impl ProducerConfig {
                 kind.enabled_env()
             );
         }
+        if enabled
+            && !argv
+                .as_deref()
+                .expect("enabled producer argv was validated above")
+                .iter()
+                .try_fold(false, |found, argument| {
+                    Ok::<_, anyhow::Error>(found || template_has_token(argument, "out")?)
+                })?
+        {
+            bail!(
+                "{} must contain an {{out}} template token when enabled",
+                kind.argv_env()
+            );
+        }
         if enabled && timeout.is_none() {
             bail!(
                 "{} is required when {}=true",
@@ -178,41 +290,50 @@ impl ProducerConfig {
             .map(|argument| expand_argument(self.kind, argument, &values))
             .collect::<Result<Vec<_>>>()?;
 
+        let execution_deadline = tokio::time::Instant::now() + timeout;
         let mut command = tokio::process::Command::new(&expanded[0]);
         command
             .args(&expanded[1..])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .process_group(0)
             .kill_on_drop(true);
         let mut child = command
             .spawn()
             .with_context(|| format!("spawn {} executable {:?}", self.kind.name(), expanded[0]))?;
+        let mut process_group = ProcessGroup::for_child(&child)?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| anyhow!("{} stdout pipe missing", self.kind.name()))?;
+            .expect("producer stdout is piped before spawn");
         let stderr = child
             .stderr
             .take()
-            .ok_or_else(|| anyhow!("{} stderr pipe missing", self.kind.name()))?;
-        let stdout_task = tokio::spawn(drain(stdout));
-        let stderr_task = tokio::spawn(drain(stderr));
+            .expect("producer stderr is piped before spawn");
+        let mut drains = DrainTasks::spawn(stdout, stderr);
 
-        let status = match tokio::time::timeout(timeout, child.wait()).await {
+        let status = match tokio::time::timeout_at(execution_deadline, child.wait()).await {
             Ok(status) => {
-                status.with_context(|| format!("wait for {} process", self.kind.name()))?
+                match status.with_context(|| format!("wait for {} process", self.kind.name())) {
+                    Ok(status) => status,
+                    Err(error) => {
+                        cleanup_process_group(
+                            &mut process_group,
+                            &mut child,
+                            &mut drains,
+                            self.kind,
+                        )
+                        .await
+                        .context("cleanup producer after wait failure")?;
+                        return Err(error);
+                    }
+                }
             }
             Err(_) => {
-                child
-                    .kill()
+                cleanup_process_group(&mut process_group, &mut child, &mut drains, self.kind)
                     .await
-                    .with_context(|| format!("kill timed out {} process", self.kind.name()))?;
-                child
-                    .wait()
-                    .await
-                    .with_context(|| format!("reap timed out {} process", self.kind.name()))?;
-                let _ = collect_drains(stdout_task, stderr_task, self.kind).await?;
+                    .context("cleanup producer after execution timeout")?;
                 bail!(
                     "{} timed out after {} seconds",
                     self.kind.name(),
@@ -220,15 +341,35 @@ impl ProducerConfig {
                 );
             }
         };
-        let (_stdout, stderr) = collect_drains(stdout_task, stderr_task, self.kind).await?;
+        let (_stdout, stderr) = match drains.collect_until(execution_deadline, self.kind).await {
+            Ok(output) => output,
+            Err(error) => {
+                cleanup_process_group(&mut process_group, &mut child, &mut drains, self.kind)
+                    .await
+                    .context("cleanup producer after drain failure")?;
+                return Err(error);
+            }
+        };
+        process_group
+            .terminate()
+            .with_context(|| format!("terminate remaining {} descendants", self.kind.name()))?;
         if !status.success() {
             let stderr = String::from_utf8(stderr)
                 .with_context(|| format!("{} stderr is not UTF-8", self.kind.name()))?;
             bail!("{} exited {status}: {}", self.kind.name(), stderr.trim());
         }
 
-        let bytes = std::fs::read(&output)
-            .with_context(|| format!("read {} output {}", self.kind.name(), output.display()))?;
+        let bytes =
+            match tokio::time::timeout_at(execution_deadline, tokio::fs::read(&output)).await {
+                Ok(result) => result.with_context(|| {
+                    format!("read {} output {}", self.kind.name(), output.display())
+                })?,
+                Err(_) => bail!(
+                    "{} timed out while reading output after {} seconds",
+                    self.kind.name(),
+                    timeout.as_secs_f64()
+                ),
+            };
         if bytes.is_empty() {
             bail!("{} produced an empty output file", self.kind.name());
         }
@@ -286,6 +427,15 @@ fn validate_template(kind: ProducerKind, argument: &str) -> Result<()> {
         }
         Ok(())
     })
+}
+
+fn template_has_token(argument: &str, expected: &str) -> Result<bool> {
+    let mut found = false;
+    visit_tokens(argument, |token| {
+        found |= token == expected;
+        Ok(())
+    })?;
+    Ok(found)
 }
 
 fn replacement_map<'a>(
@@ -382,20 +532,30 @@ async fn drain(mut stream: impl AsyncRead + Unpin) -> std::io::Result<Vec<u8>> {
     }
 }
 
-async fn collect_drains(
-    stdout: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
-    stderr: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
+async fn cleanup_process_group(
+    process_group: &mut ProcessGroup,
+    child: &mut tokio::process::Child,
+    drains: &mut DrainTasks,
     kind: ProducerKind,
-) -> Result<(Vec<u8>, Vec<u8>)> {
-    let stdout = stdout
-        .await
-        .with_context(|| format!("{} stdout drain task failed", kind.name()))?
-        .with_context(|| format!("read {} stdout", kind.name()))?;
-    let stderr = stderr
-        .await
-        .with_context(|| format!("{} stderr drain task failed", kind.name()))?
-        .with_context(|| format!("read {} stderr", kind.name()))?;
-    Ok((stdout, stderr))
+) -> Result<()> {
+    let cleanup_deadline = tokio::time::Instant::now() + PROCESS_CLEANUP_TIMEOUT;
+    let mut failures = Vec::new();
+    if let Err(error) = process_group.terminate() {
+        failures.push(format!("terminate process group: {error:#}"));
+    }
+    match tokio::time::timeout_at(cleanup_deadline, child.wait()).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => failures.push(format!("reap direct child: {error}")),
+        Err(_) => failures.push("timed out reaping direct child".into()),
+    }
+    if let Err(error) = drains.abort_and_join_until(cleanup_deadline).await {
+        failures.push(format!("stop stdout/stderr drain: {error:#}"));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        bail!("{} cleanup failed: {}", kind.name(), failures.join("; "))
+    }
 }
 
 #[cfg(test)]
@@ -403,11 +563,26 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
+    use std::pin::Pin;
+    use std::task::{Context as TaskContext, Poll};
     use std::time::{Duration, Instant};
 
     use tempfile::TempDir;
+    use tokio::io::{AsyncRead, ReadBuf};
 
-    use super::{ProducerConfig, ProducerKind};
+    use super::{DrainTasks, ProducerConfig, ProducerKind};
+
+    struct FailingReader;
+
+    impl AsyncRead for FailingReader {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _cx: &mut TaskContext<'_>,
+            _buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Err(std::io::Error::other("fixture read failure")))
+        }
+    }
 
     fn executable(body: &str) -> (TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -417,9 +592,56 @@ mod tests {
         (dir, path)
     }
 
+    fn process_exists(pid: &str) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", pid])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    }
+
+    fn kill_process(pid: &str) {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", pid])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    async fn wait_for_files(paths: &[&Path]) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while paths.iter().any(|path| !path.exists()) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
     fn enabled(kind: ProducerKind, argv: Vec<String>, timeout: &str) -> ProducerConfig {
         let json = serde_json::to_string(&argv).unwrap();
         ProducerConfig::parse(kind, Some("true"), Some(&json), Some(timeout)).unwrap()
+    }
+
+    #[tokio::test]
+    async fn completed_drain_error_cleanup_does_not_poll_join_handle_twice() {
+        let mut drains = DrainTasks::spawn(FailingReader, tokio::io::empty());
+
+        let error = drains
+            .collect_until(
+                tokio::time::Instant::now() + Duration::from_secs(1),
+                ProducerKind::Image,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("stdout/stderr"), "{error:#}");
+        drains
+            .abort_and_join_until(tokio::time::Instant::now() + Duration::from_secs(1))
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -447,6 +669,27 @@ mod tests {
             let error = ProducerConfig::parse(ProducerKind::Image, Some("true"), argv, Some("1"))
                 .unwrap_err();
             assert!(error.to_string().contains("ARGV"), "{error:#}");
+        }
+    }
+
+    #[test]
+    fn enabled_producer_requires_output_token() {
+        let argv = serde_json::to_string(&["/bin/true"]).unwrap();
+
+        let error =
+            ProducerConfig::parse(ProducerKind::Image, Some("true"), Some(&argv), Some("1"))
+                .unwrap_err();
+
+        assert!(error.to_string().contains("{out}"), "{error:#}");
+    }
+
+    #[test]
+    fn output_token_may_be_standalone_or_embedded() {
+        for output_argument in ["{out}", "--output={out}"] {
+            let argv = serde_json::to_string(&["/bin/true", output_argument]).unwrap();
+
+            ProducerConfig::parse(ProducerKind::Audio, Some("true"), Some(&argv), Some("1"))
+                .unwrap();
         }
     }
 
@@ -558,6 +801,77 @@ mod tests {
             .status()
             .unwrap();
         assert!(!status.success(), "producer process {pid} survived timeout");
+    }
+
+    #[tokio::test]
+    async fn timeout_kills_descendants_bounds_pipe_drain_and_cleans_temp_directory() {
+        let (_fixture, executable) = executable(
+            "printf '%s' \"$$\" > \"$2\"; printf '%s' \"$1\" > \"$4\"; sleep 30 & descendant=$!; printf '%s' \"$descendant\" > \"$3\"",
+        );
+        let observation = tempfile::tempdir().unwrap();
+        let parent_pid_path = observation.path().join("parent.pid");
+        let descendant_pid_path = observation.path().join("descendant.pid");
+        let output_path_observation = observation.path().join("output.path");
+        let config = enabled(
+            ProducerKind::Image,
+            vec![
+                executable.to_string_lossy().into_owned(),
+                "{out}".into(),
+                parent_pid_path.to_string_lossy().into_owned(),
+                descendant_pid_path.to_string_lossy().into_owned(),
+                output_path_observation.to_string_lossy().into_owned(),
+            ],
+            "2",
+        );
+        let started = Instant::now();
+        let mut execution = tokio::spawn(async move { config.execute("image.png", &[]).await });
+        wait_for_files(&[
+            &parent_pid_path,
+            &descendant_pid_path,
+            &output_path_observation,
+        ])
+        .await;
+
+        let outcome = match tokio::time::timeout(Duration::from_secs(3), &mut execution).await {
+            Ok(result) => Some(result.unwrap()),
+            Err(_) => {
+                execution.abort();
+                let _ = execution.await;
+                None
+            }
+        };
+        let parent_pid = fs::read_to_string(&parent_pid_path).unwrap();
+        let descendant_pid = fs::read_to_string(&descendant_pid_path).unwrap();
+        let output_path = PathBuf::from(fs::read_to_string(&output_path_observation).unwrap());
+        if outcome.is_some() {
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while process_exists(parent_pid.trim()) || process_exists(descendant_pid.trim()) {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        let parent_survived = process_exists(parent_pid.trim());
+        let descendant_survived = process_exists(descendant_pid.trim());
+        kill_process(parent_pid.trim());
+        kill_process(descendant_pid.trim());
+
+        let error = outcome
+            .expect("producer execution exceeded its global deadline")
+            .unwrap_err();
+        assert!(started.elapsed() < Duration::from_secs(4));
+        assert!(error.to_string().contains("timed out"), "{error:#}");
+        assert!(
+            !parent_survived,
+            "parent process {parent_pid} survived timeout"
+        );
+        assert!(
+            !descendant_survived,
+            "descendant process {descendant_pid} survived timeout"
+        );
+        assert!(!output_path.exists());
+        assert!(!output_path.parent().unwrap().exists());
     }
 
     #[test]

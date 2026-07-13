@@ -15,7 +15,8 @@ use crate::GatewayState;
 pub struct LlamaConfig {
     pub base_url: String,
     pub model: String,
-    pub readiness_timeout: Duration,
+    pub startup_timeout: Duration,
+    pub probe_timeout: Duration,
     pub poll_interval: Duration,
 }
 
@@ -23,19 +24,30 @@ impl LlamaConfig {
     pub fn from_env() -> Result<Self> {
         let base_url = required_env("YTS_LLAMA_BASE_URL")?;
         let model = required_env("YTS_LLAMA_MODEL")?;
-        let timeout = required_env("YTS_LLAMA_READY_TIMEOUT_SECONDS")?;
-        Self::parse_with_model(Some(&base_url), Some(&model), Some(&timeout))
+        let startup_timeout = required_env("YTS_LLAMA_STARTUP_TIMEOUT_SECONDS")?;
+        let probe_timeout = required_env("YTS_LLAMA_PROBE_TIMEOUT_SECONDS")?;
+        Self::parse_with_model(
+            Some(&base_url),
+            Some(&model),
+            Some(&startup_timeout),
+            Some(&probe_timeout),
+        )
     }
 
     #[cfg(test)]
-    fn parse(base_url: Option<&str>, timeout: Option<&str>) -> Result<Self> {
-        Self::parse_with_model(base_url, Some("test-model"), timeout)
+    fn parse(
+        base_url: Option<&str>,
+        startup_timeout: Option<&str>,
+        probe_timeout: Option<&str>,
+    ) -> Result<Self> {
+        Self::parse_with_model(base_url, Some("test-model"), startup_timeout, probe_timeout)
     }
 
     fn parse_with_model(
         base_url: Option<&str>,
         model: Option<&str>,
-        timeout: Option<&str>,
+        startup_timeout: Option<&str>,
+        probe_timeout: Option<&str>,
     ) -> Result<Self> {
         let base_url = base_url.filter(|value| !value.is_empty()).ok_or_else(|| {
             anyhow::anyhow!("YTS_LLAMA_BASE_URL is required and must not be empty")
@@ -54,21 +66,14 @@ impl LlamaConfig {
         let model = model
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow::anyhow!("YTS_LLAMA_MODEL is required and must not be empty"))?;
-        let timeout = timeout
-            .ok_or_else(|| anyhow::anyhow!("YTS_LLAMA_READY_TIMEOUT_SECONDS is required"))?;
-        let seconds: f64 = timeout
-            .parse()
-            .context("YTS_LLAMA_READY_TIMEOUT_SECONDS must be a positive number")?;
-        if !seconds.is_finite() || seconds <= 0.0 {
-            bail!("YTS_LLAMA_READY_TIMEOUT_SECONDS must be finite and greater than zero");
-        }
-        let readiness_timeout = Duration::try_from_secs_f64(seconds)
-            .context("YTS_LLAMA_READY_TIMEOUT_SECONDS is outside the supported duration range")?;
+        let startup_timeout = parse_timeout("YTS_LLAMA_STARTUP_TIMEOUT_SECONDS", startup_timeout)?;
+        let probe_timeout = parse_timeout("YTS_LLAMA_PROBE_TIMEOUT_SECONDS", probe_timeout)?;
 
         Ok(Self {
             base_url: parsed.to_string().trim_end_matches('/').to_string(),
             model: model.into(),
-            readiness_timeout,
+            startup_timeout,
+            probe_timeout,
             poll_interval: Duration::from_millis(500),
         })
     }
@@ -78,7 +83,7 @@ impl LlamaConfig {
 pub struct LlamaBackend {
     base_url: String,
     model: String,
-    readiness_timeout: Duration,
+    probe_timeout: Duration,
     poll_interval: Duration,
     http: reqwest::Client,
 }
@@ -92,13 +97,13 @@ impl LlamaBackend {
         let backend = Self {
             base_url: config.base_url,
             model: config.model,
-            readiness_timeout: config.readiness_timeout,
+            probe_timeout: config.probe_timeout,
             poll_interval: config.poll_interval,
             http: reqwest::Client::builder()
                 .build()
                 .context("build llama HTTP client")?,
         };
-        backend.wait_ready().await?;
+        backend.wait_ready(config.startup_timeout).await?;
         Ok(backend)
     }
 
@@ -107,51 +112,50 @@ impl LlamaBackend {
     }
 
     pub async fn check_ready(&self) -> Result<()> {
-        match tokio::time::timeout(self.readiness_timeout, self.probe()).await {
+        match tokio::time::timeout(self.probe_timeout, self.probe()).await {
             Ok(result) => result,
             Err(_) => bail!(
                 "llama-server readiness probe timed out after {} seconds",
-                self.readiness_timeout.as_secs_f64()
+                self.probe_timeout.as_secs_f64()
             ),
         }
     }
 
-    async fn wait_ready(&self) -> Result<()> {
+    async fn wait_ready(&self, startup_timeout: Duration) -> Result<()> {
         let started = Instant::now();
         loop {
-            let remaining = self
-                .readiness_timeout
+            let remaining = startup_timeout
                 .checked_sub(started.elapsed())
                 .ok_or_else(|| {
                     anyhow::anyhow!(
                         "llama-server at {} not ready within {} seconds",
                         self.base_url,
-                        self.readiness_timeout.as_secs_f64()
+                        startup_timeout.as_secs_f64()
                     )
                 })?;
-            match tokio::time::timeout(remaining, self.probe()).await {
+            let probe_timeout = self.probe_timeout.min(remaining);
+            match tokio::time::timeout(probe_timeout, self.probe()).await {
                 Ok(Ok(())) => return Ok(()),
                 Ok(Err(error)) => {
-                    if started.elapsed() >= self.readiness_timeout {
+                    if started.elapsed() >= startup_timeout {
                         return Err(error).with_context(|| {
                             format!(
                                 "llama-server at {} not ready within {} seconds",
                                 self.base_url,
-                                self.readiness_timeout.as_secs_f64()
+                                startup_timeout.as_secs_f64()
                             )
                         });
                     }
                     tracing::warn!("llama-server readiness probe failed: {error:#}");
                 }
                 Err(_) => {
-                    bail!(
-                        "llama-server at {} not ready within {} seconds",
-                        self.base_url,
-                        self.readiness_timeout.as_secs_f64()
+                    tracing::warn!(
+                        "llama-server readiness probe timed out after {} seconds",
+                        probe_timeout.as_secs_f64()
                     );
                 }
             }
-            let remaining = self.readiness_timeout.saturating_sub(started.elapsed());
+            let remaining = startup_timeout.saturating_sub(started.elapsed());
             tokio::time::sleep(self.poll_interval.min(remaining)).await;
         }
     }
@@ -179,11 +183,23 @@ impl LlamaBackend {
         Self {
             base_url,
             model: "test-model".into(),
-            readiness_timeout: Duration::from_millis(500),
+            probe_timeout: Duration::from_millis(500),
             poll_interval: Duration::from_millis(10),
             http: reqwest::Client::new(),
         }
     }
+}
+
+fn parse_timeout(key: &str, value: Option<&str>) -> Result<Duration> {
+    let value = value.ok_or_else(|| anyhow::anyhow!("{key} is required"))?;
+    let seconds: f64 = value
+        .parse()
+        .with_context(|| format!("{key} must be a positive number"))?;
+    if !seconds.is_finite() || seconds <= 0.0 {
+        bail!("{key} must be finite and greater than zero");
+    }
+    Duration::try_from_secs_f64(seconds)
+        .with_context(|| format!("{key} is outside the supported duration range"))
 }
 
 fn required_env(key: &str) -> Result<String> {
@@ -302,37 +318,74 @@ fn parse_completion(data: serde_json::Value) -> Result<TextResp> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     use super::{LlamaBackend, LlamaConfig};
 
-    #[tokio::test]
-    async fn readiness_timeout_is_an_error() {
+    async fn nonresponding_server() -> (String, Arc<AtomicUsize>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let _server = tokio::spawn(async move {
-            let (_stream, _) = listener.accept().await.unwrap();
-            tokio::time::sleep(Duration::from_secs(5)).await;
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let accepted_by_server = accepted.clone();
+        tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                accepted_by_server.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let _stream = stream;
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                });
+            }
         });
+        (format!("http://{addr}"), accepted)
+    }
+
+    #[tokio::test]
+    async fn connect_retries_with_probe_timeout_until_startup_timeout() {
+        let (base_url, accepted) = nonresponding_server().await;
         let started = Instant::now();
         let config = LlamaConfig {
-            base_url: format!("http://{addr}"),
+            base_url,
             model: "test-model".into(),
-            readiness_timeout: Duration::from_millis(100),
+            startup_timeout: Duration::from_millis(240),
+            probe_timeout: Duration::from_millis(50),
             poll_interval: Duration::from_millis(10),
         };
 
         let error = LlamaBackend::connect_with_config(config).await.unwrap_err();
 
+        assert!(started.elapsed() >= Duration::from_millis(180));
         assert!(started.elapsed() < Duration::from_secs(1));
         assert!(error.to_string().contains("not ready"), "{error:#}");
+        assert!(accepted.load(Ordering::SeqCst) >= 2);
+    }
+
+    #[tokio::test]
+    async fn runtime_readiness_is_bounded_by_probe_timeout() {
+        let (base_url, _) = nonresponding_server().await;
+        let backend = LlamaBackend {
+            base_url,
+            model: "test-model".into(),
+            probe_timeout: Duration::from_millis(60),
+            poll_interval: Duration::from_millis(10),
+            http: reqwest::Client::new(),
+        };
+        let started = Instant::now();
+
+        let error = backend.check_ready().await.unwrap_err();
+
+        assert!(started.elapsed() < Duration::from_millis(300));
+        assert!(error.to_string().contains("timed out"), "{error:#}");
     }
 
     #[test]
-    fn explicit_base_url_and_timeout_are_required() {
-        assert!(LlamaConfig::parse(None, Some("1")).is_err());
-        assert!(LlamaConfig::parse(Some(""), Some("1")).is_err());
-        assert!(LlamaConfig::parse(Some("http://127.0.0.1:8080"), None).is_err());
+    fn explicit_base_url_and_both_timeouts_are_required() {
+        assert!(LlamaConfig::parse(None, Some("1"), Some("1")).is_err());
+        assert!(LlamaConfig::parse(Some(""), Some("1"), Some("1")).is_err());
+        assert!(LlamaConfig::parse(Some("http://127.0.0.1:8080"), None, Some("1")).is_err());
+        assert!(LlamaConfig::parse(Some("http://127.0.0.1:8080"), Some("1"), None).is_err());
     }
 
     #[test]
