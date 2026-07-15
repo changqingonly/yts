@@ -31,7 +31,11 @@ def test_environment_store_exposes_selected_target_health_probe_only() -> None:
     source = read_source("stores/environment.js")
 
     assert 'import { healthCheck } from "../services/transport";' in source
+    assert "const pendingHealthChecks = new Map();" in source
     assert "async checkHealth(target = this.target)" in source
+    assert "if (pendingHealthChecks.has(requestTarget))" in source
+    assert "return pendingHealthChecks.get(requestTarget);" in source
+    assert "pendingHealthChecks.delete(requestTarget);" in source
     assert 'this.health[requestTarget] = "checking";' in source
     assert 'this.health[requestTarget] = "online";' in source
     assert 'this.health[requestTarget] = "offline";' in source

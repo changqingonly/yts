@@ -196,13 +196,11 @@ function readDeviceId() {
           </header>
           <div v-if="hasImportHistory" class="history-list">
             <article v-for="item in importHistoryItems" :key="item.id" class="history-row">
-              <div class="history-icon">
+              <span class="history-icon">
                 <FileAudio :size="16" />
-              </div>
-              <div class="history-copy">
-                <strong>{{ itemTitle(item) }}</strong>
-                <small>{{ itemArtist(item) }} · {{ itemImportTimeLabel(item) }}</small>
-              </div>
+              </span>
+              <strong>{{ itemTitle(item) }}</strong>
+              <small>{{ itemArtist(item) }} · {{ itemImportTimeLabel(item) }}</small>
             </article>
           </div>
           <p v-else class="drawer-empty">暂无已导入歌曲。</p>
@@ -423,7 +421,7 @@ function readDeviceId() {
 
 .history-list {
   display: grid;
-  gap: 8px;
+  gap: 4px;
   grid-auto-rows: max-content;
   min-height: 0;
   overflow-y: auto;
@@ -432,39 +430,44 @@ function readDeviceId() {
 
 .history-row {
   align-items: center;
-  background: rgba(4, 16, 31, 0.34);
-  border-radius: 8px;
+  background: rgba(4, 16, 31, 0.3);
+  border: 0;
+  border-radius: 6px;
+  box-sizing: border-box;
+  color: var(--color-text);
   display: grid;
-  gap: 10px;
-  grid-template-columns: 30px minmax(0, 1fr);
-  min-height: 56px;
-  padding: 10px 12px;
+  font: inherit;
+  gap: 6px;
+  grid-template-columns: 24px minmax(0, 1fr) minmax(48px, 78px);
+  min-height: 34px;
+  padding: 5px 8px;
+  width: 100%;
 }
 
 .history-icon {
-  color: var(--color-brand-cyan);
+  color: var(--color-muted);
   display: inline-flex;
+  font-size: 11px;
+  line-height: 1;
 }
 
-.history-copy {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.history-copy strong {
+.history-row strong {
   color: var(--color-heading);
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1.1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.history-copy small {
+.history-row small {
   color: var(--color-muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 750;
+  justify-self: end;
+  line-height: 1;
   overflow: hidden;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

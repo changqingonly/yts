@@ -8,6 +8,8 @@ import {
   setSelectedApiTarget,
 } from "../services/environment";
 
+const pendingHealthChecks = new Map();
+
 export const useEnvironmentStore = defineStore("environment", {
   state: () => ({
     target: selectedApiTarget(),
@@ -43,17 +45,26 @@ export const useEnvironmentStore = defineStore("environment", {
     },
     async checkHealth(target = this.target) {
       const requestTarget = assertApiTarget(target);
+      if (pendingHealthChecks.has(requestTarget)) {
+        return pendingHealthChecks.get(requestTarget);
+      }
       this.health[requestTarget] = "checking";
       this.healthError[requestTarget] = "";
-      try {
-        await healthCheck(requestTarget);
-        this.health[requestTarget] = "online";
-        return "online";
-      } catch (error) {
-        this.health[requestTarget] = "offline";
-        this.healthError[requestTarget] = error instanceof Error ? error.message : String(error);
-        return "offline";
-      }
+      const healthPromise = (async () => {
+        try {
+          await healthCheck(requestTarget);
+          this.health[requestTarget] = "online";
+          return "online";
+        } catch (error) {
+          this.health[requestTarget] = "offline";
+          this.healthError[requestTarget] = error instanceof Error ? error.message : String(error);
+          return "offline";
+        } finally {
+          pendingHealthChecks.delete(requestTarget);
+        }
+      })();
+      pendingHealthChecks.set(requestTarget, healthPromise);
+      return healthPromise;
     },
     syncFromStorage() {
       this.target = selectedApiTarget();

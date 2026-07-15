@@ -1,8 +1,8 @@
 # yts
 
-乐工具新架构(v3.1)脚手架。**原项目 `../yuetools` 保持不动**;本仓是端云重构的新代码。
+乐兔工具新架构(v3.1)脚手架。**原项目 `../yuetools` 保持不动**;本仓是端云重构的新代码。
 
-> 设计源(完整论证 + 图谱):`../yuetools/docs/tech.html` 与 `../yuetools/docs/wiki/`(见 `Arch-V3-1` / `Candle-Inference` / `Platform-Split` / `Server-Stack-Plan` / `Transport-Agnostic-Core`)。
+> 设计源(完整论证 + 图谱):`../yuetools/docs/tech.html` 与 `../yuetools/docs/wiki/`(见 `Arch-V3-1` / `Platform-Split` / `Server-Stack-Plan` / `Transport-Agnostic-Core`)。
 
 ## 架构一句话
 - **本地推理 = GGML 推理网关(Rust,`desktop/infer-gateway`)**:文本→llama.cpp、图片→stable-diffusion.cpp、音乐→acestep.cpp(GGML/Metal 原生二进制,spawn/proxy)。
@@ -51,7 +51,9 @@ bash scripts/build_sidecar_macos.sh
 运行环境创建在当前目录 `.venv/`,前端依赖安装到 `desktop/frontend/node_modules/`。
 `servctl start` 会在暴露后端端口前检查 `conf/{profile}.env`、端口占用、数据库连接、
 FastAPI app 装配和当前推理后端的最小文本调用,后端健康后再用 Vite preview 暴露
-Web 前端 `http://127.0.0.1:1420/`。任一步失败都会非零退出,不做隐式 fallback。
+Web 前端 `http://127.0.0.1:1420/`。后端默认端口按 profile 区分:`cloud` 使用
+`8000`,`local` 使用 `8765`;显式传入 `--port` 时以命令行为准。任一步失败都会非零退出,
+不做隐式 fallback。
 `servctl deploy` 负责校验配置并构建前端产物(`npm run build`);单独执行 `servctl start`
 不会重复安装 Python/Node 环境。
 

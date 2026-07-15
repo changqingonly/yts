@@ -46,6 +46,19 @@ export const usePlayerStore = defineStore("player", {
       if (currentTime != null) this.currentTime = Math.max(0, Number(currentTime) || 0);
       if (duration != null) this.duration = Math.max(0, Number(duration) || 0);
     },
+    selectAt(index, { currentTime = 0, isPlaying = false } = {}) {
+      if (index < 0 || index >= this.queue.length) {
+        throw new Error("播放索引越界");
+      }
+      const normalizedTime = Number(currentTime);
+      if (!Number.isFinite(normalizedTime) || normalizedTime < 0) {
+        throw new Error("播放时间必须是非负数字");
+      }
+      this.currentIndex = index;
+      this.isPlaying = Boolean(isPlaying);
+      this.currentTime = normalizedTime;
+      this.duration = 0;
+    },
     playAt(index) {
       if (index < 0 || index >= this.queue.length) {
         throw new Error("播放索引越界");

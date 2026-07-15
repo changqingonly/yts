@@ -415,6 +415,92 @@ def test_bootstrap_upgrades_existing_playlist_tables() -> None:
         assert response.json()["item_count"] == 0
 
 
+def test_playlist_append_populates_source_columns_for_legacy_tables() -> None:
+    db_url = os.environ["YTS_DATABASE_URL"]
+    db_path = db_url.removeprefix("sqlite+aiosqlite:///")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE music_playlist (
+                id VARCHAR(128) PRIMARY KEY,
+                user_uuid VARCHAR(64) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                updated_at_ms BIGINT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE music_playlist_item (
+                id VARCHAR(128) PRIMARY KEY,
+                user_uuid VARCHAR(64) NOT NULL,
+                playlist_id VARCHAR(128) NOT NULL,
+                source VARCHAR(64) NOT NULL,
+                source_ref TEXT NOT NULL,
+                title VARCHAR(255),
+                artist VARCHAR(255),
+                duration_ms INTEGER,
+                cover_url VARCHAR(512),
+                position FLOAT NOT NULL,
+                added_at_ms BIGINT NOT NULL,
+                updated_at_ms BIGINT NOT NULL,
+                deleted_at_ms BIGINT,
+                op_clock BIGINT NOT NULL,
+                device_id VARCHAR(128) NOT NULL,
+                content_hash VARCHAR(64),
+                size_bytes BIGINT,
+                mime VARCHAR(128)
+            )
+            """
+        )
+
+    audio_bytes = wav_bytes()
+    expected_hash = hashlib.sha256(audio_bytes).hexdigest()
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(client, "legacy-append@example.com", "Password123")[
+            "access_token"
+        ]
+        headers = {"Authorization": f"Bearer {token}"}
+        uploaded = client.post(
+            "/api/music/upload",
+            headers=headers,
+            files={"file": ("legacy.wav", audio_bytes, "audio/wav")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        playlist_id = client.post(
+            "/api/music/playlists/default",
+            headers=headers,
+            json={"scope": "cloud"},
+        ).json()["id"]
+
+        appended = client.post(
+            f"/api/music/playlists/{playlist_id}/items",
+            headers={**headers, "Origin": "http://127.0.0.1:1420"},
+            json={
+                "items": [
+                    {
+                        "content_hash": expected_hash,
+                        "title_alias": "旧表歌曲",
+                        "artist_alias": "",
+                        "device_id": "device-a",
+                    }
+                ]
+            },
+        )
+
+        assert appended.status_code == 200, appended.text
+        assert appended.headers["access-control-allow-origin"] == "http://127.0.0.1:1420"
+        item = appended.json()["items"][0]
+        assert item["content_hash"] == expected_hash
+        assert item["meta_song"]["content_hash"] == expected_hash
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT source, source_ref FROM music_playlist_item WHERE content_hash = ?",
+                (expected_hash,),
+            ).fetchone()
+        assert row == ("local_file", expected_hash)
+
+
 def test_playlist_sync_accepts_remote_song_and_rejects_unowned_local_file() -> None:
     with TestClient(create_app()) as client:
         token = register_via_test_crypto(client, "music@example.com", "Password123")["access_token"]

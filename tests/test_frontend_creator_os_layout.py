@@ -427,6 +427,51 @@ def test_music_import_drawer_lists_existing_imports_by_recent_added_time() -> No
     assert ".history-row {" in drawer
 
 
+def test_music_import_history_rows_match_playlist_and_history_item_style() -> None:
+    music = read_source("pages/MusicPage.vue")
+    drawer = read_source("components/MusicImportDrawer.vue")
+    template = drawer.split("<template>", 1)[1].split("</template>", 1)[0]
+    history_row_block = template.split('class="history-row"', 1)[1].split("</article>", 1)[0]
+    playlist_row_rule = music.split(".drawer-row {", 1)[1].split("}", 1)[0]
+    import_row_rule = drawer.split(".history-row {", 1)[1].split("}", 1)[0]
+    import_icon_rule = drawer.split(".history-icon {", 1)[1].split("}", 1)[0]
+    import_title_rule = drawer.split(".history-row strong {", 1)[1].split("}", 1)[0]
+    import_meta_rule = drawer.split(".history-row small {", 1)[1].split("}", 1)[0]
+
+    assert '<span class="history-icon">' in history_row_block
+    assert "{{ itemTitle(item) }}" in history_row_block
+    assert "{{ itemArtist(item) }} · {{ itemImportTimeLabel(item) }}" in history_row_block
+    assert 'class="history-copy"' not in template
+
+    for token in [
+        "background: rgba(4, 16, 31, 0.3);",
+        "border: 0;",
+        "border-radius: 6px;",
+        "box-sizing: border-box;",
+        "color: var(--color-text);",
+        "display: grid;",
+        "font: inherit;",
+        "align-items: center;",
+        "gap: 6px;",
+        "grid-template-columns: 24px minmax(0, 1fr) minmax(48px, 78px);",
+        "min-height: 34px;",
+        "padding: 5px 8px;",
+        "width: 100%;",
+    ]:
+        assert token in playlist_row_rule
+        assert token in import_row_rule
+
+    assert "color: var(--color-muted);" in import_icon_rule
+    assert "font-size: 11px;" in import_icon_rule
+    assert "line-height: 1;" in import_icon_rule
+    assert "font-size: 12px;" in import_title_rule
+    assert "line-height: 1.1;" in import_title_rule
+    assert "font-size: 11px;" in import_meta_rule
+    assert "font-size: 13px;" not in import_title_rule
+    assert "justify-self: end;" in import_meta_rule
+    assert "line-height: 1;" in import_meta_rule
+
+
 def test_music_page_uses_import_drawer_and_meta_song_tracks() -> None:
     music = read_source("pages/MusicPage.vue")
     for token in [
@@ -497,7 +542,8 @@ def test_audio_player_uses_centered_time_progress_and_full_width_scrubber() -> N
     assert "<media-time-range" in timeline_block
     assert "<media-time-display" not in timeline_block
     assert "<media-duration-display" not in timeline_block
-    assert "grid-template-rows: minmax(220px, 1fr) auto auto;" in player
+    assert "grid-template-rows: auto auto;" in player
+    assert "grid-template-rows: minmax(220px, 1fr) auto auto;" not in player
     assert "grid-template-columns: minmax(0, 1fr);" in player
     assert "left: var(--timeline-progress);" in player
     assert "transform: translate(-50%, -100%);" in player
@@ -516,19 +562,45 @@ def test_audio_player_uses_centered_time_progress_and_full_width_scrubber() -> N
     assert "--media-control-background: transparent;" in player
     assert "--media-range-padding-left: 0px;" in player
     assert "--media-range-padding-right: 0px;" in player
+    assert "--media-range-track-height: 2px;" in player
     assert "--media-range-track-background: rgba(216, 231, 245, 0.28);" in player
 
 
-def test_audio_player_animates_waveform_while_playing() -> None:
+def test_audio_player_removes_wavesurfer_visual_rendering_after_butterchurn() -> None:
+    package_json = read_frontend_file("package.json")
     player = read_source("components/YtsAudioPlayer.vue")
+    template = player.split("<template>", 1)[1].split("</template>", 1)[0]
 
     assert ':class="{ empty: !sourceUrl, playing }"' in player
-    assert ".yts-audio-player.playing .waveform-canvas" in player
-    assert "@keyframes waveform-breathe" in player
-    assert "@media (prefers-reduced-motion: reduce)" in player
-    hero_after_block = player.split(".hero-wave::after {", 1)[1].split("}", 1)[0]
-    assert "background:" not in hero_after_block
-    assert "linear-gradient" not in hero_after_block
+    assert '"wavesurfer.js"' not in package_json
+    assert 'import WaveSurfer from "wavesurfer.js";' not in player
+    assert "WaveSurfer.create" not in player
+    assert "waveformRef" not in player
+    assert "requireWave" not in player
+    assert 'class="hero-wave"' not in template
+    assert 'class="waveform-canvas"' not in template
+    assert "shadow-root" not in player
+    assert ".yts-audio-player.playing .waveform-canvas" not in player
+    assert "@keyframes waveform-breathe" not in player
+    assert "drop-shadow(0 0 14px" not in player
+    assert "progressColor" not in player
+    assert "waveColor" not in player
+    assert "player-spacer" not in player
+
+
+def test_audio_player_does_not_reserve_removed_waveform_stage_height() -> None:
+    music = read_source("pages/MusicPage.vue")
+    player = read_source("components/YtsAudioPlayer.vue")
+    template = player.split("<template>", 1)[1].split("</template>", 1)[0]
+    root_rule = player.split(".yts-audio-player {", 1)[1].split("}", 1)[0]
+    stage_rule = music.split(".player-stage {", 1)[1].split("}", 1)[0]
+
+    assert 'class="player-spacer"' not in template
+    assert "height: 100%;" not in root_rule
+    assert "grid-template-rows: auto auto;" in root_rule
+    assert "minmax(220px, 1fr)" not in root_rule
+    assert "align-content: end;" in stage_rule
+    assert "grid-template-rows: auto;" in stage_rule
 
 
 def test_audio_player_formats_media_errors_without_object_string() -> None:
@@ -540,13 +612,16 @@ def test_audio_player_formats_media_errors_without_object_string() -> None:
     assert "MEDIA_ERROR_MESSAGES" in player
     assert "音频加载失败" in player
     assert ':src="sourceUrl || undefined"' not in audio_block
-    assert '@error="handleAudioError"' not in audio_block
-    assert "function handleAudioError" not in player
-    assert 'wave.value.on("error", handleWaveError)' in player
-    assert "function handleWaveError(err)" in player
-    assert "if (isSourceAbort(err)) return;" in player
-    assert "function isSourceAbort(err)" in player
-    assert 'err?.name === "AbortError"' in player
+    assert ':src="sourceUrl"' not in audio_block
+    assert "player.src = nextSourceUrl;" in player
+    assert "player.load();" in player
+    assert '@error="handleAudioElementError"' in audio_block
+    assert "function handleAudioElementError(event)" in player
+    assert 'emit("play-error", formatPlaybackError(event));' in player
+    assert 'wave.value.on("error", handleWaveError)' not in player
+    assert "function handleWaveError(err)" not in player
+    assert "function isSourceAbort(err)" not in player
+    assert 'err?.name === "AbortError"' not in player
     assert "function extractNativeMediaError(err)" in player
     assert "err.code >= 1 && err.code <= 4" in player
     assert "err?.target?.error || err" not in player
@@ -579,9 +654,9 @@ def test_music_player_uses_open_source_media_components_instead_of_hand_rolled_c
     player = read_source("components/YtsAudioPlayer.vue")
 
     assert '"media-chrome"' in package_json
-    assert '"wavesurfer.js"' in package_json
+    assert '"wavesurfer.js"' not in package_json
     assert 'import "media-chrome";' in player
-    assert 'import WaveSurfer from "wavesurfer.js";' in player
+    assert 'import WaveSurfer from "wavesurfer.js";' not in player
     for custom_element in [
         "<media-controller",
         "<media-play-button",
@@ -596,8 +671,13 @@ def test_music_player_uses_open_source_media_components_instead_of_hand_rolled_c
         "<media-duration-display" not in player.split("<template>", 1)[1].split("</template>", 1)[0]
     )
     assert 'ref="audioRef"' in player
-    assert 'ref="waveformRef"' in player
-    assert "WaveSurfer.create" in player
+    assert 'ref="waveformRef"' not in player
+    assert "WaveSurfer.create" not in player
+    assert ':src="sourceUrl"' not in player
+    assert "player.src = nextSourceUrl;" in player
+    assert "function syncPlaybackIntent()" in player
+    assert "const player = requireAudio();" in player
+    assert "await player.play();" in player
     assert "YtsAudioPlayer" in music
     assert "<YtsAudioPlayer" in music
     for hand_rolled_token in [
@@ -667,7 +747,8 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
     assert "<ListMusic" not in player
     assert '"queue"' not in player
     assert '@queue="showDrawer' not in music
-    assert "grid-template-rows: minmax(220px, 1fr) auto auto;" in root_rule
+    assert "grid-template-rows: auto auto;" in root_rule
+    assert "height: 100%;" not in root_rule
     assert "min-width: 0;" in root_rule
     assert "display: block;" in controls_rule
     assert "max-width: none;" in controls_rule
@@ -676,6 +757,8 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
     stage_rule = music.split(".player-stage {", 1)[1].split("}", 1)[0]
     assert "--shell-sidebar-width: 69px;" in stage_rule
     assert "--stage-left-inset: 28px;" in stage_rule
+    assert "align-content: end;" in stage_rule
+    assert "grid-template-rows: auto;" in stage_rule
     assert "overflow: visible;" in stage_rule
     assert (
         "margin-left: calc(0px - var(--stage-x-pad, 0px) - var(--stage-left-inset));"
@@ -1036,13 +1119,13 @@ def test_music_page_prioritizes_minimal_wave_player_without_lyrics() -> None:
     ]:
         assert token in music
     for token in [
-        "hero-wave",
         "media-controller",
         "media-control-bar",
-        "waveformRef",
         "播放模式",
     ]:
         assert token in player
+    for removed_rendering_surface in ["hero-wave", "waveformRef", "WaveSurfer.create"]:
+        assert removed_rendering_surface not in player
     for removed_surface in [
         "session-panel",
         "stream-card",
@@ -1057,27 +1140,21 @@ def test_music_page_prioritizes_minimal_wave_player_without_lyrics() -> None:
     assert "lyric" not in music.lower()
 
 
-def test_music_page_wave_surface_has_no_panel_frame_and_fades_into_background() -> None:
+def test_music_page_player_surface_has_no_panel_frame_or_wavesurfer_rendering() -> None:
     music = read_source("pages/MusicPage.vue")
     player = read_source("components/YtsAudioPlayer.vue")
     player_rule = music.split(".minimal-player {", 1)[1].split("}", 1)[0]
-    wave_rule = player.split(".hero-wave {", 1)[1].split("}", 1)[0]
-    wave_glow_rule = player.split(".hero-wave::before {", 1)[1].split("}", 1)[0]
 
     assert "background: transparent;" in player_rule
     assert "border: 0;" in player_rule
     assert "border-radius: 0;" in player_rule
     assert "box-shadow: none;" in player_rule
-    assert "background: transparent;" in wave_rule
-    assert "border: 0;" in wave_rule
-    assert "border-radius: 0;" in wave_rule
-    assert "-webkit-mask-image:" in wave_rule
-    assert "mask-image:" in wave_rule
-    assert "background:" not in wave_glow_rule
-    assert "radial-gradient(ellipse at center" not in wave_glow_rule
-    assert "repeating-linear-gradient" not in wave_glow_rule
-    assert 'cursorColor: "transparent"' in player
-    assert "cursorWidth: 0" in player
+    assert "player-spacer" not in player
+    assert "hero-wave" not in player
+    assert "waveform-canvas" not in player
+    assert "WaveSurfer" not in player
+    assert "cursorColor" not in player
+    assert "cursorWidth" not in player
 
 
 def test_music_page_uses_right_drawer_for_queue_and_history() -> None:

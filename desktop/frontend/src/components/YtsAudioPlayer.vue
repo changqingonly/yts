@@ -2,11 +2,11 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Repeat1, Repeat2, Shuffle, SkipBack, SkipForward } from "@lucide/vue";
 import "media-chrome";
-import WaveSurfer from "wavesurfer.js";
 
 const props = defineProps({
   track: { type: Object, default: null },
   playing: { type: Boolean, default: false },
+  seekTime: { type: Number, default: null },
   loopMode: { type: String, required: true },
   loopLabel: { type: String, required: true },
 });
@@ -21,15 +21,16 @@ const emit = defineEmits([
   "next",
   "cycle-loop",
   "play-error",
+  "seek-applied",
+  "audio-ready",
 ]);
 
 const audioRef = ref(null);
-const waveformRef = ref(null);
-const wave = ref(null);
-const waveReady = ref(false);
 const currentTime = ref(0);
 const duration = ref(0);
-let sourceLoadSerial = 0;
+const mediaReady = ref(false);
+const sourceLoadVersion = ref(0);
+const loadingSource = ref(false);
 
 const MEDIA_ERROR_MESSAGES = {
   1: "播放被中止",
@@ -66,57 +67,6 @@ function requireAudio() {
   return audioRef.value;
 }
 
-function requireWaveform() {
-  if (!waveformRef.value) {
-    throw new Error("YtsAudioPlayer requires a waveform container");
-  }
-  return waveformRef.value;
-}
-
-function requireWave() {
-  if (!wave.value) {
-    throw new Error("YtsAudioPlayer requires a WaveSurfer instance");
-  }
-  return wave.value;
-}
-
-function createWave() {
-  wave.value = WaveSurfer.create({
-    autoCenter: true,
-    barGap: 5,
-    barMinHeight: 4,
-    barRadius: 8,
-    barWidth: 6,
-    container: requireWaveform(),
-    cursorColor: "transparent",
-    cursorWidth: 0,
-    dragToSeek: true,
-    height: "auto",
-    hideScrollbar: true,
-    interact: true,
-    media: requireAudio(),
-    normalize: true,
-    progressColor: "rgba(34, 211, 238, 0.94)",
-    waveColor: "rgba(52, 211, 153, 0.24)",
-  });
-  wave.value.on("ready", (duration) => {
-    waveReady.value = true;
-    setDuration(duration);
-  });
-  wave.value.on("timeupdate", (currentTime) => setCurrentTime(currentTime));
-  wave.value.on("error", handleWaveError);
-  if (sourceUrl.value) {
-    const loadSerial = ++sourceLoadSerial;
-    const loading = wave.value.load(sourceUrl.value);
-    loading?.catch?.((err) => {
-      if (loadSerial !== sourceLoadSerial) return;
-      emit("play-error", formatPlaybackError(err));
-    });
-  } else {
-    wave.value.empty();
-  }
-}
-
 function setCurrentTime(value) {
   currentTime.value = Math.max(0, Number(value) || 0);
   emit("time-update", currentTime.value);
@@ -134,21 +84,56 @@ function formatTimelineTime(value) {
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
+function normalizedSeekTime() {
+  if (props.seekTime == null) return null;
+  const seekTime = Number(props.seekTime);
+  if (!Number.isFinite(seekTime) || seekTime < 0) {
+    throw new Error("YtsAudioPlayer seekTime must be a non-negative number");
+  }
+  if (duration.value > 0) return Math.min(seekTime, duration.value);
+  return seekTime;
+}
+
+function sourceReadyForPlayback() {
+  if (!sourceUrl.value) return false;
+  return mediaReady.value && requireAudio().readyState >= 1;
+}
+
+async function applySeekTime() {
+  if (!sourceReadyForPlayback()) return;
+  const targetTime = normalizedSeekTime();
+  if (targetTime == null) return;
+  requireAudio().currentTime = targetTime;
+  setCurrentTime(targetTime);
+  emit("seek-applied", targetTime);
+}
+
 async function syncPlaybackIntent() {
-  const player = requireWave();
+  const player = requireAudio();
+  const playLoadVersion = sourceLoadVersion.value;
   if (!sourceUrl.value) {
     player.pause();
     return;
   }
-  if (props.playing && !player.isPlaying()) {
+  if (!props.playing) {
+    if (!player.paused) player.pause();
+    return;
+  }
+  if (!sourceReadyForPlayback()) return;
+  if (player.paused) {
     try {
       await player.play();
     } catch (err) {
+      if (isPlayInterruptedBySourceLoad(err, playLoadVersion)) return;
       emit("play-error", formatPlaybackError(err));
     }
-  } else if (!props.playing && player.isPlaying()) {
-    player.pause();
   }
+}
+
+function isPlayInterruptedBySourceLoad(err, playLoadVersion) {
+  if (playLoadVersion === sourceLoadVersion.value) return false;
+  if (typeof DOMException === "undefined" || !(err instanceof DOMException)) return false;
+  return err.name === "AbortError" && err.message.includes("new load request");
 }
 
 function formatPlaybackError(err) {
@@ -174,21 +159,12 @@ function extractNativeMediaError(err) {
   return null;
 }
 
-function isSourceAbort(err) {
-  return err?.name === "AbortError";
-}
-
-function handleWaveError(err) {
-  // WaveSurfer emits AbortError when a newer source cancels the previous load.
-  if (isSourceAbort(err)) return;
-  emit("play-error", formatPlaybackError(err));
-}
-
 function handlePlay() {
   emit("play");
 }
 
 function handlePause() {
+  if (loadingSource.value && props.playing) return;
   emit("pause");
 }
 
@@ -200,38 +176,55 @@ function handleTimeUpdate(event) {
   setCurrentTime(event.currentTarget.currentTime);
 }
 
+async function handleLoadedMetadata(event) {
+  loadingSource.value = false;
+  mediaReady.value = true;
+  setDuration(event.currentTarget.duration || 0);
+  await applySeekTime();
+  await syncPlaybackIntent();
+}
+
 function handleDurationChange(event) {
   setDuration(event.currentTarget.duration || 0);
 }
 
+function handleAudioElementError(event) {
+  loadingSource.value = false;
+  emit("play-error", formatPlaybackError(event));
+}
+
 onMounted(() => {
-  createWave();
+  emit("audio-ready", requireAudio());
 });
 
 onBeforeUnmount(() => {
-  if (wave.value) {
-    wave.value.destroy();
-    wave.value = null;
-  }
+  emit("audio-ready", null);
 });
 
-watch(sourceUrl, async (url) => {
-  if (!wave.value) return;
-  const loadSerial = ++sourceLoadSerial;
-  waveReady.value = false;
+watch(sourceUrl, async (nextSourceUrl) => {
+  sourceLoadVersion.value += 1;
+  const loadVersion = sourceLoadVersion.value;
+  loadingSource.value = true;
+  mediaReady.value = false;
   currentTime.value = 0;
   duration.value = 0;
   try {
-    if (url) {
-      await wave.value.load(url);
-    } else {
-      wave.value.empty();
-    }
-    if (loadSerial !== sourceLoadSerial) return;
     await nextTick();
-    await syncPlaybackIntent();
+    if (loadVersion !== sourceLoadVersion.value) return;
+    const player = requireAudio();
+    if (nextSourceUrl) {
+      player.src = nextSourceUrl;
+      player.load();
+    } else {
+      player.removeAttribute("src");
+      player.load();
+      player.pause();
+      loadingSource.value = false;
+    }
   } catch (err) {
-    if (loadSerial !== sourceLoadSerial) return;
+    if (loadVersion === sourceLoadVersion.value) {
+      loadingSource.value = false;
+    }
     emit("play-error", formatPlaybackError(err));
   }
 });
@@ -242,6 +235,17 @@ watch(
     await syncPlaybackIntent();
   },
 );
+
+watch(
+  () => props.seekTime,
+  async () => {
+    try {
+      await applySeekTime();
+    } catch (err) {
+      emit("play-error", formatPlaybackError(err));
+    }
+  },
+);
 </script>
 
 <template>
@@ -250,12 +254,6 @@ watch(
     :class="{ empty: !sourceUrl, playing }"
     :style="{ '--timeline-progress': timelineProgress }"
   >
-    <div class="hero-wave" aria-label="音频波形">
-      <div ref="waveformRef" class="waveform-canvas"></div>
-      <p v-if="!sourceUrl" class="wave-empty">暂无歌曲</p>
-      <p v-else-if="!waveReady" class="wave-empty">载入中</p>
-    </div>
-
     <media-controller id="yts-audio-controller" class="media-shell" audio>
       <audio
         ref="audioRef"
@@ -264,6 +262,8 @@ watch(
         preload="metadata"
         @durationchange="handleDurationChange"
         @ended="handleEnded"
+        @error="handleAudioElementError"
+        @loadedmetadata="handleLoadedMetadata"
         @pause="handlePause"
         @play="handlePlay"
         @timeupdate="handleTimeUpdate"
@@ -333,67 +333,11 @@ watch(
 
   display: grid;
   gap: clamp(18px, 3.2vh, 34px);
-  grid-template-rows: minmax(220px, 1fr) auto auto;
-  height: 100%;
+  grid-template-rows: auto auto;
   min-height: 0;
   min-width: 0;
   position: relative;
   z-index: 1;
-}
-
-.hero-wave {
-  -webkit-mask-image: radial-gradient(ellipse at center, #000 42%, rgba(0, 0, 0, 0.72) 66%, transparent 100%);
-  align-self: center;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  height: clamp(330px, 52vh, 500px);
-  justify-self: center;
-  mask-image: radial-gradient(ellipse at center, #000 42%, rgba(0, 0, 0, 0.72) 66%, transparent 100%);
-  max-width: 1180px;
-  overflow: hidden;
-  position: relative;
-  width: min(78vw, 1180px);
-}
-
-.hero-wave::before {
-  content: "";
-  inset: 0;
-  pointer-events: none;
-  position: absolute;
-}
-
-.hero-wave::after {
-  content: "";
-  inset: 0;
-  opacity: 0;
-  pointer-events: none;
-  position: absolute;
-  transform: translateX(-12%) scaleY(0.98);
-  z-index: 2;
-}
-
-.yts-audio-player.playing .waveform-canvas {
-  animation: waveform-breathe 2.4s ease-in-out infinite;
-  filter: drop-shadow(0 0 14px rgba(34, 211, 238, 0.2));
-  transform-origin: center;
-}
-
-.waveform-canvas {
-  height: 100%;
-  position: relative;
-  z-index: 1;
-}
-
-.wave-empty {
-  color: var(--color-muted);
-  font-size: 13px;
-  font-weight: 850;
-  inset: 50% auto auto 50%;
-  margin: 0;
-  position: absolute;
-  transform: translate(-50%, -50%);
-  z-index: 2;
 }
 
 .media-shell {
@@ -542,6 +486,7 @@ media-time-range {
   --media-range-padding: 0px;
   --media-range-padding-left: 0px;
   --media-range-padding-right: 0px;
+  --media-range-track-height: 2px;
   --media-range-track-background: rgba(216, 231, 245, 0.28);
   --media-time-range-buffered-color: transparent;
   --media-time-range-track-background: transparent;
@@ -586,29 +531,7 @@ button:disabled {
   opacity: 0.44;
 }
 
-@keyframes waveform-breathe {
-  0%,
-  100% {
-    transform: scaleY(0.98);
-  }
-
-  50% {
-    transform: scaleY(1.025);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .yts-audio-player.playing .waveform-canvas {
-    animation: none;
-  }
-}
-
 @media (max-width: 960px) {
-  .hero-wave {
-    height: 330px;
-    width: min(82vw, 760px);
-  }
-
   .media-controls {
     max-width: min(840px, 88vw);
   }
@@ -620,11 +543,6 @@ button:disabled {
 }
 
 @media (max-width: 720px) {
-  .hero-wave {
-    height: 280px;
-    width: 100%;
-  }
-
   .media-controls {
     gap: 12px;
     max-width: 100%;

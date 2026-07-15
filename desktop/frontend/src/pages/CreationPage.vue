@@ -331,6 +331,29 @@ function workflowTarget() {
   return selectedApiTarget();
 }
 
+function workflowTargetLabel(target = workflowTarget()) {
+  return environment.options.find((item) => item.value === target)?.label ?? target;
+}
+
+function targetUnavailableMessage(target = workflowTarget()) {
+  const detail = environment.targetHealthDetail(target);
+  return `${workflowTargetLabel(target)}服务未连接，无法继续工作流操作：${detail}。请启动对应服务后重试。`;
+}
+
+async function ensureWorkflowTargetOnline() {
+  const target = workflowTarget();
+  const currentHealth = environment.targetHealth(target);
+  if (currentHealth === "online") return target;
+  if (currentHealth === "offline") {
+    throw new Error(targetUnavailableMessage(target));
+  }
+  const nextHealth = await environment.checkHealth(target);
+  if (nextHealth !== "online") {
+    throw new Error(targetUnavailableMessage(target));
+  }
+  return target;
+}
+
 async function withBusy(nextStatus, fn) {
   status.value = nextStatus;
   error.value = "";
@@ -351,6 +374,7 @@ async function withBusy(nextStatus, fn) {
 
 async function loadTemplate() {
   await withBusy("loading-template", async () => {
+    await ensureWorkflowTargetOnline();
     template.value = await requestWorkflowJson(`/api/workflows/${workflowId}/template`, { target: workflowTarget() });
     draftTemplate.value = cloneTemplateWithPositions(template.value);
     const current = draftTemplate.value.nodes.find((node) => node.id === selectedNodeId.value);
@@ -482,6 +506,7 @@ async function runThread() {
     liveNodeStatuses.value = {};
     runResult.value = null;
     userSelectedNodeId.value = "";
+    await ensureWorkflowTargetOnline();
     await streamWorkflow(`/api/workflows/${workflowId}/threads/stream`, {
       type: "run",
       thread_id: threadId.value,
@@ -505,6 +530,7 @@ async function resumeThread(action) {
       waiting: null,
       status: "waiting",
     };
+    await ensureWorkflowTargetOnline();
     await streamWorkflow(`/api/workflows/${workflowId}/threads/${threadId.value}/stream`, {
       type: "resume",
       node_id: waiting.node_id,
@@ -655,6 +681,7 @@ function applyWorkflowResult(nextResult) {
 
 async function refreshTrace() {
   await withBusy("trace", async () => {
+    await ensureWorkflowTargetOnline();
     trace.value = await requestWorkflowJson(`/api/workflows/${workflowId}/threads/${threadId.value}/trace`, { target: workflowTarget() });
   });
 }
@@ -672,6 +699,7 @@ async function loadHistoryItems() {
   historyLoading.value = true;
   error.value = "";
   try {
+    await ensureWorkflowTargetOnline();
     historyItems.value = await listWorkflowHistory(workflowId, { target: workflowTarget() });
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -684,6 +712,7 @@ async function selectHistoryItem(item) {
   selectedHistoryThreadId.value = item.thread_id;
   error.value = "";
   try {
+    await ensureWorkflowTargetOnline();
     const selectedTrace = await getWorkflowTrace(workflowId, item.thread_id, { target: workflowTarget() });
     threadId.value = item.thread_id;
     prompt.value = item.user_prompt;
@@ -714,6 +743,7 @@ async function saveFinalDeliveryToAssets() {
   }
   saveMessage.value = "";
   await withBusy("saving-asset", async () => {
+    await ensureWorkflowTargetOnline();
     await saveSong({
       name: finalDelivery.value.title,
       prompt: prompt.value,

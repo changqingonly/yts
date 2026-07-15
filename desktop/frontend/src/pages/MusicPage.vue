@@ -1,16 +1,16 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   History,
   ListMusic,
   Radio,
-  RefreshCw,
   RotateCcw,
   Square,
   Trash2,
   Upload,
   X,
 } from "@lucide/vue";
+import MusicButterchurnBackdrop from "../components/MusicButterchurnBackdrop.vue";
 import MusicImportDrawer from "../components/MusicImportDrawer.vue";
 import YtsAudioPlayer from "../components/YtsAudioPlayer.vue";
 import { usePlayerStore } from "../stores/player";
@@ -30,6 +30,10 @@ const drawerMode = ref("queue");
 const loopMode = ref("queue");
 const playHistory = ref([]);
 const trackUrlByHash = ref(new Map());
+const resumeSeekTime = ref(null);
+const audioElement = ref(null);
+
+const PLAYBACK_RESUME_STORAGE_KEY = "yts-music-playback-state";
 
 const loopModes = [
   { key: "queue", label: "循环播放" },
@@ -91,6 +95,7 @@ async function refreshPlaylist() {
     await playlist.hydrate({ scope: environment.target });
     await loadPlayableTrackUrls(playlist.activeItems);
     player.setQueue(tracks.value);
+    restorePlaybackResumeState();
   } catch (err) {
     error.value = formatMusicLoadError(err);
   }
@@ -149,6 +154,77 @@ function formatMusicLoadError(err) {
   return `播放列表加载失败：当前环境 ${environment.target} (${targetBase})${endpoint}${status}。原始错误：${rawMessage}`;
 }
 
+function normalizePlaybackResumeTime(value) {
+  const normalizedTime = Number(value);
+  if (!Number.isFinite(normalizedTime) || normalizedTime < 0) {
+    throw new Error("音乐播放进度记录的 currentTime 必须是非负数字");
+  }
+  return normalizedTime;
+}
+
+function readPlaybackResumeState() {
+  const rawState = localStorage.getItem(PLAYBACK_RESUME_STORAGE_KEY);
+  if (!rawState) return null;
+  const parsedState = JSON.parse(rawState);
+  if (!parsedState || typeof parsedState !== "object" || Array.isArray(parsedState)) {
+    throw new Error("音乐播放进度记录必须是对象");
+  }
+  if (typeof parsedState.target !== "string" || !parsedState.target) {
+    throw new Error("音乐播放进度记录缺少 target");
+  }
+  if (typeof parsedState.trackId !== "string" || !parsedState.trackId) {
+    throw new Error("音乐播放进度记录缺少 trackId");
+  }
+  if (typeof parsedState.contentHash !== "string" || !parsedState.contentHash) {
+    throw new Error("音乐播放进度记录缺少 contentHash");
+  }
+  if (typeof parsedState.wasPlaying !== "boolean") {
+    throw new Error("音乐播放进度记录缺少 wasPlaying");
+  }
+  return {
+    target: parsedState.target,
+    trackId: parsedState.trackId,
+    contentHash: parsedState.contentHash,
+    currentTime: normalizePlaybackResumeTime(parsedState.currentTime),
+    wasPlaying: parsedState.wasPlaying,
+  };
+}
+
+function writePlaybackResumeState(track, currentTime) {
+  if (!track) return;
+  if (!track.id) {
+    throw new Error("播放进度记录需要歌曲 id");
+  }
+  if (!track.contentHash) {
+    throw new Error("播放进度记录需要歌曲 contentHash");
+  }
+  const normalizedTime = normalizePlaybackResumeTime(currentTime);
+  localStorage.setItem(
+    PLAYBACK_RESUME_STORAGE_KEY,
+    JSON.stringify({
+      target: environment.target,
+      trackId: track.id,
+      contentHash: track.contentHash,
+      currentTime: normalizedTime,
+      wasPlaying: player.isPlaying,
+      updatedAt: Date.now(),
+    }),
+  );
+}
+
+function restorePlaybackResumeState() {
+  resumeSeekTime.value = null;
+  const resumeState = readPlaybackResumeState();
+  if (!resumeState) return;
+  if (resumeState.target !== environment.target) return;
+  const resumeIndex = tracks.value.findIndex(
+    (track) => track.id === resumeState.trackId || track.contentHash === resumeState.contentHash,
+  );
+  if (resumeIndex < 0) return;
+  player.selectAt(resumeIndex, { currentTime: resumeState.currentTime, isPlaying: resumeState.wasPlaying });
+  resumeSeekTime.value = resumeState.currentTime;
+}
+
 async function startStreamPreview() {
   if (player.isStreaming) {
     player.stopStream();
@@ -164,8 +240,10 @@ async function startStreamPreview() {
 function playTrack(index) {
   error.value = "";
   try {
+    resumeSeekTime.value = null;
     player.playAt(index);
     recordHistory(tracks.value[index]);
+    writePlaybackResumeState(tracks.value[index], 0);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -253,10 +331,12 @@ function showDrawer(mode = drawerMode.value) {
 function handleAudioPlay() {
   player.setPlaying(true);
   recordHistory(currentTrack.value);
+  writePlaybackResumeState(currentTrack.value, player.currentTime);
 }
 
 function handleAudioPause() {
   player.setPlaying(false);
+  writePlaybackResumeState(currentTrack.value, player.currentTime);
 }
 
 function handleAudioEnded() {
@@ -265,20 +345,36 @@ function handleAudioEnded() {
     nextTrack();
   } else {
     player.setPlaying(false);
+    writePlaybackResumeState(currentTrack.value, player.duration > 0 ? player.duration : player.currentTime);
   }
 }
 
 function handleTimeUpdate(currentTime) {
   player.setPlaybackClock({ currentTime });
+  writePlaybackResumeState(currentTrack.value, currentTime);
 }
 
 function handleDurationChange(duration) {
   player.setPlaybackClock({ duration });
 }
 
+function handleSeekApplied(currentTime) {
+  resumeSeekTime.value = null;
+  player.setPlaybackClock({ currentTime });
+  writePlaybackResumeState(currentTrack.value, currentTime);
+}
+
 function handleAudioError(message) {
   error.value = message;
   player.setPlaying(false);
+}
+
+function handleAudioReady(element) {
+  audioElement.value = element;
+}
+
+function handleVisualizerError(message) {
+  error.value = message;
 }
 
 function recordHistory(track) {
@@ -290,13 +386,23 @@ function recordHistory(track) {
   ].slice(0, 12);
 }
 
+watch(
+  () => environment.target,
+  async (nextTarget, previousTarget) => {
+    if (nextTarget === previousTarget) return;
+    await refreshPlaylist();
+  },
+);
+
 onMounted(async () => {
   environment.attach();
   await refreshPlaylist();
 });
 
 onBeforeUnmount(() => {
+  writePlaybackResumeState(currentTrack.value, player.currentTime);
   environment.detach();
+  audioElement.value = null;
   player.setQueue([]);
   revokePlayableTrackUrls();
 });
@@ -305,9 +411,6 @@ onBeforeUnmount(() => {
 <template>
   <section class="music-studio">
     <div class="side-actions" aria-label="播放器工具">
-      <button type="button" title="刷新" aria-label="刷新" @click="refreshPlaylist">
-        <RefreshCw :size="17" />
-      </button>
       <button
         type="button"
         :title="player.isStreaming ? '停止生成试听' : '生成试听'"
@@ -330,6 +433,13 @@ onBeforeUnmount(() => {
 
     <p v-if="error" class="error-message">{{ error }}</p>
 
+    <MusicButterchurnBackdrop
+      class="butterchurn-backdrop"
+      :audio-element="audioElement"
+      :playing="player.isPlaying"
+      @visualizer-error="handleVisualizerError"
+    />
+
     <article class="player-stage minimal-player">
       <div class="stage-glow"></div>
       <YtsAudioPlayer
@@ -337,7 +447,9 @@ onBeforeUnmount(() => {
         :loop-label="activeLoopMode.label"
         :loop-mode="loopMode"
         :playing="player.isPlaying"
+        :seek-time="resumeSeekTime"
         :track="currentTrack"
+        @audio-ready="handleAudioReady"
         @cycle-loop="cycleLoopMode"
         @duration-change="handleDurationChange"
         @ended="handleAudioEnded"
@@ -346,6 +458,7 @@ onBeforeUnmount(() => {
         @play="handleAudioPlay"
         @play-error="handleAudioError"
         @previous="previousTrack"
+        @seek-applied="handleSeekApplied"
         @time-update="handleTimeUpdate"
       />
     </article>
@@ -517,14 +630,19 @@ onBeforeUnmount(() => {
   --stage-left-inset: 28px;
   --stage-x-pad: clamp(24px, 4vw, 56px);
 
-  align-content: center;
+  align-content: end;
   display: grid;
   gap: 24px;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto;
   inset: 20px 86px 22px 28px;
   overflow: visible;
   padding: 34px var(--stage-x-pad);
   position: absolute;
+  z-index: 1;
+}
+
+.butterchurn-backdrop {
+  z-index: 0;
 }
 
 .minimal-player {
