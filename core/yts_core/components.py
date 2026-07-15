@@ -39,6 +39,7 @@ _SUPPORTED_PLATFORMS = frozenset(
 )
 _PATH_TOKENS = frozenset({"root", "vendor", "source", "build", "artifact"})
 _REQUEST_TOKENS = frozenset({"prompt", "out", "width", "height", "steps", "seconds"})
+_F32_MAX = 3.4028234663852886e38
 _FORMATTER = Formatter()
 _HTTP_URL_ADAPTER = TypeAdapter(HttpUrl)
 
@@ -158,6 +159,20 @@ class ProbeSpec(_StrictManifestModel):
         return value
 
 
+class CommandLimits(_StrictManifestModel):
+    max_output_bytes: int = Field(gt=0)
+    max_concurrency: int = Field(gt=0)
+    max_width: int | None = Field(default=None, gt=0)
+    max_height: int | None = Field(default=None, gt=0)
+    max_steps: int | None = Field(default=None, gt=0)
+    max_seconds: float | None = Field(
+        default=None,
+        gt=0,
+        le=_F32_MAX,
+        allow_inf_nan=False,
+    )
+
+
 class RuntimeSpec(_StrictManifestModel):
     kind: Literal["service", "command"]
     argv: list[str] = Field(min_length=1)
@@ -168,6 +183,8 @@ class RuntimeSpec(_StrictManifestModel):
     startup_timeout_seconds: int | None = Field(default=None, gt=0)
     shutdown_timeout_seconds: int | None = Field(default=None, gt=0)
     execution_timeout_seconds: int | None = Field(default=None, gt=0)
+    request_timeout_seconds: int | None = Field(default=None, gt=0)
+    limits: CommandLimits | None = None
 
     @field_validator("argv")
     @classmethod
@@ -199,16 +216,46 @@ class RuntimeSpec(_StrictManifestModel):
                     raise ValueError(f"service runtime requires {field_name}")
             if self.execution_timeout_seconds is not None:
                 raise ValueError("service runtime forbids execution_timeout_seconds")
+            if self.limits is not None:
+                raise ValueError("service runtime forbids limits")
             return self
 
         if self.execution_timeout_seconds is None:
             raise ValueError("command runtime requires execution_timeout_seconds")
+        if self.request_timeout_seconds is not None:
+            raise ValueError("command runtime forbids request_timeout_seconds")
         configured_service_fields = [
             field_name for field_name in service_fields if getattr(self, field_name) is not None
         ]
         if configured_service_fields:
             names = ", ".join(configured_service_fields)
             raise ValueError(f"command runtime forbids service fields: {names}")
+        if self.limits is None:
+            raise ValueError("command runtime requires limits")
+
+        request_tokens = {
+            token_name
+            for argument in self.argv
+            for _, token_name in _parse_argument(argument)
+            if token_name in _REQUEST_TOKENS
+        }
+        numeric_limits = {
+            "width": "max_width",
+            "height": "max_height",
+            "steps": "max_steps",
+            "seconds": "max_seconds",
+        }
+        for token_name, field_name in numeric_limits.items():
+            configured = getattr(self.limits, field_name) is not None
+            used = token_name in request_tokens
+            if used and not configured:
+                raise ValueError(
+                    f"request token {token_name} requires limits.{field_name}"
+                )
+            if configured and not used:
+                raise ValueError(
+                    f"limits.{field_name} requires a matching request token {token_name}"
+                )
         return self
 
 

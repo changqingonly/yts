@@ -80,6 +80,7 @@ def _workspace_component(*, dependencies: list[str] | None = None) -> dict[str, 
             "kind": "command",
             "argv": ["{artifact}", "--prompt", "{prompt}", "--out", "{out}"],
             "execution_timeout_seconds": 30,
+            "limits": {"max_output_bytes": 1024, "max_concurrency": 1},
         },
     }
 
@@ -127,6 +128,20 @@ def test_real_manifest_records_audited_component_facts() -> None:
 def test_real_manifest_records_audited_runtime_argv() -> None:
     manifest = load_component_manifest(MANIFEST_PATH)
 
+    llama = manifest.components["llama"]
+    assert len(llama.models) == 1
+    llama_model_id = llama.models[0].id
+    assert llama.runtime.argv == [
+        "{artifact}",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8080",
+        "--model",
+        "{model:qwen}",
+        "--alias",
+        llama_model_id,
+    ]
     assert manifest.components["stable-diffusion"].runtime.argv == [
         "{artifact}",
         "--diffusion-model",
@@ -161,6 +176,22 @@ def test_real_manifest_records_audited_runtime_argv() -> None:
         "--models",
         "{vendor}/acestep-models",
     ]
+
+
+def test_real_manifest_records_runtime_resource_limits() -> None:
+    manifest = load_component_manifest(MANIFEST_PATH)
+
+    image_runtime = manifest.components["stable-diffusion"].runtime
+    assert image_runtime.limits is not None
+    assert image_runtime.limits.max_output_bytes == 67_108_864
+    assert image_runtime.limits.max_width == 2_048
+    assert image_runtime.limits.max_height == 2_048
+    assert image_runtime.limits.max_steps == 100
+    assert image_runtime.limits.max_seconds is None
+    assert image_runtime.limits.max_concurrency == 1
+
+    gateway_runtime = manifest.components["infer-gateway"].runtime
+    assert gateway_runtime.request_timeout_seconds == 120
 
 
 @pytest.mark.parametrize(
@@ -473,6 +504,164 @@ def test_command_runtime_requires_execution_timeout_and_forbids_service_fields()
     runtime["execution_timeout_seconds"] = 30
     runtime["port"] = 8080
     with pytest.raises(ValidationError, match="command runtime forbids service fields"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_command_runtime_requires_limits() -> None:
+    component = _workspace_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime.pop("limits")
+
+    with pytest.raises(ValidationError, match="command runtime requires limits"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_command_limits_require_max_output_bytes() -> None:
+    component = _workspace_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime["limits"] = {}
+
+    with pytest.raises(ValidationError, match="max_output_bytes"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_command_limits_require_max_concurrency() -> None:
+    component = _workspace_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    limits = runtime["limits"]
+    assert isinstance(limits, dict)
+    limits.pop("max_concurrency")
+
+    with pytest.raises(ValidationError, match="max_concurrency"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+    limits["max_concurrency"] = 0
+    with pytest.raises(ValidationError, match="greater than 0"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+@pytest.mark.parametrize(
+    "max_seconds",
+    [
+        pytest.param(float("inf"), id="infinite"),
+        pytest.param(3.402823466385289e38, id="greater-than-f32-max"),
+    ],
+)
+def test_command_limits_reject_max_seconds_outside_f32_range(max_seconds: float) -> None:
+    component = _workspace_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    argv = runtime["argv"]
+    assert isinstance(argv, list)
+    argv.extend(["--seconds", "{seconds}"])
+    runtime["limits"] = {
+        "max_output_bytes": 1024,
+        "max_concurrency": 1,
+        "max_seconds": max_seconds,
+    }
+
+    with pytest.raises(ValidationError, match="max_seconds"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+@pytest.mark.parametrize("max_seconds", [0.25, 3.4028234663852886e38])
+def test_command_limits_accept_finite_positive_max_seconds(max_seconds: float) -> None:
+    component = _workspace_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    argv = runtime["argv"]
+    assert isinstance(argv, list)
+    argv.extend(["--seconds", "{seconds}"])
+    runtime["limits"] = {
+        "max_output_bytes": 1024,
+        "max_concurrency": 1,
+        "max_seconds": max_seconds,
+    }
+
+    manifest = ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+    assert manifest.components["example"].runtime.limits.max_seconds == max_seconds
+
+
+@pytest.mark.parametrize(
+    ("token", "limit_field"),
+    [
+        ("width", "max_width"),
+        ("height", "max_height"),
+        ("steps", "max_steps"),
+        ("seconds", "max_seconds"),
+    ],
+)
+def test_command_limits_require_numeric_token_limits(
+    token: str,
+    limit_field: str,
+) -> None:
+    component = _workspace_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    argv = runtime["argv"]
+    assert isinstance(argv, list)
+    argv.extend([f"--{token}", f"{{{token}}}"])
+    runtime["limits"] = {"max_output_bytes": 1024, "max_concurrency": 1}
+
+    with pytest.raises(ValidationError, match=rf"{token}.*{limit_field}"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+@pytest.mark.parametrize(
+    "limit_field",
+    ["max_width", "max_height", "max_steps", "max_seconds"],
+)
+def test_command_limits_forbid_unused_numeric_token_limits(limit_field: str) -> None:
+    component = _workspace_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime["limits"] = {
+        "max_output_bytes": 1024,
+        "max_concurrency": 1,
+        limit_field: 10,
+    }
+
+    with pytest.raises(ValidationError, match=rf"{limit_field}.*matching request token"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_command_runtime_accepts_complete_limits() -> None:
+    component = _workspace_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime["limits"] = {"max_output_bytes": 1024, "max_concurrency": 1}
+
+    manifest = ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+    assert manifest.components["example"].runtime.limits.max_output_bytes == 1024
+
+
+def test_service_runtime_allows_request_timeout_and_forbids_limits() -> None:
+    component = _external_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime["request_timeout_seconds"] = 120
+
+    manifest = ComponentManifest.model_validate(_manifest_data({"example": component}))
+    assert manifest.components["example"].runtime.request_timeout_seconds == 120
+
+    runtime["limits"] = {"max_output_bytes": 1024, "max_concurrency": 1}
+    with pytest.raises(ValidationError, match="service runtime forbids limits"):
+        ComponentManifest.model_validate(_manifest_data({"example": component}))
+
+
+def test_command_runtime_forbids_request_timeout() -> None:
+    component = _workspace_component()
+    runtime = component["runtime"]
+    assert isinstance(runtime, dict)
+    runtime["limits"] = {"max_output_bytes": 1024, "max_concurrency": 1}
+    runtime["request_timeout_seconds"] = 120
+
+    with pytest.raises(ValidationError, match="command runtime forbids request_timeout_seconds"):
         ComponentManifest.model_validate(_manifest_data({"example": component}))
 
 

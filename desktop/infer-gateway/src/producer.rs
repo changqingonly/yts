@@ -1,560 +1,197 @@
-use std::collections::HashMap;
-use std::path::{Component, Path, PathBuf};
-use std::process::Stdio;
-use std::time::Duration;
+mod config;
+mod execution;
 
-use anyhow::{anyhow, bail, Context, Result};
-use tokio::io::{AsyncRead, AsyncReadExt};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
-const DRAIN_CAPTURE_LIMIT: usize = 64 * 1024;
-const PROCESS_CLEANUP_TIMEOUT: Duration = Duration::from_secs(1);
+use anyhow::{bail, Context, Result};
+use tokio::sync::{oneshot, Mutex};
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
-struct ProcessGroup {
-    id: i32,
-    armed: bool,
+pub use config::{ProducerConfig, ProducerKind};
+pub use execution::ProducerOutput;
+
+use execution::{
+    close_request_directory, execute_tracked_worker, output_path, CloseRequestDirectory,
+    ExecutionCancelled,
+};
+
+struct ProducerSupervisorInner {
+    accepting: Mutex<bool>,
+    closing: AtomicBool,
+    cancellation: CancellationToken,
+    tasks: TaskTracker,
+    close_request_directory: CloseRequestDirectory,
 }
 
-impl ProcessGroup {
-    fn for_child(child: &tokio::process::Child) -> Result<Self> {
-        let id = child
-            .id()
-            .ok_or_else(|| anyhow!("spawned producer has no process id"))?;
-        let id = i32::try_from(id).context("producer process id exceeds i32")?;
-        Ok(Self { id, armed: true })
-    }
-
-    fn terminate(&mut self) -> Result<()> {
-        if !self.armed {
-            return Ok(());
-        }
-        let result = unsafe { libc::kill(-self.id, libc::SIGKILL) };
-        if result == 0 {
-            self.armed = false;
-            return Ok(());
-        }
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::ESRCH) {
-            self.armed = false;
-            return Ok(());
-        }
-        Err(error).context("terminate producer process group")
-    }
+#[derive(Clone)]
+pub struct ProducerSupervisor {
+    inner: Arc<ProducerSupervisorInner>,
 }
 
-impl Drop for ProcessGroup {
+pub struct ProducerExecution {
+    cancellation: CancellationToken,
+    receiver: oneshot::Receiver<Result<ProducerOutput>>,
+    consumed: bool,
+}
+
+impl Drop for ProducerExecution {
     fn drop(&mut self) {
-        if self.armed {
-            unsafe {
-                libc::kill(-self.id, libc::SIGKILL);
-            }
-        }
+        self.cancellation.cancel();
     }
 }
 
-struct DrainTasks {
-    task: tokio::task::JoinHandle<std::io::Result<(Vec<u8>, Vec<u8>)>>,
-    finished: bool,
-}
+impl ProducerSupervisor {
+    pub fn new(parent_cancellation: CancellationToken) -> Self {
+        Self::with_directory_closer(parent_cancellation, Arc::new(close_request_directory))
+    }
 
-impl DrainTasks {
-    fn spawn(
-        stdout: impl AsyncRead + Unpin + Send + 'static,
-        stderr: impl AsyncRead + Unpin + Send + 'static,
+    fn with_directory_closer(
+        parent_cancellation: CancellationToken,
+        close_request_directory: CloseRequestDirectory,
     ) -> Self {
         Self {
-            task: tokio::spawn(async move { tokio::try_join!(drain(stdout), drain(stderr)) }),
-            finished: false,
+            inner: Arc::new(ProducerSupervisorInner {
+                accepting: Mutex::new(true),
+                closing: AtomicBool::new(false),
+                cancellation: parent_cancellation.child_token(),
+                tasks: TaskTracker::new(),
+                close_request_directory,
+            }),
         }
     }
 
-    async fn collect_until(
-        &mut self,
-        deadline: tokio::time::Instant,
-        kind: ProducerKind,
-    ) -> Result<(Vec<u8>, Vec<u8>)> {
-        match tokio::time::timeout_at(deadline, &mut self.task).await {
-            Ok(result) => {
-                self.finished = true;
-                result
-                    .with_context(|| format!("{} stdout/stderr drain task failed", kind.name()))?
-                    .with_context(|| format!("read {} stdout/stderr", kind.name()))
+    pub fn is_closing(&self) -> bool {
+        self.inner.closing.load(Ordering::Acquire)
+    }
+
+    pub async fn cancelled(&self) {
+        self.inner.cancellation.cancelled().await;
+    }
+
+    pub async fn start(
+        &self,
+        config: &ProducerConfig,
+        output_filename: &str,
+        replacements: &[(&str, &str)],
+    ) -> Result<ProducerExecution> {
+        if !config.enabled {
+            bail!("{} capability is disabled", config.kind.name());
+        }
+        config.validate_executable()?;
+        let output_filename = output_filename.to_owned();
+        output_path(Path::new("/request"), &output_filename)?;
+        let replacements = replacements
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect::<Vec<_>>();
+
+        let accepting = self.inner.accepting.lock().await;
+        if !*accepting {
+            bail!("producer supervisor is closing and rejects new executions");
+        }
+        let permit = config.try_acquire_execution_permit()?;
+        let config = config.clone();
+        let cancellation = self.inner.cancellation.child_token();
+        let worker_cancellation = cancellation.clone();
+        let (sender, receiver) = oneshot::channel();
+        let close_request_directory = self.inner.close_request_directory.clone();
+        let tasks = self.inner.tasks.clone();
+        self.inner.tasks.spawn(async move {
+            let result = execute_tracked_worker(
+                config,
+                output_filename,
+                replacements,
+                worker_cancellation,
+                close_request_directory,
+                tasks,
+                permit,
+            )
+            .await;
+            if let Err(result) = sender.send(result) {
+                match result {
+                    Ok(_) => tracing::error!(
+                        "tracked producer result receiver was dropped after successful execution"
+                    ),
+                    Err(error) => tracing::error!(
+                        "tracked producer result receiver was dropped after execution failure: {error:#}"
+                    ),
+                }
             }
-            Err(_) => bail!("{} timed out while draining stdout/stderr", kind.name()),
-        }
-    }
+        });
+        drop(accepting);
 
-    async fn abort_and_join_until(&mut self, deadline: tokio::time::Instant) -> Result<()> {
-        if self.finished {
-            return Ok(());
-        }
-        self.task.abort();
-        match tokio::time::timeout_at(deadline, &mut self.task).await {
-            Ok(Err(error)) if error.is_cancelled() => {
-                self.finished = true;
-                Ok(())
-            }
-            Ok(Ok(_)) => {
-                self.finished = true;
-                Ok(())
-            }
-            Ok(Err(error)) => {
-                self.finished = true;
-                Err(error).context("join aborted producer drain task")
-            }
-            Err(_) => bail!("timed out joining aborted producer drain task"),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProducerKind {
-    Image,
-    Audio,
-}
-
-impl ProducerKind {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Image => "imagegen",
-            Self::Audio => "audiogen",
-        }
-    }
-
-    fn enabled_env(self) -> &'static str {
-        match self {
-            Self::Image => "YTS_IMAGEGEN_ENABLED",
-            Self::Audio => "YTS_AUDIOGEN_ENABLED",
-        }
-    }
-
-    fn argv_env(self) -> &'static str {
-        match self {
-            Self::Image => "YTS_IMAGEGEN_ARGV",
-            Self::Audio => "YTS_AUDIOGEN_ARGV",
-        }
-    }
-
-    fn timeout_env(self) -> &'static str {
-        match self {
-            Self::Image => "YTS_IMAGEGEN_TIMEOUT_SECONDS",
-            Self::Audio => "YTS_AUDIOGEN_TIMEOUT_SECONDS",
-        }
-    }
-
-    fn allowed_tokens(self) -> &'static [&'static str] {
-        match self {
-            Self::Image => &["prompt", "out", "width", "height", "steps"],
-            Self::Audio => &["prompt", "out", "seconds"],
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ProducerConfig {
-    kind: ProducerKind,
-    enabled: bool,
-    argv: Option<Vec<String>>,
-    timeout: Option<Duration>,
-}
-
-#[derive(Debug)]
-pub struct ProducerOutput {
-    pub bytes: Vec<u8>,
-}
-
-impl ProducerConfig {
-    pub fn from_env(kind: ProducerKind) -> Result<Self> {
-        let enabled = optional_env(kind.enabled_env())?;
-        let argv = optional_env(kind.argv_env())?;
-        let timeout = optional_env(kind.timeout_env())?;
-        Self::parse(
-            kind,
-            enabled.as_deref(),
-            argv.as_deref(),
-            timeout.as_deref(),
-        )
-    }
-
-    pub fn parse(
-        kind: ProducerKind,
-        enabled: Option<&str>,
-        argv: Option<&str>,
-        timeout_seconds: Option<&str>,
-    ) -> Result<Self> {
-        let enabled = match enabled {
-            Some("true") => true,
-            Some("false") => false,
-            Some(value) => bail!(
-                "{} must be exactly true or false, got {value:?}",
-                kind.enabled_env()
-            ),
-            None => bail!("{} is required", kind.enabled_env()),
-        };
-
-        let argv = argv
-            .map(|raw| parse_argv(kind, raw))
-            .transpose()
-            .with_context(|| format!("invalid {}", kind.argv_env()))?;
-        let timeout = timeout_seconds
-            .map(|raw| parse_timeout(kind, raw))
-            .transpose()?;
-
-        if enabled && argv.as_ref().is_none_or(Vec::is_empty) {
-            bail!(
-                "{} must be a non-empty JSON array when {}=true",
-                kind.argv_env(),
-                kind.enabled_env()
-            );
-        }
-        if enabled
-            && !argv
-                .as_deref()
-                .expect("enabled producer argv was validated above")
-                .iter()
-                .try_fold(false, |found, argument| {
-                    Ok::<_, anyhow::Error>(found || template_has_token(argument, "out")?)
-                })?
-        {
-            bail!(
-                "{} must contain an {{out}} template token when enabled",
-                kind.argv_env()
-            );
-        }
-        if enabled && timeout.is_none() {
-            bail!(
-                "{} is required when {}=true",
-                kind.timeout_env(),
-                kind.enabled_env()
-            );
-        }
-
-        Ok(Self {
-            kind,
-            enabled,
-            argv,
-            timeout,
+        Ok(ProducerExecution {
+            cancellation,
+            receiver,
+            consumed: false,
         })
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    pub fn configured(&self) -> bool {
-        self.argv.is_some() && self.timeout.is_some()
-    }
-
-    #[cfg(test)]
-    pub fn argv(&self) -> &[String] {
-        self.argv
-            .as_deref()
-            .expect("enabled test producer must have argv")
-    }
-
-    pub fn kind_name(&self) -> &'static str {
-        self.kind.name()
     }
 
     pub async fn execute(
         &self,
+        config: &ProducerConfig,
         output_filename: &str,
         replacements: &[(&str, &str)],
     ) -> Result<ProducerOutput> {
-        if !self.enabled {
-            bail!("{} capability is disabled", self.kind.name());
-        }
-        let argv = self.argv.as_ref().ok_or_else(|| {
-            anyhow!(
-                "{} has no argv despite enabled configuration",
-                self.kind.name()
-            )
-        })?;
-        let timeout = self.timeout.ok_or_else(|| {
-            anyhow!(
-                "{} has no timeout despite enabled configuration",
-                self.kind.name()
-            )
-        })?;
-
-        let request_dir = tempfile::Builder::new()
-            .prefix(&format!("yts-{}-", self.kind.name()))
-            .tempdir()
-            .with_context(|| format!("create {} request directory", self.kind.name()))?;
-        let output = output_path(request_dir.path(), output_filename)?;
-        let output_value = output
-            .to_str()
-            .ok_or_else(|| anyhow!("{} output path is not valid UTF-8", self.kind.name()))?;
-        let values = replacement_map(self.kind, replacements, output_value)?;
-        let expanded = argv
-            .iter()
-            .map(|argument| expand_argument(self.kind, argument, &values))
-            .collect::<Result<Vec<_>>>()?;
-
-        let execution_deadline = tokio::time::Instant::now() + timeout;
-        let mut command = tokio::process::Command::new(&expanded[0]);
-        command
-            .args(&expanded[1..])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .process_group(0)
-            .kill_on_drop(true);
-        let mut child = command
-            .spawn()
-            .with_context(|| format!("spawn {} executable {:?}", self.kind.name(), expanded[0]))?;
-        let mut process_group = ProcessGroup::for_child(&child)?;
-        let stdout = child
-            .stdout
-            .take()
-            .expect("producer stdout is piped before spawn");
-        let stderr = child
-            .stderr
-            .take()
-            .expect("producer stderr is piped before spawn");
-        let mut drains = DrainTasks::spawn(stdout, stderr);
-
-        let status = match tokio::time::timeout_at(execution_deadline, child.wait()).await {
-            Ok(status) => {
-                match status.with_context(|| format!("wait for {} process", self.kind.name())) {
-                    Ok(status) => status,
-                    Err(error) => {
-                        cleanup_process_group(
-                            &mut process_group,
-                            &mut child,
-                            &mut drains,
-                            self.kind,
-                        )
-                        .await
-                        .context("cleanup producer after wait failure")?;
-                        return Err(error);
-                    }
-                }
-            }
-            Err(_) => {
-                cleanup_process_group(&mut process_group, &mut child, &mut drains, self.kind)
-                    .await
-                    .context("cleanup producer after execution timeout")?;
-                bail!(
-                    "{} timed out after {} seconds",
-                    self.kind.name(),
-                    timeout.as_secs_f64()
-                );
-            }
-        };
-        let (_stdout, stderr) = match drains.collect_until(execution_deadline, self.kind).await {
-            Ok(output) => output,
-            Err(error) => {
-                cleanup_process_group(&mut process_group, &mut child, &mut drains, self.kind)
-                    .await
-                    .context("cleanup producer after drain failure")?;
-                return Err(error);
-            }
-        };
-        process_group
-            .terminate()
-            .with_context(|| format!("terminate remaining {} descendants", self.kind.name()))?;
-        if !status.success() {
-            let stderr = String::from_utf8(stderr)
-                .with_context(|| format!("{} stderr is not UTF-8", self.kind.name()))?;
-            bail!("{} exited {status}: {}", self.kind.name(), stderr.trim());
-        }
-
-        let bytes =
-            match tokio::time::timeout_at(execution_deadline, tokio::fs::read(&output)).await {
-                Ok(result) => result.with_context(|| {
-                    format!("read {} output {}", self.kind.name(), output.display())
-                })?,
-                Err(_) => bail!(
-                    "{} timed out while reading output after {} seconds",
-                    self.kind.name(),
-                    timeout.as_secs_f64()
-                ),
-            };
-        if bytes.is_empty() {
-            bail!("{} produced an empty output file", self.kind.name());
-        }
-        Ok(ProducerOutput { bytes })
+        self.start(config, output_filename, replacements)
+            .await?
+            .wait()
+            .await
     }
-}
 
-fn optional_env(key: &str) -> Result<Option<String>> {
-    match std::env::var(key) {
-        Ok(value) => Ok(Some(value)),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(value)) => {
-            bail!("{key} is not valid UTF-8: {value:?}")
+    pub async fn begin_shutdown(&self) {
+        let mut accepting = self.inner.accepting.lock().await;
+        *accepting = false;
+        self.inner.closing.store(true, Ordering::Release);
+        self.inner.tasks.close();
+        self.inner.cancellation.cancel();
+    }
+
+    #[cfg(test)]
+    pub async fn shutdown(&self, timeout: std::time::Duration) -> Result<()> {
+        self.shutdown_until(tokio::time::Instant::now() + timeout)
+            .await
+    }
+
+    pub async fn shutdown_until(&self, deadline: tokio::time::Instant) -> Result<()> {
+        self.begin_shutdown().await;
+        match tokio::time::timeout_at(deadline, self.inner.tasks.wait()).await {
+            Ok(()) => Ok(()),
+            Err(_) => bail!("producer shutdown timed out before the gateway shutdown deadline"),
         }
     }
 }
 
-fn parse_argv(kind: ProducerKind, raw: &str) -> Result<Vec<String>> {
-    if raw.is_empty() {
-        bail!("{} must not be empty", kind.argv_env());
-    }
-    let argv: Vec<String> = serde_json::from_str(raw)
-        .with_context(|| format!("{} must be a JSON string array", kind.argv_env()))?;
-    if argv.first().is_some_and(|executable| executable.is_empty()) {
-        bail!("{} executable must not be empty", kind.argv_env());
-    }
-    for argument in &argv {
-        validate_template(kind, argument)?;
-    }
-    Ok(argv)
-}
-
-fn parse_timeout(kind: ProducerKind, raw: &str) -> Result<Duration> {
-    let seconds: f64 = raw
-        .parse()
-        .with_context(|| format!("{} must be a positive number", kind.timeout_env()))?;
-    if !seconds.is_finite() || seconds <= 0.0 {
-        bail!(
-            "{} must be finite and greater than zero",
-            kind.timeout_env()
-        );
-    }
-    Duration::try_from_secs_f64(seconds).with_context(|| {
-        format!(
-            "{} is outside the supported duration range",
-            kind.timeout_env()
-        )
-    })
-}
-
-fn validate_template(kind: ProducerKind, argument: &str) -> Result<()> {
-    visit_tokens(argument, |token| {
-        if !kind.allowed_tokens().contains(&token) {
-            bail!("unknown {} template token {{{token}}}", kind.name());
+impl ProducerExecution {
+    async fn receive(&mut self) -> Result<ProducerOutput> {
+        if self.consumed {
+            bail!("producer execution result was already consumed");
         }
-        Ok(())
-    })
-}
+        let result = (&mut self.receiver)
+            .await
+            .context("tracked producer worker exited without returning a result")?;
+        self.consumed = true;
+        result
+    }
 
-fn template_has_token(argument: &str, expected: &str) -> Result<bool> {
-    let mut found = false;
-    visit_tokens(argument, |token| {
-        found |= token == expected;
-        Ok(())
-    })?;
-    Ok(found)
-}
+    pub async fn wait(mut self) -> Result<ProducerOutput> {
+        self.receive().await
+    }
 
-fn replacement_map<'a>(
-    kind: ProducerKind,
-    replacements: &'a [(&'a str, &'a str)],
-    output: &'a str,
-) -> Result<HashMap<&'a str, &'a str>> {
-    let mut values = HashMap::with_capacity(replacements.len() + 1);
-    values.insert("out", output);
-    for &(token, value) in replacements {
-        if token == "out" {
-            bail!("{} output token is managed by the gateway", kind.name());
+    pub async fn wait_result(&mut self) -> Result<ProducerOutput> {
+        self.receive().await
+    }
+
+    pub async fn cancel_and_wait(&mut self) -> Result<()> {
+        self.cancellation.cancel();
+        match self.receive().await {
+            Ok(_) => Ok(()),
+            Err(error) if error.downcast_ref::<ExecutionCancelled>().is_some() => Ok(()),
+            Err(error) => Err(error),
         }
-        if !kind.allowed_tokens().contains(&token) {
-            bail!("unknown {} replacement token {{{token}}}", kind.name());
-        }
-        if values.insert(token, value).is_some() {
-            bail!("duplicate {} replacement token {{{token}}}", kind.name());
-        }
-    }
-    Ok(values)
-}
-
-fn expand_argument(
-    kind: ProducerKind,
-    argument: &str,
-    values: &HashMap<&str, &str>,
-) -> Result<String> {
-    let mut expanded = String::with_capacity(argument.len());
-    let mut cursor = 0;
-    visit_token_ranges(argument, |start, end, token| {
-        expanded.push_str(&argument[cursor..start]);
-        let value = values
-            .get(token)
-            .ok_or_else(|| anyhow!("missing {} replacement for {{{token}}}", kind.name()))?;
-        expanded.push_str(value);
-        cursor = end;
-        Ok(())
-    })?;
-    expanded.push_str(&argument[cursor..]);
-    Ok(expanded)
-}
-
-fn visit_tokens(argument: &str, mut visitor: impl FnMut(&str) -> Result<()>) -> Result<()> {
-    visit_token_ranges(argument, |_, _, token| visitor(token))
-}
-
-fn visit_token_ranges(
-    argument: &str,
-    mut visitor: impl FnMut(usize, usize, &str) -> Result<()>,
-) -> Result<()> {
-    let bytes = argument.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'{' => {
-                let close = bytes[index + 1..]
-                    .iter()
-                    .position(|byte| *byte == b'}')
-                    .map(|offset| index + 1 + offset)
-                    .ok_or_else(|| anyhow!("unclosed template token in argument {argument:?}"))?;
-                let token = &argument[index + 1..close];
-                if token.is_empty() || token.as_bytes().contains(&b'{') {
-                    bail!("malformed template token in argument {argument:?}");
-                }
-                visitor(index, close + 1, token)?;
-                index = close + 1;
-            }
-            b'}' => bail!("unmatched closing brace in argument {argument:?}"),
-            _ => index += 1,
-        }
-    }
-    Ok(())
-}
-
-pub fn output_path(request_dir: &Path, filename: &str) -> Result<PathBuf> {
-    let mut components = Path::new(filename).components();
-    match (components.next(), components.next()) {
-        (Some(Component::Normal(name)), None) => Ok(request_dir.join(name)),
-        _ => bail!("producer output filename must be a single normal path component"),
-    }
-}
-
-async fn drain(mut stream: impl AsyncRead + Unpin) -> std::io::Result<Vec<u8>> {
-    let mut captured = Vec::new();
-    let mut chunk = [0_u8; 8192];
-    loop {
-        let count = stream.read(&mut chunk).await?;
-        if count == 0 {
-            return Ok(captured);
-        }
-        let remaining = DRAIN_CAPTURE_LIMIT.saturating_sub(captured.len());
-        captured.extend_from_slice(&chunk[..count.min(remaining)]);
-    }
-}
-
-async fn cleanup_process_group(
-    process_group: &mut ProcessGroup,
-    child: &mut tokio::process::Child,
-    drains: &mut DrainTasks,
-    kind: ProducerKind,
-) -> Result<()> {
-    let cleanup_deadline = tokio::time::Instant::now() + PROCESS_CLEANUP_TIMEOUT;
-    let mut failures = Vec::new();
-    if let Err(error) = process_group.terminate() {
-        failures.push(format!("terminate process group: {error:#}"));
-    }
-    match tokio::time::timeout_at(cleanup_deadline, child.wait()).await {
-        Ok(Ok(_)) => {}
-        Ok(Err(error)) => failures.push(format!("reap direct child: {error}")),
-        Err(_) => failures.push("timed out reaping direct child".into()),
-    }
-    if let Err(error) = drains.abort_and_join_until(cleanup_deadline).await {
-        failures.push(format!("stop stdout/stderr drain: {error:#}"));
-    }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        bail!("{} cleanup failed: {}", kind.name(), failures.join("; "))
     }
 }
 
@@ -564,13 +201,21 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::pin::Pin;
+    use std::sync::Arc;
     use std::task::{Context as TaskContext, Poll};
     use std::time::{Duration, Instant};
 
     use tempfile::TempDir;
     use tokio::io::{AsyncRead, ReadBuf};
 
-    use super::{DrainTasks, ProducerConfig, ProducerKind};
+    use tokio_util::sync::CancellationToken;
+    use tokio_util::task::TaskTracker;
+
+    use super::config::ProducerLimits;
+    use super::execution::{
+        close_request_directory, merge_operation_and_cleanup, output_path, DrainTasks,
+    };
+    use super::{ProducerConfig, ProducerKind, ProducerSupervisor};
 
     struct FailingReader;
 
@@ -602,22 +247,27 @@ mod tests {
             .success()
     }
 
-    fn kill_process(pid: &str) {
-        let _ = std::process::Command::new("kill")
-            .args(["-KILL", pid])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
-
-    async fn wait_for_files(paths: &[&Path]) {
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while paths.iter().any(|path| !path.exists()) {
-                tokio::time::sleep(Duration::from_millis(10)).await;
+    async fn wait_for_files_or_completion(
+        paths: &[&Path],
+        execution: &mut super::ProducerExecution,
+    ) {
+        let early_completion = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if paths.iter().all(|path| path.exists()) {
+                    return None;
+                }
+                tokio::select! {
+                    result = execution.wait_result() => return Some(result),
+                    () = tokio::task::yield_now() => {}
+                }
             }
         })
         .await
-        .unwrap();
+        .expect("producer neither wrote markers nor completed before the observation deadline");
+        assert!(
+            early_completion.is_none(),
+            "producer completed before writing all observation markers"
+        );
     }
 
     fn enabled(kind: ProducerKind, argv: Vec<String>, timeout: &str) -> ProducerConfig {
@@ -625,9 +275,352 @@ mod tests {
         ProducerConfig::parse(kind, Some("true"), Some(&json), Some(timeout)).unwrap()
     }
 
+    fn limits(kind: ProducerKind, max_output_bytes: u64) -> ProducerLimits {
+        match kind {
+            ProducerKind::Image => ProducerLimits {
+                max_output_bytes,
+                max_concurrency: 1,
+                max_width: Some(2048),
+                max_height: Some(2048),
+                max_steps: Some(100),
+                max_seconds: None,
+            },
+            ProducerKind::Audio => ProducerLimits {
+                max_output_bytes,
+                max_concurrency: 1,
+                max_width: None,
+                max_height: None,
+                max_steps: None,
+                max_seconds: Some(30.0),
+            },
+        }
+    }
+
+    fn enabled_with_limits(
+        kind: ProducerKind,
+        argv: Vec<String>,
+        timeout: &str,
+        limits: ProducerLimits,
+    ) -> ProducerConfig {
+        let json = serde_json::to_string(&argv).unwrap();
+        ProducerConfig::parse_with_limits(
+            kind,
+            Some("true"),
+            Some(&json),
+            Some(timeout),
+            Some(limits),
+        )
+        .unwrap()
+    }
+
+    fn supervisor() -> ProducerSupervisor {
+        ProducerSupervisor::new(CancellationToken::new())
+    }
+
+    #[test]
+    fn enabled_producer_requires_absolute_token_free_executable_and_limits() {
+        let image_limits = limits(ProducerKind::Image, 1024);
+        for executable in ["producer", "{out}"] {
+            let argv = serde_json::to_string(&[executable, "{out}"]).unwrap();
+            assert!(ProducerConfig::parse_with_limits(
+                ProducerKind::Image,
+                Some("true"),
+                Some(&argv),
+                Some("1"),
+                Some(image_limits.clone()),
+            )
+            .is_err());
+        }
+        let argv = r#"["/missing/producer","{out}"]"#;
+        assert!(ProducerConfig::parse_with_limits(
+            ProducerKind::Image,
+            Some("true"),
+            Some(argv),
+            Some("1"),
+            None,
+        )
+        .is_err());
+
+        let mut invalid_concurrency = image_limits;
+        invalid_concurrency.max_concurrency = 0;
+        let error = ProducerConfig::parse_with_limits(
+            ProducerKind::Image,
+            Some("true"),
+            Some(argv),
+            Some("1"),
+            Some(invalid_concurrency),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("YTS_IMAGEGEN_MAX_CONCURRENCY"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn startup_rejects_missing_and_non_executable_producer() {
+        let directory = tempfile::tempdir().unwrap();
+        let missing = directory.path().join("missing");
+        let config = enabled_with_limits(
+            ProducerKind::Image,
+            vec![missing.to_string_lossy().into_owned(), "{out}".into()],
+            "1",
+            limits(ProducerKind::Image, 1024),
+        );
+        assert!(config.validate_executable().is_err());
+
+        let non_executable = directory.path().join("non-executable");
+        fs::write(&non_executable, "fixture").unwrap();
+        fs::set_permissions(&non_executable, fs::Permissions::from_mode(0o644)).unwrap();
+        let config = enabled_with_limits(
+            ProducerKind::Image,
+            vec![
+                non_executable.to_string_lossy().into_owned(),
+                "{out}".into(),
+            ],
+            "1",
+            limits(ProducerKind::Image, 1024),
+        );
+        assert!(config.validate_executable().is_err());
+    }
+
+    #[tokio::test]
+    async fn output_is_read_only_up_to_the_configured_limit() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
+        let (_fixture, executable) = executable("printf '12345' > \"$1\"");
+        let config = enabled_with_limits(
+            ProducerKind::Image,
+            vec![executable.to_string_lossy().into_owned(), "{out}".into()],
+            "2",
+            limits(ProducerKind::Image, 4),
+        );
+        let supervisor = supervisor();
+
+        let error = supervisor
+            .execute(&config, "image.png", &[])
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("exceeds"), "{error:#}");
+        supervisor.shutdown(Duration::from_secs(1)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn output_must_be_a_non_symlink_regular_file() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
+        let observation = tempfile::tempdir().unwrap();
+        let target = observation.path().join("target");
+        fs::write(&target, "target bytes").unwrap();
+        for body in ["ln -s \"$2\" \"$1\"", "mkdir \"$1\""] {
+            let (_fixture, executable) = executable(body);
+            let config = enabled_with_limits(
+                ProducerKind::Image,
+                vec![
+                    executable.to_string_lossy().into_owned(),
+                    "{out}".into(),
+                    target.to_string_lossy().into_owned(),
+                ],
+                "2",
+                limits(ProducerKind::Image, 1024),
+            );
+            let supervisor = supervisor();
+
+            let error = supervisor
+                .execute(&config, "image.png", &[])
+                .await
+                .unwrap_err();
+
+            assert!(error.to_string().contains("regular file"), "{error:#}");
+            supervisor.shutdown(Duration::from_secs(1)).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn tracked_worker_surfaces_tempdir_close_failure_on_success_and_primary_error() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
+        for (body, expected_primary) in [
+            ("printf ok > \"$1\"", None),
+            ("printf primary >&2; exit 7", Some("primary")),
+        ] {
+            let (_fixture, executable) = executable(body);
+            let config = enabled_with_limits(
+                ProducerKind::Image,
+                vec![executable.to_string_lossy().into_owned(), "{out}".into()],
+                "2",
+                limits(ProducerKind::Image, 1024),
+            );
+            let supervisor = ProducerSupervisor::with_directory_closer(
+                CancellationToken::new(),
+                Arc::new(|directory| {
+                    close_request_directory(directory)?;
+                    anyhow::bail!("injected TempDir::close failure")
+                }),
+            );
+
+            let error = supervisor
+                .execute(&config, "image.png", &[])
+                .await
+                .unwrap_err();
+
+            let message = format!("{error:#}");
+            assert!(message.contains("injected TempDir::close failure"));
+            if let Some(expected_primary) = expected_primary {
+                assert!(message.contains(expected_primary), "{message}");
+            }
+            supervisor.shutdown(Duration::from_secs(1)).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_direct_child_terminates_pipe_holding_descendant_immediately() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
+        let (_fixture, executable) = executable(
+            "printf '%s' ok > \"$1\"; sleep 30 & descendant=$!; printf '%s' \"$descendant\" > \"$2\"",
+        );
+        let observation = tempfile::tempdir().unwrap();
+        let descendant_path = observation.path().join("descendant.pid");
+        let config = enabled_with_limits(
+            ProducerKind::Image,
+            vec![
+                executable.to_string_lossy().into_owned(),
+                "{out}".into(),
+                descendant_path.to_string_lossy().into_owned(),
+            ],
+            "3",
+            limits(ProducerKind::Image, 1024),
+        );
+        let supervisor = supervisor();
+        let output = supervisor.execute(&config, "image.png", &[]).await.unwrap();
+
+        assert_eq!(output.bytes, b"ok");
+        let descendant = fs::read_to_string(descendant_path).unwrap();
+        assert!(!process_exists(descendant.trim()));
+        supervisor.shutdown(Duration::from_secs(1)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_and_reaps_active_execution_and_closes_tempdir() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
+        let (_fixture, executable) =
+            executable("printf '%s' \"$$\" > \"$2\"; printf '%s' \"$1\" > \"$3\"; exec sleep 30");
+        let observation = tempfile::tempdir().unwrap();
+        let pid_path = observation.path().join("pid");
+        let output_path = observation.path().join("output.path");
+        let config = enabled_with_limits(
+            ProducerKind::Audio,
+            vec![
+                executable.to_string_lossy().into_owned(),
+                "{out}".into(),
+                pid_path.to_string_lossy().into_owned(),
+                output_path.to_string_lossy().into_owned(),
+            ],
+            "30",
+            limits(ProducerKind::Audio, 1024),
+        );
+        let supervisor = supervisor();
+        let mut execution = supervisor.start(&config, "audio.wav", &[]).await.unwrap();
+        wait_for_files_or_completion(&[&pid_path, &output_path], &mut execution).await;
+
+        supervisor.shutdown(Duration::from_secs(2)).await.unwrap();
+        let error = execution.wait().await.unwrap_err();
+
+        let pid = fs::read_to_string(pid_path).unwrap();
+        let temporary_output = PathBuf::from(fs::read_to_string(output_path).unwrap());
+        assert!(!process_exists(pid.trim()));
+        assert!(!temporary_output.parent().unwrap().exists());
+        assert!(error.to_string().contains("cancelled"), "{error:#}");
+    }
+
+    #[tokio::test]
+    async fn dropping_execution_receiver_still_converges_through_tracked_worker() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
+        let (_fixture, executable) =
+            executable("printf '%s' \"$$\" > \"$2\"; printf '%s' \"$1\" > \"$3\"; exec sleep 30");
+        let observation = tempfile::tempdir().unwrap();
+        let pid_path = observation.path().join("pid");
+        let output_path = observation.path().join("output.path");
+        let config = enabled_with_limits(
+            ProducerKind::Audio,
+            vec![
+                executable.to_string_lossy().into_owned(),
+                "{out}".into(),
+                pid_path.to_string_lossy().into_owned(),
+                output_path.to_string_lossy().into_owned(),
+            ],
+            "30",
+            limits(ProducerKind::Audio, 1024),
+        );
+        let supervisor = supervisor();
+        let mut execution = supervisor.start(&config, "audio.wav", &[]).await.unwrap();
+        wait_for_files_or_completion(&[&pid_path, &output_path], &mut execution).await;
+
+        drop(execution);
+        supervisor.shutdown(Duration::from_secs(2)).await.unwrap();
+
+        let pid = fs::read_to_string(pid_path).unwrap();
+        let temporary_output = PathBuf::from(fs::read_to_string(output_path).unwrap());
+        assert!(!process_exists(pid.trim()));
+        assert!(!temporary_output.parent().unwrap().exists());
+    }
+
+    #[tokio::test]
+    async fn concurrency_limit_rejects_without_waiting_and_releases_after_cleanup() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
+        let (_fixture, executable) = executable("printf '%s' \"$$\" > \"$2\"; exec sleep 30");
+        let observation = tempfile::tempdir().unwrap();
+        let marker = observation.path().join("active.pid");
+        let config = enabled_with_limits(
+            ProducerKind::Image,
+            vec![
+                executable.to_string_lossy().into_owned(),
+                "{out}".into(),
+                marker.to_string_lossy().into_owned(),
+            ],
+            "30",
+            limits(ProducerKind::Image, 1024),
+        );
+        let supervisor = supervisor();
+        let cloned_config = config.clone();
+        let mut first = supervisor.start(&config, "image.png", &[]).await.unwrap();
+        wait_for_files_or_completion(&[&marker], &mut first).await;
+
+        let second_error = match supervisor.start(&cloned_config, "image.png", &[]).await {
+            Err(error) => Some(error),
+            Ok(mut unexpected) => {
+                unexpected.cancel_and_wait().await.unwrap();
+                None
+            }
+        };
+        first.cancel_and_wait().await.unwrap();
+        let mut third = supervisor
+            .start(&cloned_config, "image.png", &[])
+            .await
+            .unwrap();
+        third.cancel_and_wait().await.unwrap();
+        supervisor.shutdown(Duration::from_secs(2)).await.unwrap();
+
+        let error = second_error.expect("second execution exceeded max_concurrency");
+        assert!(error.to_string().contains("concurrency"), "{error:#}");
+    }
+
+    #[test]
+    fn cleanup_failure_is_aggregated_with_the_primary_failure() {
+        let error = merge_operation_and_cleanup::<()>(
+            Err(anyhow::anyhow!("primary failure")),
+            Err(anyhow::anyhow!("cleanup failure")),
+        )
+        .unwrap_err();
+
+        let message = format!("{error:#}");
+        assert!(message.contains("primary failure"));
+        assert!(message.contains("cleanup failure"));
+    }
+
     #[tokio::test]
     async fn completed_drain_error_cleanup_does_not_poll_join_handle_twice() {
-        let mut drains = DrainTasks::spawn(FailingReader, tokio::io::empty());
+        let tasks = TaskTracker::new();
+        let mut drains = DrainTasks::spawn_tracked(FailingReader, tokio::io::empty(), &tasks);
+        tasks.close();
 
         let error = drains
             .collect_until(
@@ -639,9 +632,10 @@ mod tests {
 
         assert!(error.to_string().contains("stdout/stderr"), "{error:#}");
         drains
-            .abort_and_join_until(tokio::time::Instant::now() + Duration::from_secs(1))
+            .cancel_and_join_until(tokio::time::Instant::now() + Duration::from_secs(1))
             .await
             .unwrap();
+        tasks.wait().await;
     }
 
     #[test]
@@ -649,7 +643,7 @@ mod tests {
         let config = enabled(
             ProducerKind::Image,
             vec![
-                "producer binary".into(),
+                "/producer binary".into(),
                 "--prompt".into(),
                 "two words".into(),
                 "{out}".into(),
@@ -659,7 +653,7 @@ mod tests {
 
         assert_eq!(
             config.argv(),
-            &["producer binary", "--prompt", "two words", "{out}"]
+            &["/producer binary", "--prompt", "two words", "{out}"]
         );
     }
 
@@ -725,6 +719,7 @@ mod tests {
 
     #[tokio::test]
     async fn command_receives_literal_arguments_without_shell_interpretation() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
         let (_fixture, executable) = executable("printf '%s\\n' \"$2\" \"$3\" > \"$1\"");
         let marker_dir = tempfile::tempdir().unwrap();
         let marker = marker_dir.path().join("executed");
@@ -740,9 +735,10 @@ mod tests {
             ],
             "2",
         );
+        let supervisor = supervisor();
 
-        let output = config
-            .execute("image.png", &[("prompt", prompt.as_str())])
+        let output = supervisor
+            .execute(&config, "image.png", &[("prompt", prompt.as_str())])
             .await
             .unwrap();
 
@@ -751,19 +747,22 @@ mod tests {
             format!("{prompt}\n{metacharacters}\n")
         );
         assert!(!marker.exists());
+        supervisor.shutdown(Duration::from_secs(1)).await.unwrap();
     }
 
     #[tokio::test]
     async fn each_request_uses_a_unique_cleaned_temp_path() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
         let (_fixture, executable) = executable("printf '%s' \"$1\" > \"$1\"");
         let config = enabled(
             ProducerKind::Image,
             vec![executable.to_string_lossy().into_owned(), "{out}".into()],
             "2",
         );
+        let supervisor = supervisor();
 
-        let first = config.execute("image.png", &[]).await.unwrap();
-        let second = config.execute("image.png", &[]).await.unwrap();
+        let first = supervisor.execute(&config, "image.png", &[]).await.unwrap();
+        let second = supervisor.execute(&config, "image.png", &[]).await.unwrap();
         let first_path = PathBuf::from(String::from_utf8(first.bytes).unwrap());
         let second_path = PathBuf::from(String::from_utf8(second.bytes).unwrap());
 
@@ -772,10 +771,12 @@ mod tests {
         assert!(!second_path.exists());
         assert!(!first_path.parent().unwrap().exists());
         assert!(!second_path.parent().unwrap().exists());
+        supervisor.shutdown(Duration::from_secs(1)).await.unwrap();
     }
 
     #[tokio::test]
     async fn timeout_kills_the_producer_and_cleans_temp_output() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
         let (_fixture, executable) = executable("printf '%s' \"$$\" > \"$2\"; exec sleep 10");
         let observation = tempfile::tempdir().unwrap();
         let pid_path = observation.path().join("pid");
@@ -789,8 +790,11 @@ mod tests {
             "2",
         );
         let started = Instant::now();
+        let supervisor = supervisor();
 
-        let error = config.execute("audio.wav", &[]).await.unwrap_err();
+        let mut execution = supervisor.start(&config, "audio.wav", &[]).await.unwrap();
+        wait_for_files_or_completion(&[&pid_path], &mut execution).await;
+        let error = execution.wait().await.unwrap_err();
 
         assert!(started.elapsed() < Duration::from_secs(4));
         assert!(error.to_string().contains("timed out"), "{error:#}");
@@ -801,12 +805,14 @@ mod tests {
             .status()
             .unwrap();
         assert!(!status.success(), "producer process {pid} survived timeout");
+        supervisor.shutdown(Duration::from_secs(1)).await.unwrap();
     }
 
     #[tokio::test]
     async fn timeout_kills_descendants_bounds_pipe_drain_and_cleans_temp_directory() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
         let (_fixture, executable) = executable(
-            "printf '%s' \"$$\" > \"$2\"; printf '%s' \"$1\" > \"$4\"; sleep 30 & descendant=$!; printf '%s' \"$descendant\" > \"$3\"",
+            "printf '%s' \"$$\" > \"$2\"; printf '%s' \"$1\" > \"$4\"; sleep 30 & descendant=$!; printf '%s' \"$descendant\" > \"$3\"; wait",
         );
         let observation = tempfile::tempdir().unwrap();
         let parent_pid_path = observation.path().join("parent.pid");
@@ -824,42 +830,40 @@ mod tests {
             "2",
         );
         let started = Instant::now();
-        let mut execution = tokio::spawn(async move { config.execute("image.png", &[]).await });
-        wait_for_files(&[
-            &parent_pid_path,
-            &descendant_pid_path,
-            &output_path_observation,
-        ])
-        .await;
-
-        let outcome = match tokio::time::timeout(Duration::from_secs(3), &mut execution).await {
-            Ok(result) => Some(result.unwrap()),
-            Err(_) => {
-                execution.abort();
-                let _ = execution.await;
-                None
+        let supervisor = supervisor();
+        let mut execution = supervisor.start(&config, "image.png", &[]).await.unwrap();
+        let marker_paths = [
+            parent_pid_path.as_path(),
+            descendant_pid_path.as_path(),
+            output_path_observation.as_path(),
+        ];
+        let early_completion = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if marker_paths.iter().all(|path| path.exists()) {
+                    return None;
+                }
+                tokio::select! {
+                    result = execution.wait_result() => return Some(result),
+                    () = tokio::task::yield_now() => {}
+                }
             }
-        };
+        })
+        .await
+        .expect("producer neither wrote its markers nor completed before its own timeout");
+        assert!(
+            early_completion.is_none(),
+            "producer completed before writing observation markers"
+        );
+
+        let outcome = tokio::time::timeout(Duration::from_secs(3), execution.wait())
+            .await
+            .expect("tracked producer exceeded its execution and cleanup deadlines");
         let parent_pid = fs::read_to_string(&parent_pid_path).unwrap();
         let descendant_pid = fs::read_to_string(&descendant_pid_path).unwrap();
         let output_path = PathBuf::from(fs::read_to_string(&output_path_observation).unwrap());
-        if outcome.is_some() {
-            tokio::time::timeout(Duration::from_secs(1), async {
-                while process_exists(parent_pid.trim()) || process_exists(descendant_pid.trim()) {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            })
-            .await
-            .unwrap();
-        }
         let parent_survived = process_exists(parent_pid.trim());
         let descendant_survived = process_exists(descendant_pid.trim());
-        kill_process(parent_pid.trim());
-        kill_process(descendant_pid.trim());
-
-        let error = outcome
-            .expect("producer execution exceeded its global deadline")
-            .unwrap_err();
+        let error = outcome.unwrap_err();
         assert!(started.elapsed() < Duration::from_secs(4));
         assert!(error.to_string().contains("timed out"), "{error:#}");
         assert!(
@@ -872,15 +876,16 @@ mod tests {
         );
         assert!(!output_path.exists());
         assert!(!output_path.parent().unwrap().exists());
+        supervisor.shutdown(Duration::from_secs(1)).await.unwrap();
     }
 
     #[test]
     fn output_path_is_always_inside_its_request_directory() {
         let request_dir = Path::new("/tmp/request");
         assert_eq!(
-            super::output_path(request_dir, "audio.wav").unwrap(),
+            output_path(request_dir, "audio.wav").unwrap(),
             request_dir.join("audio.wav")
         );
-        assert!(super::output_path(request_dir, "../escape.wav").is_err());
+        assert!(output_path(request_dir, "../escape.wav").is_err());
     }
 }

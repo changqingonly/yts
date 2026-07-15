@@ -149,6 +149,10 @@ def _render_component(component: ManifestComponent) -> str:
                 'kind = "command"',
                 f"argv = [{', '.join(runtime_argv)}]",
                 "execution_timeout_seconds = 30",
+                "",
+                f"[components.{name}.runtime.limits]",
+                "max_output_bytes = 1048576",
+                "max_concurrency = 1",
             ]
         )
     return "\n".join(lines)

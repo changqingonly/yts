@@ -357,6 +357,59 @@ Record calls through injected process/probe functions and assert local startup i
 
 Assert reverse stop order, rollback after failure at every boundary, aggregated stop errors, stale-lock handling only when owner PID is dead, refusal when Tauri owns the lock, component PID/log naming, structured gateway env, and cloud lifecycle remaining free of local components.
 
+Test the gateway environment resolver as an exact, complete dictionary rather than checking individual keys. With the tracked manifest loaded and component paths resolved, require:
+
+```python
+image = resolve_component_paths(root, manifest, "stable-diffusion")
+assert gateway_env == {
+    "YTS_GATEWAY_ADDR": "127.0.0.1:8799",
+    "YTS_GATEWAY_SHUTDOWN_TIMEOUT_SECONDS": "15",
+    "YTS_LLAMA_BASE_URL": "http://127.0.0.1:8080",
+    "YTS_LLAMA_STARTUP_TIMEOUT_SECONDS": "120",
+    "YTS_LLAMA_PROBE_TIMEOUT_SECONDS": "2",
+    "YTS_LLAMA_COMPLETION_TIMEOUT_SECONDS": "120",
+    "YTS_LLAMA_MODEL": "qwen",
+    "YTS_IMAGEGEN_ENABLED": "true",
+    "YTS_IMAGEGEN_ARGV": json.dumps(
+        [
+            str(image.artifact),
+            "--diffusion-model",
+            str(image.models["flux"]),
+            "--vae",
+            str(image.models["vae"]),
+            "--clip_l",
+            str(image.models["clip_l"]),
+            "--t5xxl",
+            str(image.models["t5xxl"]),
+            "--prompt",
+            "{prompt}",
+            "--output",
+            "{out}",
+            "--width",
+            "{width}",
+            "--height",
+            "{height}",
+            "--steps",
+            "{steps}",
+            "--cfg-scale",
+            "1.0",
+            "--sampling-method",
+            "euler",
+        ],
+        separators=(",", ":"),
+    ),
+    "YTS_IMAGEGEN_TIMEOUT_SECONDS": "600",
+    "YTS_IMAGEGEN_MAX_OUTPUT_BYTES": "67108864",
+    "YTS_IMAGEGEN_MAX_CONCURRENCY": "1",
+    "YTS_IMAGEGEN_MAX_WIDTH": "2048",
+    "YTS_IMAGEGEN_MAX_HEIGHT": "2048",
+    "YTS_IMAGEGEN_MAX_STEPS": "100",
+    "YTS_AUDIOGEN_ENABLED": "false",
+}
+```
+
+Also assert bare IPv6 hosts become `[2001:db8::1]:8799` for `YTS_GATEWAY_ADDR` and `http://[2001:db8::1]:8080` for `YTS_LLAMA_BASE_URL`. Negative tests must reject every missing or wrong-typed source field, zero or multiple llama models, and a llama argv with a missing, duplicate, dangling, or mismatched `--alias`. Assert the disabled ACE-Step service does not add any other `YTS_AUDIOGEN_*` key.
+
 - [ ] **Step 2: Verify RED**
 
 Run:
@@ -370,6 +423,17 @@ PYTHONPATH="$PWD/core:$PWD/server:$PWD" /Users/bytedance/Documents/projects/yts/
 Create an atomic `run/yts-local-supervisor.lock` JSON file with schema version, owner (`servctl` or `tauri`), PID, and start time. Acquire with exclusive create; validate a pre-existing owner PID and fail if alive. Release only when owner and PID match.
 
 Spawn service components with process groups, PID files, component logs, resolved argv, and manifest timeouts. Build gateway environment from explicit values: llama base URL, image/audio enabled booleans, and JSON argv arrays. Never include command strings.
+
+Implement one strict gateway environment resolver with the following sole mapping contract:
+
+- Map `infer-gateway.runtime.host` plus `port` to `YTS_GATEWAY_ADDR`, using `host:port` for DNS/IPv4 and `[host]:port` for bare IPv6. Map `infer-gateway.runtime.shutdown_timeout_seconds` to `YTS_GATEWAY_SHUTDOWN_TIMEOUT_SECONDS`.
+- Map `llama.runtime.host` plus `port` to `YTS_LLAMA_BASE_URL` as an `http://` URL with the same IPv6 bracket rule. Map `llama.runtime.startup_timeout_seconds` to `YTS_LLAMA_STARTUP_TIMEOUT_SECONDS` and `llama.runtime.readiness.timeout_seconds` to `YTS_LLAMA_PROBE_TIMEOUT_SECONDS`.
+- Map `infer-gateway.runtime.request_timeout_seconds` only to `YTS_LLAMA_COMPLETION_TIMEOUT_SECONDS`. This is the llama completion request deadline: do not reuse startup/probe timeouts and do not treat it as the FastAPI-to-gateway request timeout.
+- Require llama to have exactly one model. Use that model's `id` as `YTS_LLAMA_MODEL`, and require `llama.runtime.argv` to contain exactly one `--alias` immediately followed by the same id. A missing, duplicate, dangling, or mismatched alias is an error. The tracked llama argv is `[..., "--model", "{model:qwen}", "--alias", "qwen"]`; do not add a second schema token for the alias.
+- Map `stable-diffusion.enabled` to `YTS_IMAGEGEN_ENABLED`, its path-expanded `runtime.argv` to compact JSON `YTS_IMAGEGEN_ARGV`, `runtime.execution_timeout_seconds` to `YTS_IMAGEGEN_TIMEOUT_SECONDS`, and its limits to `YTS_IMAGEGEN_MAX_OUTPUT_BYTES`, `YTS_IMAGEGEN_MAX_CONCURRENCY`, `YTS_IMAGEGEN_MAX_WIDTH`, `YTS_IMAGEGEN_MAX_HEIGHT`, and `YTS_IMAGEGEN_MAX_STEPS`.
+- ACE-Step is currently a service component with `enabled = false`. Emit only `YTS_AUDIOGEN_ENABLED=false`; never map its service argv to `YTS_AUDIOGEN_ARGV`, and omit every other `YTS_AUDIOGEN_*` variable. Audio mapping may be added only after the versioned manifest contains a command adapter with the complete command limits required by the gateway.
+
+Every source field above is required for its mapping and must have the schema-defined type. Missing fields, wrong runtime kinds, incomplete limits, or inconsistent component facts fail explicitly; the resolver has no default values, hard-coded ports/timeouts, or synthesized argv.
 
 - [ ] **Step 4: Integrate start/stop/status**
 

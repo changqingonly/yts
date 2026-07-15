@@ -4,7 +4,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
 use base64::Engine;
-use image::GenericImageView;
+use image::ImageDecoder;
 use serde::{Deserialize, Serialize};
 
 use crate::GatewayState;
@@ -45,12 +45,17 @@ pub async fn gen_image(
         ));
     }
     validate_request(&req).map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    state
+        .image
+        .validate_image_request(req.width, req.height, req.steps)
+        .map_err(|error| (StatusCode::BAD_REQUEST, format!("{error:#}")))?;
     let width = req.width.to_string();
     let height = req.height.to_string();
     let steps = req.steps.to_string();
     let output = state
-        .image
+        .producers
         .execute(
+            &state.image,
             "image.png",
             &[
                 ("prompt", req.prompt.as_str()),
@@ -91,15 +96,21 @@ fn validate_request(req: &ImageReq) -> Result<(), String> {
 }
 
 fn validate_png(bytes: &[u8], expected_width: u32, expected_height: u32) -> Result<(), String> {
-    let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
-        .map_err(|error| format!("image producer returned invalid PNG: {error}"))?;
-    let dimensions = image.dimensions();
+    let decoder = image::codecs::png::PngDecoder::new(std::io::Cursor::new(bytes))
+        .map_err(|error| format!("image producer returned invalid PNG header: {error}"))?;
+    let dimensions = decoder.dimensions();
     if dimensions != (expected_width, expected_height) {
         return Err(format!(
-            "image producer returned {}x{} PNG, expected {}x{}",
-            dimensions.0, dimensions.1, expected_width, expected_height
+            "image producer returned {}x{} PNG, expected {expected_width}x{expected_height}",
+            dimensions.0, dimensions.1
         ));
     }
+    let decoded_size = usize::try_from(decoder.total_bytes())
+        .map_err(|_| "decoded PNG size exceeds this platform's address space".to_string())?;
+    let mut decoded = vec![0_u8; decoded_size];
+    decoder
+        .read_image(&mut decoded)
+        .map_err(|error| format!("image producer returned invalid PNG data: {error}"))?;
     Ok(())
 }
 
@@ -121,5 +132,17 @@ mod tests {
             .unwrap();
 
         assert!(super::validate_png(&bytes, 64, 64).is_err());
+    }
+
+    #[test]
+    fn checks_png_header_dimensions_before_decoding_pixels() {
+        let image = ImageBuffer::<Rgb<u8>, _>::new(32, 64);
+        let mut bytes = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut bytes)
+            .write_image(image.as_raw(), 32, 64, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        let error = super::validate_png(&bytes, 64, 64).unwrap_err();
+
+        assert!(error.contains("32x64"), "{error}");
     }
 }

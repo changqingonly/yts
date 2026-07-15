@@ -37,7 +37,7 @@ path = "llm-models/Qwen2.5-7B-Instruct-Q4_K_M.gguf"
 
 [components.llama.runtime]
 kind = "service"
-argv = ["{artifact}", "--host", "127.0.0.1", "--port", "8080", "--model", "{model:qwen}"]
+argv = ["{artifact}", "--host", "127.0.0.1", "--port", "8080", "--model", "{model:qwen}", "--alias", "qwen"]
 host = "127.0.0.1"
 port = 8080
 startup_timeout_seconds = 120
@@ -134,6 +134,13 @@ argv = [
   "euler",
 ]
 execution_timeout_seconds = 600
+
+[components.stable-diffusion.runtime.limits]
+max_output_bytes = 67108864
+max_concurrency = 1
+max_width = 2048
+max_height = 2048
+max_steps = 100
 
 [components.acestep]
 enabled = false
@@ -237,6 +244,7 @@ host = "127.0.0.1"
 port = 8799
 startup_timeout_seconds = 60
 shutdown_timeout_seconds = 15
+request_timeout_seconds = 120
 
 [components.infer-gateway.runtime.health]
 path = "/health"

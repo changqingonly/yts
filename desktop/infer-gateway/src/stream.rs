@@ -15,7 +15,7 @@ use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 
-use crate::producer::ProducerConfig;
+use crate::producer::{ProducerConfig, ProducerExecution, ProducerSupervisor};
 use crate::GatewayState;
 
 const SAMPLE_RATE: u32 = 48_000;
@@ -77,25 +77,124 @@ pub async fn music_stream_handler(State(state): State<GatewayState>, request: Re
         Err(rejection) => return rejection.into_response(),
     };
     let producer = state.audio.clone();
-    ws.on_upgrade(move |socket| handle_socket(socket, producer))
+    let supervisor = state.producers.clone();
+    ws.on_upgrade(move |socket| handle_socket(socket, producer, supervisor))
 }
 
-async fn handle_socket(mut socket: WebSocket, producer: ProducerConfig) {
-    let (prompt, seconds, channels) = match wait_start(&mut socket).await {
+async fn handle_socket(
+    mut socket: WebSocket,
+    producer: ProducerConfig,
+    supervisor: ProducerSupervisor,
+) {
+    let (prompt, seconds, channels) = match wait_start(&mut socket, &supervisor).await {
         Some(v) => v,
         None => return,
     };
-
-    let pcm = match produce_pcm(&producer, &prompt, seconds).await {
-        Ok(p) => p,
-        Err(e) => {
-            let err = serde_json::to_string(&ServerMsg::Error { message: e })
-                .expect("serialize fixed audio error response");
-            let _ = socket.send(Message::Text(err)).await;
+    if let Err(error) = producer.validate_audio_request(seconds) {
+        send_generation_error(&mut socket, format!("{error:#}")).await;
+        return;
+    }
+    let seconds_value = seconds.to_string();
+    let mut execution = match supervisor
+        .start(
+            &producer,
+            "audio.wav",
+            &[
+                ("prompt", prompt.as_str()),
+                ("seconds", seconds_value.as_str()),
+            ],
+        )
+        .await
+    {
+        Ok(execution) => execution,
+        Err(error) => {
+            send_generation_error(
+                &mut socket,
+                format!("start audio producer failed: {error:#}"),
+            )
+            .await;
             return;
         }
     };
-    let per_chan = pcm.len() / channels as usize;
+    let output = tokio::select! {
+        result = execution.wait_result() => result,
+        message = socket.recv() => match message {
+                Some(Ok(Message::Text(text))) => match serde_json::from_str::<ClientMsg>(&text) {
+                    Ok(ClientMsg::Stop) => {
+                        if let Err(error) = execution.cancel_and_wait().await {
+                            send_generation_error(
+                                &mut socket,
+                                format!("cancel audio producer cleanup failed: {error:#}"),
+                            )
+                            .await;
+                            return;
+                        }
+                        send_end(&mut socket, 0, 0).await;
+                        let _ = socket.close().await;
+                        return;
+                    }
+                    Ok(ClientMsg::Start { .. }) => {
+                        cancel_for_protocol_error(
+                            &mut socket,
+                            &mut execution,
+                            "audio stream already started".into(),
+                        )
+                        .await;
+                        return;
+                    }
+                    Err(error) => {
+                        cancel_for_protocol_error(
+                            &mut socket,
+                            &mut execution,
+                            format!("invalid client message: {error}"),
+                        )
+                        .await;
+                        return;
+                    }
+                },
+                Some(Ok(Message::Close(_))) | None => {
+                    if let Err(error) = execution.cancel_and_wait().await {
+                        tracing::error!("audio producer cleanup after WebSocket close failed: {error:#}");
+                    }
+                    return;
+                }
+                Some(Ok(_)) => {
+                    cancel_for_protocol_error(
+                        &mut socket,
+                        &mut execution,
+                        "only text control messages are accepted".into(),
+                    )
+                    .await;
+                    return;
+                }
+                Some(Err(error)) => {
+                    if let Err(cleanup) = execution.cancel_and_wait().await {
+                        tracing::error!(
+                            "audio WebSocket receive failed: {error}; producer cleanup failed: {cleanup:#}"
+                        );
+                    }
+                    return;
+                }
+        }
+    };
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            send_generation_error(&mut socket, format!("audio producer failed: {error:#}")).await;
+            return;
+        }
+    };
+    let pcm = match decode_wav_mono_f32(&output.bytes) {
+        Ok(pcm) if !pcm.is_empty() => pcm,
+        Ok(_) => {
+            send_generation_error(&mut socket, "audio producer returned no samples".into()).await;
+            return;
+        }
+        Err(error) => {
+            send_generation_error(&mut socket, error).await;
+            return;
+        }
+    };
 
     let header = serde_json::to_string(&ServerMsg::Header {
         sample_rate: SAMPLE_RATE,
@@ -150,34 +249,32 @@ async fn handle_socket(mut socket: WebSocket, producer: ProducerConfig) {
         tokio::time::sleep(Duration::from_millis(80)).await; // ≈实时速率
     }
 
-    // samples = 每声道采样数(与契约一致)
-    let end = serde_json::to_string(&ServerMsg::End {
-        frames,
-        samples: per_chan,
-    })
-    .expect("serialize fixed audio end response");
-    let _ = socket.send(Message::Text(end)).await;
+    send_end(&mut socket, frames, produced / channels as usize).await;
     let _ = socket.close().await;
 }
 
-async fn produce_pcm(
-    producer: &ProducerConfig,
-    prompt: &str,
-    seconds: f32,
-) -> Result<Vec<f32>, String> {
-    let seconds = seconds.to_string();
-    let output = producer
-        .execute(
-            "audio.wav",
-            &[("prompt", prompt), ("seconds", seconds.as_str())],
-        )
-        .await
-        .map_err(|error| format!("audio producer failed: {error:#}"))?;
-    let pcm = decode_wav_mono_f32(&output.bytes)?;
-    if pcm.is_empty() {
-        return Err("audio producer returned no samples".into());
-    }
-    Ok(pcm)
+async fn cancel_for_protocol_error(
+    socket: &mut WebSocket,
+    execution: &mut ProducerExecution,
+    message: String,
+) {
+    let message = match execution.cancel_and_wait().await {
+        Ok(()) => message,
+        Err(error) => format!("{message}; audio producer cleanup failed: {error:#}"),
+    };
+    send_protocol_error(socket, &message).await;
+}
+
+async fn send_generation_error(socket: &mut WebSocket, message: String) {
+    let message = serde_json::to_string(&ServerMsg::Error { message })
+        .expect("serialize fixed audio generation error response");
+    let _ = socket.send(Message::Text(message)).await;
+}
+
+async fn send_end(socket: &mut WebSocket, frames: usize, samples: usize) {
+    let message = serde_json::to_string(&ServerMsg::End { frames, samples })
+        .expect("serialize fixed audio end response");
+    let _ = socket.send(Message::Text(message)).await;
 }
 
 #[cfg(test)]
@@ -236,6 +333,11 @@ fn decode_wav_mono_f32(bytes: &[u8]) -> Result<Vec<f32>, String> {
     if samples.iter().any(|sample| !sample.is_finite()) {
         return Err("audio producer WAV contains a non-finite sample".into());
     }
+    if matches!(spec.sample_format, hound::SampleFormat::Float)
+        && samples.iter().any(|sample| !(-1.0..=1.0).contains(sample))
+    {
+        return Err("audio producer float WAV contains a sample outside [-1, 1]".into());
+    }
     if !samples.len().is_multiple_of(channels) {
         return Err(format!(
             "audio producer WAV has {} samples, not a complete {channels}-channel frame",
@@ -271,15 +373,22 @@ fn validate_start(prompt: &str, seconds: f32, accept: &Accept) -> Result<u16, St
         return Err("only f32le audio is supported".into());
     }
     match accept.channels {
-        None | Some(1) => Ok(1),
+        None | Some(1) | Some(2) => Ok(1),
         Some(channels) => Err(format!(
             "requested audio channels {channels} is unsupported; only mono is available"
         )),
     }
 }
 
-async fn wait_start(socket: &mut WebSocket) -> Option<(String, f32, u16)> {
-    match socket.next().await {
+async fn wait_start(
+    socket: &mut WebSocket,
+    supervisor: &ProducerSupervisor,
+) -> Option<(String, f32, u16)> {
+    let message = tokio::select! {
+        message = socket.next() => message,
+        () = supervisor.cancelled() => return None,
+    };
+    match message {
         Some(Ok(Message::Text(text))) => match serde_json::from_str::<ClientMsg>(&text) {
             Ok(ClientMsg::Start {
                 prompt,
@@ -334,9 +443,28 @@ fn pcm_to_bytes(pcm: &[f32]) -> Vec<u8> {
 mod tests {
     use std::fs;
     use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
+
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_util::sync::CancellationToken;
+
+    use crate::llama::LlamaBackend;
+    use crate::producer::{ProducerConfig, ProducerKind, ProducerSupervisor};
+    use crate::{build_router, GatewayState};
 
     fn wav_path() -> tempfile::NamedTempFile {
         tempfile::NamedTempFile::new().unwrap()
+    }
+
+    fn process_exists(pid: &str) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", pid])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
     }
 
     fn pcm16_wav(channels: u16, sample_rate: u32, declared_data_len: u32, data: &[u8]) -> Vec<u8> {
@@ -355,6 +483,186 @@ mod tests {
         bytes.extend_from_slice(&declared_data_len.to_le_bytes());
         bytes.extend_from_slice(data);
         bytes
+    }
+
+    #[tokio::test]
+    async fn websocket_stop_during_generation_cancels_and_waits_for_producer_cleanup() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
+        let fixture = tempfile::tempdir().unwrap();
+        let executable = fixture.path().join("audio-producer");
+        fs::write(
+            &executable,
+            "#!/bin/sh\nprintf '%s' \"$$\" > \"$2\"\nprintf '%s' \"$1\" > \"$3\"\nexec sleep 30\n",
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let observation = tempfile::tempdir().unwrap();
+        let pid_path = observation.path().join("pid");
+        let output_path = observation.path().join("output.path");
+        let argv = serde_json::to_string(&[
+            executable.to_string_lossy().into_owned(),
+            "{out}".into(),
+            pid_path.to_string_lossy().into_owned(),
+            output_path.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+        let audio =
+            ProducerConfig::parse(ProducerKind::Audio, Some("true"), Some(&argv), Some("30"))
+                .unwrap();
+        let producer_cancellation = CancellationToken::new();
+        let producers = ProducerSupervisor::new(producer_cancellation);
+        let state = GatewayState {
+            llama: LlamaBackend::from_parts_for_test("http://127.0.0.1:1".into()),
+            image: ProducerConfig::parse(ProducerKind::Image, Some("false"), None, None).unwrap(),
+            audio,
+            producers: producers.clone(),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_cancellation = CancellationToken::new();
+        let server_shutdown = server_cancellation.clone();
+        let mut server = tokio::spawn(async move {
+            axum::serve(listener, build_router(state))
+                .with_graceful_shutdown(server_shutdown.cancelled_owned())
+                .await
+                .unwrap();
+        });
+        let (mut websocket, _) =
+            tokio_tungstenite::connect_async(format!("ws://{address}/music/stream"))
+                .await
+                .unwrap();
+        websocket
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"type":"start","prompt":"test","seconds":5,"accept":{"channels":2,"codecs":["f32le"]}}"#
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::select! {
+                () = async {
+                    while !pid_path.exists() || !output_path.exists() {
+                        tokio::task::yield_now().await;
+                    }
+                } => {}
+                result = &mut server => {
+                    panic!("gateway server completed before producer markers: {result:?}")
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        websocket
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"type":"stop"}"#.into(),
+            ))
+            .await
+            .unwrap();
+        let response = tokio::time::timeout(Duration::from_millis(500), websocket.next()).await;
+
+        producers.shutdown(Duration::from_secs(2)).await.unwrap();
+        server_cancellation.cancel();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        let pid = fs::read_to_string(pid_path).unwrap();
+        let request_output = std::path::PathBuf::from(fs::read_to_string(output_path).unwrap());
+        assert!(!process_exists(pid.trim()));
+        assert!(!request_output.parent().unwrap().exists());
+        let message = response
+            .expect("stop was not processed while audio generation was active")
+            .expect("websocket closed without an end response")
+            .expect("websocket returned an error");
+        let end: serde_json::Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+        assert_eq!(end["type"], "end");
+        assert_eq!(end["frames"], 0);
+        assert_eq!(end["samples"], 0);
+    }
+
+    #[tokio::test]
+    async fn websocket_reports_actual_mono_samples_sent_before_streaming_stop() {
+        let _process_guard = crate::PROCESS_TEST_LOCK.lock().await;
+        let fixture = tempfile::tempdir().unwrap();
+        let wav = fixture.path().join("audio.wav");
+        let specification = hound::WavSpec {
+            channels: 1,
+            sample_rate: super::SAMPLE_RATE,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(&wav, specification).unwrap();
+        for _ in 0..(super::CHUNK_FRAMES * 2) {
+            writer.write_sample(0_i16).unwrap();
+        }
+        writer.finalize().unwrap();
+        let executable = fixture.path().join("audio-producer");
+        fs::write(&executable, "#!/bin/sh\ncp \"$2\" \"$1\"\n").unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let argv = serde_json::to_string(&[
+            executable.to_string_lossy().into_owned(),
+            "{out}".into(),
+            wav.to_string_lossy().into_owned(),
+        ])
+        .unwrap();
+        let audio =
+            ProducerConfig::parse(ProducerKind::Audio, Some("true"), Some(&argv), Some("2"))
+                .unwrap();
+        let producers = ProducerSupervisor::new(CancellationToken::new());
+        let state = GatewayState {
+            llama: LlamaBackend::from_parts_for_test("http://127.0.0.1:1".into()),
+            image: ProducerConfig::parse(ProducerKind::Image, Some("false"), None, None).unwrap(),
+            audio,
+            producers: producers.clone(),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_cancellation = CancellationToken::new();
+        let server_shutdown = server_cancellation.clone();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, build_router(state))
+                .with_graceful_shutdown(server_shutdown.cancelled_owned())
+                .await
+                .unwrap();
+        });
+        let (mut websocket, _) =
+            tokio_tungstenite::connect_async(format!("ws://{address}/music/stream"))
+                .await
+                .unwrap();
+        websocket
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"type":"start","prompt":"test","seconds":5,"accept":{"channels":2,"codecs":["f32le"]}}"#
+                    .into(),
+            ))
+            .await
+            .unwrap();
+
+        let header = websocket.next().await.unwrap().unwrap();
+        let header: serde_json::Value = serde_json::from_str(header.to_text().unwrap()).unwrap();
+        assert_eq!(header["type"], "header", "unexpected response: {header}");
+        assert_eq!(header["channels"], 1);
+        let first_chunk = websocket.next().await.unwrap().unwrap();
+        assert_eq!(first_chunk.into_data().len(), super::CHUNK_FRAMES * 4);
+        websocket
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"type":"stop"}"#.into(),
+            ))
+            .await
+            .unwrap();
+        let end = tokio::time::timeout(Duration::from_secs(1), websocket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let end: serde_json::Value = serde_json::from_str(end.to_text().unwrap()).unwrap();
+
+        server_cancellation.cancel();
+        server.await.unwrap();
+        producers.shutdown(Duration::from_secs(1)).await.unwrap();
+        assert_eq!(end["type"], "end");
+        assert_eq!(end["frames"], 1);
+        assert_eq!(end["samples"], super::CHUNK_FRAMES);
     }
 
     #[test]
@@ -407,6 +715,22 @@ mod tests {
     }
 
     #[test]
+    fn rejects_finite_float_samples_outside_normalized_range() {
+        let file = wav_path();
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 48_000,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut writer = hound::WavWriter::new(file.reopen().unwrap(), spec).unwrap();
+        writer.write_sample(1.01_f32).unwrap();
+        writer.finalize().unwrap();
+
+        assert!(super::read_wav_mono_f32(file.path().to_str().unwrap()).is_err());
+    }
+
+    #[test]
     fn rejects_non_finite_stereo_downmix_result() {
         let file = wav_path();
         let spec = hound::WavSpec {
@@ -425,15 +749,18 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_requested_channels_and_invalid_seconds() {
-        assert!(super::validate_start(
-            "prompt",
-            1.0,
-            &super::Accept {
-                codecs: vec![],
-                channels: Some(2)
-            }
-        )
-        .is_err());
+        assert_eq!(
+            super::validate_start(
+                "prompt",
+                1.0,
+                &super::Accept {
+                    codecs: vec![],
+                    channels: Some(2)
+                }
+            )
+            .unwrap(),
+            1
+        );
         assert!(super::validate_start("prompt", 0.0, &super::Accept::default()).is_err());
         assert!(super::validate_start("prompt", f32::NAN, &super::Accept::default()).is_err());
     }
