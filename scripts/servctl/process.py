@@ -38,6 +38,17 @@ class FrontendProcessConfig:
     log_path: Path
 
 
+@dataclass(frozen=True)
+class ComponentProcessConfig:
+    root: Path
+    profile: str
+    name: str
+    argv: list[str]
+    env: dict[str, str]
+    pid_path: Path
+    log_path: Path
+
+
 def spawn_server_process(config: ServerProcessConfig) -> int:
     config.pid_path.parent.mkdir(parents=True, exist_ok=True)
     config.log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,6 +95,22 @@ def spawn_frontend_process(config: FrontendProcessConfig) -> int:
     process = subprocess.Popen(
         command,
         cwd=config.frontend_dir,
+        env=config.env,
+        stdin=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    return process.pid
+
+
+def spawn_component_process(config: ComponentProcessConfig) -> int:
+    config.pid_path.parent.mkdir(parents=True, exist_ok=True)
+    config.log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = config.log_path.open("ab")
+    process = subprocess.Popen(
+        config.argv,
+        cwd=config.root,
         env=config.env,
         stdin=subprocess.DEVNULL,
         stdout=log_file,

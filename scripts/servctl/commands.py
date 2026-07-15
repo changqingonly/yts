@@ -38,6 +38,7 @@ from .process import (
     spawn_server_process,
 )
 from .runtime_config import write_frontend_runtime_config
+from .supervisor import local_status, start_local_runtime, stop_local_runtime
 
 RunCommand = Callable[..., None]
 ProgressReporter = Callable[[str], None]
@@ -91,6 +92,21 @@ def start(
     start_frontend_func = start_frontend_func or start_frontend
     check_frontend_func = check_frontend_func or check_frontend_start_preconditions
     stop_backend_func = stop_backend_func or stop_server
+    if profile == "local":
+        start_local_runtime(
+            root,
+            profile,
+            host=host,
+            port=port,
+            reload=reload,
+            frontend_host=frontend_host,
+            frontend_port=frontend_port,
+            start_backend_func=start_backend_func,
+            start_frontend_func=start_frontend_func,
+            stop_backend_func=stop_backend_func,
+            progress=progress,
+        )
+        return
     backend_kwargs = {"host": host, "port": port, "reload": reload}
     frontend_kwargs = {"host": frontend_host, "port": frontend_port}
     frontend_check_kwargs = {"host": frontend_host, "port": frontend_port}
@@ -185,6 +201,7 @@ def start_frontend(
     is_process_running: Callable[[int], bool] | None = None,
     terminate_process: Callable[[int], None] | None = None,
     check_preconditions: bool = True,
+    write_runtime_config: bool = True,
     progress: ProgressReporter | None = None,
 ) -> None:
     spawn = spawn or spawn_frontend_process
@@ -204,7 +221,8 @@ def start_frontend(
             progress=progress,
         )
     frontend_url = _http_url(host, port)
-    write_frontend_runtime_config(root, profile)
+    if write_runtime_config:
+        write_frontend_runtime_config(root, profile)
     _report_progress(progress, f"starting frontend listener: {frontend_url}")
     pid = spawn(config)
     _write_pid(config.pid_path, pid)
@@ -275,6 +293,19 @@ def stop(
     stop_frontend_func: Callable[..., None] = stop_frontend,
     progress: ProgressReporter | None = None,
 ) -> None:
+    if profile == "local":
+        stop_local_runtime(
+            root,
+            profile,
+            host=host,
+            port=port,
+            frontend_host=frontend_host,
+            frontend_port=frontend_port,
+            stop_backend_func=stop_backend_func,
+            stop_frontend_func=stop_frontend_func,
+            progress=progress,
+        )
+        return
     errors: list[str] = []
     frontend_pid_path = _frontend_pid_path(root, profile)
     if frontend_pid_path.exists():
@@ -394,7 +425,10 @@ def status(
         is_process_running_func=is_process_running_func,
         is_port_in_use_func=is_port_in_use_func,
     )
-    return f"backend: {backend}\nfrontend: {frontend}"
+    summary = f"backend: {backend}\nfrontend: {frontend}"
+    if profile == "local":
+        summary = f"{summary}\n{local_status(root, profile)}"
+    return summary
 
 
 def _console_progress(message: str) -> None:
