@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+echo "infer-gateway is not packaged in this source checkout; build the packaged gateway artifact before bundling." >&2
+exit 127

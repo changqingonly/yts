@@ -17,6 +17,8 @@
   },
   "bundle": {
     "active": false,
-    "targets": "app"
+    "targets": "app",
+    "externalBin": ["bin/yts-sidecar", "bin/infer-gateway"],
+    "resources": ["../components.toml"]
   }
 }

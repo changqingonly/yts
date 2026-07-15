@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+echo "yts-sidecar is not packaged in this source checkout; build the packaged sidecar artifact before bundling." >&2
+exit 127

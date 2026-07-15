@@ -1,25 +1,36 @@
-//! 管理 Python sidecar(Mac 形态)。sidecar = 复用云端 FastAPI app 的本地 profile 实例。
-//! 经 tauri-plugin-shell 的 externalBin 拉起;Windows 形态(in-process DIY PyO3)留后。
-//! 本轮 stub:给出拉起形状;生命周期(存 child / kill / PyInstaller 子进程回收)TODO。
+//! 管理完整本地 runtime。sidecar = 复用云端 FastAPI app 的本地 profile 实例。
+//! 组件进程、推理网关、Python sidecar 均由 ComponentSupervisor 统一持有。
 
-use tauri::AppHandle;
-use tauri_plugin_shell::ShellExt;
+use std::sync::Mutex;
+
+use crate::component_supervisor::{development_repo_root, ComponentSupervisor, ShellLauncher};
+use tauri::{AppHandle, State};
 
 #[tauri::command]
-pub async fn start_sidecar(app: AppHandle) -> Result<String, String> {
-    let sidecar = app
-        .shell()
-        .sidecar("yts-sidecar")
-        .map_err(|e| e.to_string())?
-        .env("YTS_PROFILE", "local")
-        .env("PYTHONUTF8", "1");
-    let (_rx, _child) = sidecar.spawn().map_err(|e| e.to_string())?;
-    // TODO: 把 _child 存入 app state 以便 stop;消费 _rx 转发日志
-    Ok("sidecar started (stub: lifecycle TODO)".into())
+pub async fn start_sidecar(
+    app: AppHandle,
+    supervisor: State<'_, Mutex<ComponentSupervisor>>,
+) -> Result<String, String> {
+    let root = development_repo_root();
+    let config_dir = root.join("conf");
+    let runtime_dir = root.join("run");
+    let mut launcher = ShellLauncher::new(app);
+    let mut supervisor = supervisor
+        .lock()
+        .map_err(|_| "component supervisor mutex poisoned".to_string())?;
+    supervisor
+        .start(&root, &config_dir, &runtime_dir, &mut launcher)
+        .map_err(|error| error.to_string())?;
+    Ok("local runtime started".into())
 }
 
 #[tauri::command]
-pub async fn stop_sidecar() -> Result<String, String> {
-    // TODO: 从 state 取 child 并 kill(注意 PyInstaller 子进程回收;Mac onefile 无 Win AV 问题)
-    Ok("sidecar stop (stub)".into())
+pub async fn stop_sidecar(
+    supervisor: State<'_, Mutex<ComponentSupervisor>>,
+) -> Result<String, String> {
+    let mut supervisor = supervisor
+        .lock()
+        .map_err(|_| "component supervisor mutex poisoned".to_string())?;
+    let killed = supervisor.stop().map_err(|error| error.to_string())?;
+    Ok(format!("local runtime stopped: {}", killed.join(", ")))
 }
