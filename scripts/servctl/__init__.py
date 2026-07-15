@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import cli, commands, component_commands, config, health, net, process
+from . import cli, commands, component_commands, config, health, net, process, runtime_config
 from .cli import _add_frontend_args, _add_server_args, _build_parser, main
 from .commands import (
     ProgressReporter,
@@ -35,6 +35,12 @@ from .component_commands import (
     install_components,
     status_components,
     verify_components,
+)
+from .runtime_config import (
+    FRONTEND_RUNTIME_CONFIG_URL,
+    RUNTIME_CONFIG_URL_ENV,
+    frontend_runtime_config,
+    write_frontend_runtime_config,
 )
 from .config import (
     DEFAULT_FRONTEND_HOST,
@@ -110,12 +116,14 @@ __all__ = [
     "DEFAULT_PORT",
     "ComponentResult",
     "FrontendProcessConfig",
+    "FRONTEND_RUNTIME_CONFIG_URL",
     "PROFILE_DEFAULT_PORTS",
     "Path",
     "ProgressReporter",
     "REMOVED_CONFIG_ENV_NAMES",
     "RUN_DIR_NAME",
     "RunCommand",
+    "RUNTIME_CONFIG_URL_ENV",
     "SKIP_STARTUP_DB_BOOTSTRAP_ENV",
     "SUPPORTED_INFERENCE_BACKENDS",
     "ServerProcessConfig",
@@ -167,6 +175,7 @@ __all__ = [
     "component_commands",
     "config",
     "deploy",
+    "frontend_runtime_config",
     "health",
     "install",
     "install_components",
@@ -178,6 +187,7 @@ __all__ = [
     "require_profile_config",
     "restart",
     "run_preflight_checks",
+    "runtime_config",
     "signal",
     "socket",
     "spawn_frontend_process",
@@ -199,4 +209,5 @@ __all__ = [
     "verify_components",
     "wait_for_frontend",
     "wait_for_health",
+    "write_frontend_runtime_config",
 ]

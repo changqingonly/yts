@@ -14,6 +14,7 @@ from yts_core.config import (
 from yts_core.config import load_profile_config as _load_canonical_profile_config
 
 from .errors import ServctlError
+from .runtime_config import FRONTEND_RUNTIME_CONFIG_URL, RUNTIME_CONFIG_URL_ENV
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -66,9 +67,32 @@ def _command_env(root: Path, profile: str) -> dict[str, str]:
 
 
 def _frontend_env(root: Path, profile: str) -> dict[str, str]:
-    env = _command_env(root, profile)
-    env["VITE_YTS_DEFAULT_TARGET"] = profile
+    _reject_removed_config_env()
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if _is_frontend_env_allowed(name)
+    }
+    tool_path = _tool_path(root, env.get("PATH", ""))
+    if tool_path:
+        env["PATH"] = tool_path
+    env[RUNTIME_CONFIG_URL_ENV] = FRONTEND_RUNTIME_CONFIG_URL
     return env
+
+
+def _is_frontend_env_allowed(name: str) -> bool:
+    if name in {
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "LANG",
+        "TERM",
+        "COLORTERM",
+        "NO_COLOR",
+        "FORCE_COLOR",
+    }:
+        return True
+    return name.startswith("LC_")
 
 
 def _tool_path(root: Path, current_path: str) -> str:

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "profile": "local",
+  "defaultTarget": "local",
+  "targets": {
+    "local": {
+      "apiBase": "http://127.0.0.1:8765",
+      "musicWsBase": "ws://127.0.0.1:8799"
+    },
+    "cloud": {
+      "apiBase": "http://127.0.0.1:8000",
+      "musicWsBase": "ws://127.0.0.1:8000"
+    }
+  }
+}

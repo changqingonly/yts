@@ -37,6 +37,7 @@ from .process import (
     spawn_frontend_process,
     spawn_server_process,
 )
+from .runtime_config import write_frontend_runtime_config
 
 RunCommand = Callable[..., None]
 ProgressReporter = Callable[[str], None]
@@ -63,6 +64,7 @@ def deploy(root: Path, profile: str, *, run_command: RunCommand = subprocess.che
     index_path = frontend_dir / "dist" / "index.html"
     if not index_path.is_file():
         raise ServctlError(f"frontend build did not produce {index_path}")
+    write_frontend_runtime_config(root, profile)
 
 
 def install(root: Path, *, run_command: RunCommand = subprocess.check_call) -> None:
@@ -202,6 +204,7 @@ def start_frontend(
             progress=progress,
         )
     frontend_url = _http_url(host, port)
+    write_frontend_runtime_config(root, profile)
     _report_progress(progress, f"starting frontend listener: {frontend_url}")
     pid = spawn(config)
     _write_pid(config.pid_path, pid)

@@ -25,11 +25,17 @@ def test_frontend_install_scripts_are_explicitly_approved() -> None:
     }
 
 
-def test_frontend_default_api_target_is_build_time_configurable() -> None:
+def test_frontend_runtime_config_is_loaded_before_vue_mount() -> None:
     root = Path(__file__).resolve().parents[1]
     http_source = (root / "desktop" / "frontend" / "src" / "services" / "http.js").read_text(
         encoding="utf-8"
     )
+    main_source = (root / "desktop" / "frontend" / "src" / "main.js").read_text(
+        encoding="utf-8"
+    )
+    runtime_config_source = (
+        root / "desktop" / "frontend" / "src" / "services" / "runtimeConfig.js"
+    ).read_text(encoding="utf-8")
     environment_source = (
         root / "desktop" / "frontend" / "src" / "services" / "environment.js"
     ).read_text(encoding="utf-8")
@@ -45,26 +51,40 @@ def test_frontend_default_api_target_is_build_time_configurable() -> None:
     shell_source = (root / "desktop" / "frontend" / "src" / "app" / "AppShell.vue").read_text(
         encoding="utf-8"
     )
+    package_data = json.loads(
+        (root / "desktop" / "frontend" / "package.json").read_text(encoding="utf-8")
+    )
+    public_runtime_config = json.loads(
+        (root / "desktop" / "frontend" / "public" / "runtime-config.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
-    assert "export const ENVIRONMENT_TARGETS = {" in environment_source
-    assert (
-        'local: { label: "本地", apiBase: "http://127.0.0.1:8765", musicWsBase: "ws://127.0.0.1:8799" }'
-        in environment_source
-    )
-    assert (
-        'cloud: { label: "云端", apiBase: "http://127.0.0.1:8000", musicWsBase: "ws://127.0.0.1:8000" }'
-        in environment_source
-    )
-    assert 'export const DEFAULT_ENVIRONMENT_TARGET = "cloud";' in environment_source
+    assert 'import { loadRuntimeConfig } from "./services/runtimeConfig";' in main_source
+    assert "await loadRuntimeConfig();" in main_source
+    assert main_source.index("await loadRuntimeConfig();") < main_source.index("createApp(App)")
+    assert "renderFatalConfigurationError" in main_source
+    assert "throw error;" in main_source
+    assert "export function validateRuntimeConfig" in runtime_config_source
+    assert "cache: \"no-store\"" in runtime_config_source
+    assert "export function configureEnvironment" in environment_source
+    assert "getRuntimeConfig" in environment_source
+    assert "export const ENVIRONMENT_TARGETS = {" not in environment_source
+    assert "DEFAULT_ENVIRONMENT_TARGET" not in environment_source
+    assert "VITE_YTS_DEFAULT_TARGET" not in environment_source
+    assert "http://127.0.0.1:8765" not in environment_source
+    assert "ws://127.0.0.1:8799" not in environment_source
+    assert "http://127.0.0.1:8000" not in environment_source
     assert "export function endpointForTarget(target)" in environment_source
     assert 'export const API_TARGET_CHANGED_EVENT = "yts-target-changed";' in environment_source
     assert "export function selectedApiTarget()" in environment_source
     assert (
-        "return stored ? assertApiTarget(stored) : DEFAULT_ENVIRONMENT_TARGET;"
+        "return stored ? assertApiTarget(stored) : getRuntimeConfig().defaultTarget;"
         in environment_source
     )
     assert "export function setSelectedApiTarget(target)" in environment_source
-    assert "window.dispatchEvent(new CustomEvent(API_TARGET_CHANGED_EVENT" in environment_source
+    assert "window.dispatchEvent(" in environment_source
+    assert "new CustomEvent(API_TARGET_CHANGED_EVENT" in environment_source
     assert (
         'export const useEnvironmentStore = defineStore("environment"' in environment_store_source
     )
@@ -76,6 +96,24 @@ def test_frontend_default_api_target_is_build_time_configurable() -> None:
     assert "VITE_YTS_DEFAULT_TARGET" not in http_source
     assert 'from "./transport"' in http_source
     assert "apiBase, requestJson, websocketBase" in http_source
+    assert package_data["scripts"]["test:runtime-config"] == (
+        "node --test tests/runtime-config.test.mjs"
+    )
+    assert public_runtime_config == {
+        "schemaVersion": 1,
+        "profile": "local",
+        "defaultTarget": "local",
+        "targets": {
+            "local": {
+                "apiBase": "http://127.0.0.1:8765",
+                "musicWsBase": "ws://127.0.0.1:8799",
+            },
+            "cloud": {
+                "apiBase": "http://127.0.0.1:8000",
+                "musicWsBase": "ws://127.0.0.1:8000",
+            },
+        },
+    }
     assert "const environment = useEnvironmentStore();" in shell_source
     assert "environment.setTarget(item.value)" in shell_source
     assert "return selectedApiTarget();" in creation_source
@@ -97,7 +135,7 @@ def test_frontend_shared_requests_follow_the_selected_api_target() -> None:
 
     assert "function assertApiTarget(target)" in environment_source
     assert (
-        "return stored ? assertApiTarget(stored) : DEFAULT_ENVIRONMENT_TARGET;"
+        "return stored ? assertApiTarget(stored) : getRuntimeConfig().defaultTarget;"
         in environment_source
     )
     assert "throw new Error(`Unsupported API target: ${target}`);" in environment_source
@@ -110,6 +148,7 @@ def test_frontend_network_outlets_are_centralized_in_transport_service() -> None
     root = Path(__file__).resolve().parents[1]
     frontend_src = root / "desktop" / "frontend" / "src"
     allowed = {
+        frontend_src / "services" / "runtimeConfig.js",
         frontend_src / "services" / "transport.js",
     }
     offenders: list[str] = []

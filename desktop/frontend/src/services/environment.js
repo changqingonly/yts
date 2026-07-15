@@ -1,21 +1,33 @@
 export const API_TARGET_CHANGED_EVENT = "yts-target-changed";
 export const ENVIRONMENT_STORAGE_KEY = "yts-target";
-export const DEFAULT_ENVIRONMENT_TARGET = "cloud";
 
-export const ENVIRONMENT_TARGETS = {
-  local: { label: "本地", apiBase: "http://127.0.0.1:8765", musicWsBase: "ws://127.0.0.1:8799" },
-  cloud: { label: "云端", apiBase: "http://127.0.0.1:8000", musicWsBase: "ws://127.0.0.1:8000" },
+const TARGET_LABELS = {
+  local: "本地",
+  cloud: "云端",
 };
 
+let runtimeConfig = null;
+
+export function configureEnvironment(config) {
+  runtimeConfig = config;
+}
+
+export function getRuntimeConfig() {
+  if (!runtimeConfig) {
+    throw new Error("Frontend runtime configuration has not been loaded");
+  }
+  return runtimeConfig;
+}
+
 export function environmentOptions() {
-  return Object.entries(ENVIRONMENT_TARGETS).map(([value, endpoint]) => ({
+  return Object.keys(getRuntimeConfig().targets).map((value) => ({
     value,
-    label: endpoint.label,
+    label: labelForTarget(value),
   }));
 }
 
 export function assertApiTarget(target) {
-  if (!ENVIRONMENT_TARGETS[target]) {
+  if (!getRuntimeConfig().targets[target]) {
     throw new Error(`Unsupported API target: ${target}`);
   }
   return target;
@@ -23,19 +35,29 @@ export function assertApiTarget(target) {
 
 export function selectedApiTarget() {
   const stored = localStorage.getItem(ENVIRONMENT_STORAGE_KEY) || "";
-  return stored ? assertApiTarget(stored) : DEFAULT_ENVIRONMENT_TARGET;
+  return stored ? assertApiTarget(stored) : getRuntimeConfig().defaultTarget;
 }
 
 export function setSelectedApiTarget(target) {
   const nextTarget = assertApiTarget(target);
   localStorage.setItem(ENVIRONMENT_STORAGE_KEY, nextTarget);
-  window.dispatchEvent(new CustomEvent(API_TARGET_CHANGED_EVENT, { detail: { target: nextTarget } }));
+  window.dispatchEvent(
+    new CustomEvent(API_TARGET_CHANGED_EVENT, { detail: { target: nextTarget } }),
+  );
 }
 
 export function endpointForTarget(target) {
-  return ENVIRONMENT_TARGETS[assertApiTarget(target)];
+  return getRuntimeConfig().targets[assertApiTarget(target)];
 }
 
 export function streamEndpointForTarget(target) {
   return endpointForTarget(target).musicWsBase;
+}
+
+function labelForTarget(target) {
+  const label = TARGET_LABELS[target];
+  if (!label) {
+    throw new Error(`Missing display label for API target: ${target}`);
+  }
+  return label;
 }

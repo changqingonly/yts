@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import signal
 import socket
 import subprocess
@@ -171,6 +172,79 @@ def test_command_env_uses_explicit_profile_config_directory(
     assert env["YTS_CONFIG_DIR"] == str(external_config_path.parent)
 
 
+def test_frontend_env_is_sanitized_runtime_config_pointer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_profile_config(tmp_path)
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("HOME", "/Users/example")
+    monkeypatch.setenv("TMPDIR", "/tmp/example")
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("YTS_DEEPSEEK_API_KEY", "sk-process-deepseek")
+    monkeypatch.setenv("YTS_OPENAI_API_KEY", "sk-process-openai")
+    monkeypatch.setenv("YTS_AUTH_JWT_SECRET", "process-jwt-secret-that-is-long-enough")
+    monkeypatch.setenv("YTS_DATABASE_URL", "postgresql+asyncpg://secret-db")
+
+    env = servctl._frontend_env(tmp_path, "cloud")
+
+    allowed_names = {
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "TERM",
+        "COLORTERM",
+        "NO_COLOR",
+        "FORCE_COLOR",
+        "VITE_YTS_RUNTIME_CONFIG_URL",
+    }
+    unexpected_names = sorted(
+        name for name in env if name not in allowed_names and not name.startswith("LC_")
+    )
+    assert unexpected_names == []
+    assert env["VITE_YTS_RUNTIME_CONFIG_URL"] == "/runtime-config.json"
+    assert "VITE_YTS_DEFAULT_TARGET" not in env
+    assert "YTS_DEEPSEEK_API_KEY" not in env
+    assert "YTS_OPENAI_API_KEY" not in env
+    assert "YTS_AUTH_JWT_SECRET" not in env
+    assert "YTS_DATABASE_URL" not in env
+    assert "sk-process-deepseek" not in env.values()
+    assert "sk-process-openai" not in env.values()
+    assert "postgresql+asyncpg://secret-db" not in env.values()
+
+
+def test_write_frontend_runtime_config_emits_sanitized_document(tmp_path: Path) -> None:
+    _write_profile_config(tmp_path, "local")
+
+    config_path = servctl.write_frontend_runtime_config(tmp_path, "local")
+
+    assert config_path == tmp_path / "desktop" / "frontend" / "dist" / "runtime-config.json"
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    assert data == {
+        "schemaVersion": 1,
+        "profile": "local",
+        "defaultTarget": "local",
+        "targets": {
+            "local": {
+                "apiBase": "http://127.0.0.1:8765",
+                "musicWsBase": "ws://127.0.0.1:8799",
+            },
+            "cloud": {
+                "apiBase": "http://127.0.0.1:8000",
+                "musicWsBase": "ws://127.0.0.1:8000",
+            },
+        },
+    }
+    rendered = json.dumps(data, ensure_ascii=False)
+    assert "sk-deepseek-test" not in rendered
+    assert "sk-openai-test" not in rendered
+    assert "YTS_AUTH_JWT_SECRET" not in rendered
+    assert "YTS_DATABASE_URL" not in rendered
+
+
 def test_servctl_product_inference_backends_are_local_and_cloud_only() -> None:
     assert servctl.SUPPORTED_INFERENCE_BACKENDS == ("local", "cloud")
 
@@ -329,6 +403,11 @@ def test_deploy_checks_python_and_node_environment_before_building(tmp_path: Pat
 
     servctl.deploy(tmp_path, "cloud", run_command=run_command)
 
+    runtime_config_path = frontend_dir / "dist" / "runtime-config.json"
+    assert runtime_config_path.is_file()
+    runtime_config = json.loads(runtime_config_path.read_text(encoding="utf-8"))
+    assert runtime_config["profile"] == "cloud"
+    assert runtime_config["defaultTarget"] == "cloud"
     assert commands == [
         ("uv", "run", "python", "-c", "from yts_core.config import get_settings; get_settings()"),
         ("npm", "run", "build"),
