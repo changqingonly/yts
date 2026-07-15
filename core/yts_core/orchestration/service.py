@@ -12,7 +12,7 @@ from ..schemas.creation import (
 )
 from .creation_graph import build_creation_graph
 
-# 按 backend 名缓存无 checkpointer 的内存图(避免每请求重编译)
+# 按 backend 名缓存无 checkpointer 的 Pro 创作图(避免每请求重编译)
 _graph_cache: dict[str, object] = {}
 
 
@@ -27,7 +27,7 @@ def _get_graph(backend, checkpointer):
 
 
 async def run_creation(req: CreationRequest, *, backend=None, checkpointer=None) -> CreationResult:
-    """运行创作 6 步图。backend 默认按配置选择(echo/cloud/candle)。"""
+    """运行 Pro 创作图。backend 默认按配置选择(echo/cloud/candle)。"""
     backend = backend or make_backend()
     graph = _get_graph(backend, checkpointer)
     state = await graph.ainvoke(
