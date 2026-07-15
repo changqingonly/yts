@@ -40,10 +40,19 @@ cp conf/cloud.example.env conf/cloud.env
 ./servctl stop --profile cloud
 ./servctl restart --profile cloud   # deploy + stop + start
 
-# 5) 桌面端(Mac)
+# 5) 本地推理组件(Mac)
+./servctl components install
+./servctl components verify
+./servctl components status --profile local
+./servctl deploy --profile local
+./servctl start --profile local
+./servctl status --profile local
+./servctl stop --profile local
+
+# 6) 桌面端(Mac)
 bash scripts/dev_desktop.sh         # tauri dev(需 npm install)
 
-# 6) 打包 Mac sidecar(PyInstaller)
+# 7) 打包 Mac sidecar(PyInstaller)
 bash scripts/build_sidecar_macos.sh
 ```
 
@@ -77,14 +86,17 @@ OpenAI-compatible 或 DeepSeek 都属于 `cloud` 路由,不要把 provider 名�
 `conf/*.env` 是 Python 侧唯一的本地配置入口,已覆盖日志、数据库、鉴权、存储、CORS、
 LangGraph checkpoint、LiteLLM/OpenAI/本地网关文本模型,以及图片/音频/音乐模型槽位。
 
-本地推理需先准备各模态 GGML 二进制+模型(各一条命令,自动构建+下模型+生成配置):
+本地推理的组件资产由 `servctl components` 统一管理。安装会按 `desktop/components.toml`
+中的固定仓库、固定 commit、固定模型 URL/大小/SHA256 构建并校验;启动只使用已验证资产,
+不会下载、reset、checkout 或静默降级:
 ```bash
-bash scripts/build_llamacpp.sh       # 文本:llama.cpp + Qwen2.5-7B GGUF(~4.4GB,Apache-2.0)
-bash scripts/build_sdcpp.sh          # 图片:stable-diffusion.cpp + FLUX.1-schnell GGUF(~9.3GB)
-# (音乐:build_acestep.sh)
-bash scripts/dev_gateway.sh           # 起 GGML 网关(:8799),自动加载上面生成的 producer 配置、spawn llama-server
-# 在 conf/{profile}.env 中设置 YTS_INFERENCE_BACKEND=local 后:
-./servctl restart --profile local    # write_lyrics 等节点改走本地 GGML 网关
+./servctl components install
+./servctl components verify
+./servctl components status --profile local
+
+# 在 conf/local.env 中设置 YTS_PROFILE=local 且 YTS_INFERENCE_BACKEND=local 后:
+./servctl deploy --profile local
+./servctl start --profile local
 ```
 
 ## 现状(本轮脚手架)

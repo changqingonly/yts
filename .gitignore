@@ -27,7 +27,6 @@ data/famous_song.jsonl
 # --- Rust / Tauri ---
 target/
 **/target/
-Cargo.lock
 desktop/src-tauri/gen/
 
 # --- Node / Vite ---

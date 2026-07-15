@@ -7,8 +7,11 @@ TRIPLE="$(rustc -Vv | sed -n 's/host: //p')"
 echo "target triple: ${TRIPLE}"
 uv run pyinstaller desktop/sidecar/build_macos.spec --noconfirm
 # 重命名为 Tauri externalBin 约定
-OUT="desktop/src-tauri/binaries"
+OUT="desktop/src-tauri/bin"
 mkdir -p "${OUT}"
-cp "dist/yts-sidecar" "${OUT}/yts-sidecar-${TRIPLE}" 2>/dev/null || \
-  echo "TODO: 调整 dist 路径到 ${OUT}/yts-sidecar-${TRIPLE}"
-echo "done (TODO: codesign + notarize,见 wiki Platform-Split)"
+if [ ! -x "dist/yts-sidecar" ]; then
+  echo "missing PyInstaller output: dist/yts-sidecar" >&2
+  exit 1
+fi
+cp "dist/yts-sidecar" "${OUT}/yts-sidecar-${TRIPLE}"
+echo "done: ${OUT}/yts-sidecar-${TRIPLE}"
