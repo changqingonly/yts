@@ -218,6 +218,38 @@ def test_cloud_profile_settings_are_explicit_overrides() -> None:
     assert settings.features.billing_enabled is True
 
 
+def test_production_auth_rejects_default_signing_key() -> None:
+    with pytest.raises(ValueError, match="production auth requires an explicit signing key"):
+        Settings.for_profile(Profile.CLOUD, auth={"production": True, "cookie_secure": True})
+
+
+def test_production_auth_requires_secure_cookies() -> None:
+    with pytest.raises(ValueError, match="production auth requires secure cookies"):
+        Settings.for_profile(
+            Profile.CLOUD,
+            auth={
+                "production": True,
+                "jwt_secret": "production-secret-that-is-explicit-and-long-enough",
+                "cookie_secure": False,
+            },
+        )
+
+
+def test_in_memory_rate_limit_rejects_multiple_workers() -> None:
+    with pytest.raises(ValueError, match="in-memory rate limiting requires one worker"):
+        Settings.for_profile(Profile.CLOUD, auth={"worker_count": 2})
+
+
+def test_auth_security_defaults_match_session_contract() -> None:
+    settings = Settings.for_profile(Profile.LOCAL)
+
+    assert settings.auth.access_token_ttl_seconds == 30 * 60
+    assert settings.auth.refresh_sliding_ttl_seconds == 30 * 24 * 60 * 60
+    assert settings.auth.refresh_absolute_ttl_seconds == 90 * 24 * 60 * 60
+    assert settings.auth.issuer == "yts"
+    assert settings.auth.audience == "yts-client"
+
+
 def test_get_settings_applies_local_profile_defaults(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

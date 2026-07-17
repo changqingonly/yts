@@ -126,9 +126,23 @@ class ObservabilitySettings(BaseModel):
     phoenix_enabled: bool = False
 
 
+_DEVELOPMENT_JWT_SECRET = "dev-yts-auth-secret-that-is-long-enough-for-hs256"
+
+
 class AuthSettings(BaseModel):
-    jwt_secret: SecretStr = SecretStr("dev-yts-auth-secret-that-is-long-enough-for-hs256")
-    access_token_ttl_seconds: int = 60 * 60 * 24 * 30
+    production: bool = False
+    jwt_secret: SecretStr = SecretStr(_DEVELOPMENT_JWT_SECRET)
+    jwt_active_kid: str = "primary"
+    issuer: str = "yts"
+    audience: str = "yts-client"
+    access_token_ttl_seconds: int = Field(default=30 * 60, gt=0)
+    refresh_sliding_ttl_seconds: int = Field(default=30 * 24 * 60 * 60, gt=0)
+    refresh_absolute_ttl_seconds: int = Field(default=90 * 24 * 60 * 60, gt=0)
+    cookie_secure: bool = False
+    cookie_domain: str = ""
+    worker_count: int = Field(default=1, gt=0)
+    rate_limit_backend: str = "memory"
+    trusted_proxies: list[str] = Field(default_factory=list)
 
     @property
     def jwt_secret_value(self) -> str:
@@ -231,6 +245,15 @@ class Settings(BaseSettings):
     def validate_security_settings(self) -> Settings:
         if len(self.auth.jwt_secret_value.encode("utf-8")) < 32:
             raise ValueError("auth_jwt_secret must be at least 32 bytes for HS256")
+        if self.auth.rate_limit_backend == "memory" and self.auth.worker_count != 1:
+            raise ValueError("in-memory rate limiting requires one worker")
+        if self.auth.production:
+            if self.auth.jwt_secret_value == _DEVELOPMENT_JWT_SECRET:
+                raise ValueError("production auth requires an explicit signing key")
+            if not self.auth.cookie_secure:
+                raise ValueError("production auth requires secure cookies")
+            if self.profile != Profile.CLOUD:
+                raise ValueError("production auth requires the cloud profile")
         return self
 
     @property
