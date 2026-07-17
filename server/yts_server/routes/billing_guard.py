@@ -12,7 +12,7 @@ from ..errors import AppError
 
 
 async def billing_user_if_required(
-    session: AsyncSession, authorization: str | None
+    session: AsyncSession, authorization: str | None, device_id: str | None = None
 ) -> AuthenticatedUser | None:
     settings = get_settings()
     if settings.profile != Profile.CLOUD or not settings.billing_enabled:
@@ -22,7 +22,9 @@ async def billing_user_if_required(
     token = authorization.removeprefix("Bearer ").strip()
     if not token:
         raise AppError.unauthorized("missing bearer token")
-    return await authenticate_bearer_token(session, token)
+    if not device_id:
+        raise AppError.unauthorized("missing device credential")
+    return await authenticate_bearer_token(session, token, device_id)
 
 
 class GenerationBillingGuard:

@@ -52,7 +52,8 @@ def create_app() -> FastAPI:
         DiagnosticCORSMiddleware,
         allow_origins=settings.server_allowed_origins,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization"],
+        allow_headers=["Content-Type", "Authorization", "X-Refresh-Request-ID"],
+        allow_credentials=True,
     )
     register_error_handlers(app)
     app.include_router(health.router)

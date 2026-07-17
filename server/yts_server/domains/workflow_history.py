@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yts_core.workflow.runtime import WorkflowRunResult, default_workflow_template
 
 from ..db.models import WorkflowRunHistory
+from ..errors import AppError
 
 
 async def upsert_workflow_history(
@@ -45,6 +46,14 @@ async def list_workflow_history(
         query.order_by(WorkflowRunHistory.updated_at.desc()).offset(offset).limit(limit)
     )
     return [_history_response(record) for record in result.scalars().all()]
+
+
+async def require_workflow_owner(
+    session: AsyncSession, *, workflow_id: str, thread_id: str, user_uuid: str | None
+) -> None:
+    record = await session.get(WorkflowRunHistory, _history_id(workflow_id, user_uuid, thread_id))
+    if record is None:
+        raise AppError.not_found("workflow_thread_not_found", "workflow thread not found")
 
 
 def _snapshot_from_result(

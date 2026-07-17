@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from "vue-router";
+import { useAuthStore } from "../stores/auth";
 
 const AppShell = () => import("../app/AppShell.vue");
 const MusicPage = () => import("../pages/MusicPage.vue");
@@ -37,13 +38,14 @@ const router = createRouter({
   routes,
 });
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
+  const auth = useAuthStore();
+  await auth.hydrate();
   const requiresAuth = to.matched.some((record) => record.meta.requireAuth);
-  const token = localStorage.getItem("yts-access-token") || "";
-  if (requiresAuth && !token) {
+  if (requiresAuth && !auth.isAuthenticated) {
     return { name: "login", query: { redirect: to.fullPath } };
   }
-  if (to.meta.guest && token) {
+  if (to.meta.guest && auth.isAuthenticated) {
     return { name: "music" };
   }
   return true;

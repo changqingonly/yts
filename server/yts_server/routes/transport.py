@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
+from yts_core.config import get_settings
 
 router = APIRouter(prefix="/transport", tags=["transport"])
 
@@ -22,6 +23,10 @@ class TransportRpcMessage(BaseModel):
 
 @router.websocket("/rpc")
 async def transport_rpc(websocket: WebSocket) -> None:
+    origin = websocket.headers.get("origin")
+    if origin and origin not in get_settings().server_allowed_origins:
+        await websocket.close(code=1008, reason="origin not allowed")
+        return
     await websocket.accept()
     try:
         while True:
@@ -39,8 +44,13 @@ async def _proxy_rpc_message(websocket: WebSocket, message: TransportRpcMessage)
         return _error_response(message.id, 405, f"unsupported transport method: {message.method}")
     if not (message.path.startswith("/api/") or message.path == "/health"):
         return _error_response(message.id, 400, f"unsupported transport path: {message.path}")
+    if message.path.startswith("/api/auth/"):
+        return _error_response(message.id, 403, "authentication routes require direct HTTP")
 
     headers = {name: value for name, value in message.headers.items() if value}
+    cookie_header = websocket.headers.get("cookie")
+    if cookie_header:
+        headers["cookie"] = cookie_header
     app = websocket.scope["app"]
     response = await _dispatch_asgi_request(app, method, message.path, headers, message.body)
     return {

@@ -185,11 +185,17 @@ def test_frontend_workflow_blocks_network_calls_when_selected_target_is_offline(
     source = WORKFLOW_SOURCE.read_text(encoding="utf-8")
     load_template_body = source.split("async function loadTemplate() {", 1)[1].split("\n}", 1)[0]
     run_thread_body = source.split("async function runThread() {", 1)[1].split("\n}", 1)[0]
-    resume_thread_body = source.split("async function resumeThread(action) {", 1)[1].split("\n}", 1)[0]
+    resume_thread_body = source.split("async function resumeThread(action) {", 1)[1].split(
+        "\n}", 1
+    )[0]
     refresh_trace_body = source.split("async function refreshTrace() {", 1)[1].split("\n}", 1)[0]
     load_history_body = source.split("async function loadHistoryItems() {", 1)[1].split("\n}", 1)[0]
-    select_history_body = source.split("async function selectHistoryItem(item) {", 1)[1].split("\n}", 1)[0]
-    save_asset_body = source.split("async function saveFinalDeliveryToAssets() {", 1)[1].split("\n}", 1)[0]
+    select_history_body = source.split("async function selectHistoryItem(item) {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    save_asset_body = source.split("async function saveFinalDeliveryToAssets() {", 1)[1].split(
+        "\n}", 1
+    )[0]
 
     assert "async function ensureWorkflowTargetOnline()" in source
     assert "function workflowTargetLabel(target = workflowTarget())" in source
@@ -199,25 +205,31 @@ def test_frontend_workflow_blocks_network_calls_when_selected_target_is_offline(
     assert "throw new Error(targetUnavailableMessage(target));" in source
     assert "服务未连接，无法继续工作流操作" in source
 
-    assert load_template_body.index("await ensureWorkflowTargetOnline();") < load_template_body.index(
-        "requestWorkflowJson(`/api/workflows/${workflowId}/template`"
-    )
+    assert load_template_body.index(
+        "await ensureWorkflowTargetOnline();"
+    ) < load_template_body.index("requestWorkflowJson(`/api/workflows/${workflowId}/template`")
     assert run_thread_body.index("await ensureWorkflowTargetOnline();") < run_thread_body.index(
         "await streamWorkflow(`/api/workflows/${workflowId}/threads/stream`"
     )
-    assert resume_thread_body.index("await ensureWorkflowTargetOnline();") < resume_thread_body.index(
+    assert resume_thread_body.index(
+        "await ensureWorkflowTargetOnline();"
+    ) < resume_thread_body.index(
         "await streamWorkflow(`/api/workflows/${workflowId}/threads/${threadId.value}/stream`"
     )
-    assert refresh_trace_body.index("await ensureWorkflowTargetOnline();") < refresh_trace_body.index(
+    assert refresh_trace_body.index(
+        "await ensureWorkflowTargetOnline();"
+    ) < refresh_trace_body.index(
         "requestWorkflowJson(`/api/workflows/${workflowId}/threads/${threadId.value}/trace`"
     )
     assert load_history_body.index("await ensureWorkflowTargetOnline();") < load_history_body.index(
         "listWorkflowHistory(workflowId"
     )
-    assert select_history_body.index("await ensureWorkflowTargetOnline();") < select_history_body.index(
-        "getWorkflowTrace(workflowId"
+    assert select_history_body.index(
+        "await ensureWorkflowTargetOnline();"
+    ) < select_history_body.index("getWorkflowTrace(workflowId")
+    assert save_asset_body.index("await ensureWorkflowTargetOnline();") < save_asset_body.index(
+        "saveSong({"
     )
-    assert save_asset_body.index("await ensureWorkflowTargetOnline();") < save_asset_body.index("saveSong({")
 
 
 def test_frontend_trace_details_live_in_drawer_only() -> None:
@@ -326,7 +338,8 @@ def test_frontend_workflow_stream_surfaces_node_repair_status() -> None:
 def test_frontend_workflow_websocket_authorization_uses_bearer_token() -> None:
     source = Path("desktop/frontend/src/services/transport.js").read_text(encoding="utf-8")
 
-    assert 'localStorage.getItem("yts-access-token")' in source
+    assert 'let accessToken = "";' in source
+    assert "const token = accessToken;" in source
     assert 'authorization: token ? `Bearer ${token}` : "",' in source
     assert "{ Authorization: `Bearer ${token}` }" in source
 

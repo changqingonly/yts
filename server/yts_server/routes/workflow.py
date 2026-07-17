@@ -4,7 +4,7 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Cookie, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from yts_core.config import get_settings
 from yts_core.inference import make_backend
@@ -78,6 +78,9 @@ async def get_workflow_template(workflow_id: str) -> WorkflowDefinition:
 
 @router.websocket("/{workflow_id}/threads/stream")
 async def run_workflow_stream(workflow_id: str, websocket: WebSocket) -> None:
+    if not _websocket_origin_allowed(websocket):
+        await websocket.close(code=1008, reason="origin not allowed")
+        return
     await websocket.accept()
     try:
         message = WorkflowStreamRunMessage.model_validate(await websocket.receive_json())
@@ -86,7 +89,9 @@ async def run_workflow_stream(workflow_id: str, websocket: WebSocket) -> None:
         _require_workflow_template(workflow_id)
         settings = get_settings()
         async with get_sessionmaker()() as session:
-            user = await billing_user_if_required(session, message.authorization)
+            user = await billing_user_if_required(
+                session, message.authorization, websocket.cookies.get("yts-device")
+            )
             checkpointer = build_langgraph_checkpointer(settings)
             async with GenerationBillingGuard(
                 session=session,
@@ -140,6 +145,9 @@ async def run_workflow_stream(workflow_id: str, websocket: WebSocket) -> None:
 
 @router.websocket("/{workflow_id}/threads/{thread_id}/stream")
 async def resume_workflow_stream(workflow_id: str, thread_id: str, websocket: WebSocket) -> None:
+    if not _websocket_origin_allowed(websocket):
+        await websocket.close(code=1008, reason="origin not allowed")
+        return
     await websocket.accept()
     try:
         message = WorkflowStreamResumeMessage.model_validate(await websocket.receive_json())
@@ -155,7 +163,15 @@ async def resume_workflow_stream(workflow_id: str, thread_id: str, websocket: We
             comment=message.comment,
         )
         async with get_sessionmaker()() as session:
-            user = await billing_user_if_required(session, message.authorization)
+            user = await billing_user_if_required(
+                session, message.authorization, websocket.cookies.get("yts-device")
+            )
+            await workflow_history_domain.require_workflow_owner(
+                session,
+                workflow_id=workflow_id,
+                thread_id=thread_id,
+                user_uuid=user.user_uuid if user else None,
+            )
             checkpointer = build_langgraph_checkpointer(settings)
             await websocket.send_json({"type": "started", "mode": "resume"})
             async for event in stream_resume_workflow_thread(
@@ -204,9 +220,10 @@ async def run_workflow(
     req: WorkflowThreadRunBody,
     session: DbSession,
     authorization: str | None = Header(default=None),
+    device_id: str | None = Cookie(default=None, alias="yts-device"),
 ) -> WorkflowRunResult:
     settings = get_settings()
-    user = await billing_user_if_required(session, authorization)
+    user = await billing_user_if_required(session, authorization, device_id)
     checkpointer = build_langgraph_checkpointer(settings)
     async with GenerationBillingGuard(
         session=session,
@@ -269,10 +286,17 @@ async def resume_workflow(
     decision: HumanDecision,
     session: DbSession,
     authorization: str | None = Header(default=None),
+    device_id: str | None = Cookie(default=None, alias="yts-device"),
 ) -> WorkflowRunResult:
     _require_workflow_template(workflow_id)
     settings = get_settings()
-    user = await billing_user_if_required(session, authorization)
+    user = await billing_user_if_required(session, authorization, device_id)
+    await workflow_history_domain.require_workflow_owner(
+        session,
+        workflow_id=workflow_id,
+        thread_id=thread_id,
+        user_uuid=user.user_uuid if user else None,
+    )
     checkpointer = build_langgraph_checkpointer(settings)
     logger.info(
         "workflow.resume.requested",
@@ -325,11 +349,12 @@ async def list_workflow_history(
     workflow_id: str,
     session: DbSession,
     authorization: str | None = Header(default=None),
+    device_id: str | None = Cookie(default=None, alias="yts-device"),
     limit: int = 20,
     offset: int = 0,
 ) -> list[dict]:
     _require_workflow_template(workflow_id)
-    user = await billing_user_if_required(session, authorization)
+    user = await billing_user_if_required(session, authorization, device_id)
     logger.info(
         "workflow.history.requested",
         workflow_id=workflow_id,
@@ -354,8 +379,21 @@ async def list_workflow_history(
 
 
 @router.get("/{workflow_id}/threads/{thread_id}/trace", response_model=WorkflowTrace)
-async def get_workflow_trace(workflow_id: str, thread_id: str) -> WorkflowTrace:
+async def get_workflow_trace(
+    workflow_id: str,
+    thread_id: str,
+    session: DbSession,
+    authorization: str | None = Header(default=None),
+    device_id: str | None = Cookie(default=None, alias="yts-device"),
+) -> WorkflowTrace:
     _require_workflow_template(workflow_id)
+    user = await billing_user_if_required(session, authorization, device_id)
+    await workflow_history_domain.require_workflow_owner(
+        session,
+        workflow_id=workflow_id,
+        thread_id=thread_id,
+        user_uuid=user.user_uuid if user else None,
+    )
     settings = get_settings()
     checkpointer = build_langgraph_checkpointer(settings)
     logger.info("workflow.trace.requested", workflow_id=workflow_id, thread_id=thread_id)
@@ -397,3 +435,8 @@ async def _close_websocket(websocket: WebSocket) -> None:
         await websocket.close()
     except RuntimeError:
         return
+
+
+def _websocket_origin_allowed(websocket: WebSocket) -> bool:
+    origin = websocket.headers.get("origin")
+    return origin is None or origin in get_settings().server_allowed_origins

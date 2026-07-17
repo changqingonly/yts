@@ -1,73 +1,65 @@
 import { defineStore } from "pinia";
-import { fetchCurrentUser, logoutUser } from "../services/auth";
-
-const TOKEN_KEY = "yts-access-token";
-const USER_KEY = "yts-user";
-
-function readStoredUser() {
-  const raw = localStorage.getItem(USER_KEY);
-  if (!raw) return null;
-  return JSON.parse(raw);
-}
-
-function writeStoredUser(user) {
-  if (!user) {
-    localStorage.removeItem(USER_KEY);
-    return;
-  }
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
-}
+import { fetchCurrentUser, logoutUser, refreshCurrentSession } from "../services/auth";
+import { createSessionRefresher } from "../services/sessionRefresh";
+import { setAccessToken } from "../services/transport";
 
 export const useAuthStore = defineStore("auth", {
-  state: () => ({
-    token: localStorage.getItem(TOKEN_KEY) || "",
-    user: readStoredUser(),
-    loading: false,
-  }),
+  state: () => ({ token: "", user: null, loading: false, hydrated: false, refreshTimer: null, refresher: null }),
   getters: {
-    isAuthenticated: (state) => Boolean(state.token),
+    isAuthenticated: (state) => Boolean(state.token && state.user),
     displayName: (state) => state.user?.username || state.user?.email || "未登录",
   },
   actions: {
     setSession(payload) {
-      this.token = payload?.access_token || payload?.token || "";
-      this.user = payload?.user || payload || null;
-      if (!this.token) {
-        throw new Error("登录响应缺少 access_token");
-      }
-      localStorage.setItem(TOKEN_KEY, this.token);
-      writeStoredUser(this.user);
+      const token = payload?.access_token || "";
+      if (!token) throw new Error("登录响应缺少 access_token");
+      this.token = token;
+      this.user = payload?.user || payload;
+      setAccessToken(token);
+      this.scheduleRefresh(payload.expires_at);
     },
-    setUser(user) {
-      this.user = user;
-      writeStoredUser(user);
-    },
+    setUser(user) { this.user = user; },
     clearSession() {
       this.token = "";
       this.user = null;
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(USER_KEY);
+      setAccessToken("");
+      if (this.refreshTimer) clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    },
+    sessionRefresher() {
+      if (!this.refresher) {
+        this.refresher = createSessionRefresher({
+          refresh: refreshCurrentSession,
+          onInvalid: () => this.clearSession(),
+        });
+      }
+      return this.refresher;
+    },
+    async refresh() {
+      const session = await this.sessionRefresher().refreshNow();
+      this.setSession(session);
+      return session;
+    },
+    scheduleRefresh(expiresAt) {
+      if (this.refreshTimer) clearTimeout(this.refreshTimer);
+      const delay = Math.max(0, Number(expiresAt) * 1000 - Date.now() - 5 * 60 * 1000);
+      this.refreshTimer = setTimeout(() => { void this.refresh(); }, delay);
     },
     async hydrate() {
-      if (!this.token) return;
+      if (this.hydrated) return;
       this.loading = true;
       try {
-        const user = await fetchCurrentUser();
-        this.setUser(user);
-      } catch (err) {
-        if (err?.status === 401) {
-          this.clearSession();
-          return;
-        }
-        throw err;
+        await this.refresh();
+        this.setUser(await fetchCurrentUser());
+      } catch (error) {
+        if (error?.status !== 401) throw error;
       } finally {
         this.loading = false;
+        this.hydrated = true;
       }
     },
     async logoutAction() {
-      if (this.token) {
-        await logoutUser();
-      }
+      await logoutUser();
       this.clearSession();
     },
   },

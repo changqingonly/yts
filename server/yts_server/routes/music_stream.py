@@ -11,12 +11,21 @@ import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from yts_core.audiogen import FORMAT, SAMPLE_RATE, generate_frames, negotiate_channels
+from yts_core.config import get_settings
+
+from ..db.session import get_sessionmaker
+from ..errors import AppError
+from .billing_guard import GenerationBillingGuard, billing_user_if_required
 
 router = APIRouter(tags=["music-stream"])
 
 
 @router.websocket("/music/stream")
 async def music_stream(ws: WebSocket) -> None:
+    origin = ws.headers.get("origin")
+    if origin and origin not in get_settings().server_allowed_origins:
+        await ws.close(code=1008, reason="origin not allowed")
+        return
     await ws.accept()
     stop = asyncio.Event()
 
@@ -34,7 +43,36 @@ async def music_stream(ws: WebSocket) -> None:
 
     prompt = msg.get("prompt", "")
     seconds = float(msg.get("seconds", 8.0))
+    if not prompt or len(prompt) > 4000 or seconds <= 0 or seconds > 60:
+        await ws.send_text(json.dumps({"type": "error", "message": "invalid stream request"}))
+        await ws.close()
+        return
     channels = negotiate_channels(msg.get("accept"))
+
+    async with get_sessionmaker()() as session:
+        try:
+            user = await billing_user_if_required(
+                session, msg.get("authorization"), ws.cookies.get("yts-device")
+            )
+        except AppError as exc:
+            await ws.send_text(
+                json.dumps({"type": "error", "code": exc.code, "message": exc.message})
+            )
+            await ws.close()
+            return
+        async with GenerationBillingGuard(
+            session=session,
+            user=user,
+            request_id=f"music-stream:{id(ws)}",
+            credit_scene="music",
+            usage_scene=None,
+        ):
+            await _stream_audio(ws, prompt, seconds, channels, stop)
+
+
+async def _stream_audio(
+    ws: WebSocket, prompt: str, seconds: float, channels: int, stop: asyncio.Event
+) -> None:
 
     # 后台监听 stop(与帧推送并行)
     async def watch_stop() -> None:

@@ -3,7 +3,7 @@
 // 连 WS(本地 infer-gateway / 云端 server 同契约)→ 解析 header → 把二进制 PCM 帧
 // 灌进 AudioWorklet(pcm-player)→ 边生成边播。切 local/cloud 只换 base,不改逻辑。
 
-import { openBinaryStream } from "../services/transport";
+import { currentAccessToken, openBinaryStream } from "../services/transport";
 
 export class StreamAudioPlayer {
   constructor() {
@@ -65,7 +65,14 @@ export class StreamAudioPlayer {
     this.ws = openBinaryStream("", {
       target,
       onOpen: (ws) => {
-        ws.send(JSON.stringify({ type: "start", prompt, seconds, accept }));
+        const token = currentAccessToken();
+        ws.send(JSON.stringify({
+          type: "start",
+          prompt,
+          seconds,
+          accept,
+          authorization: token ? `Bearer ${token}` : "",
+        }));
       },
       onMessage: (ev, ws) => {
         if (typeof ev.data === "string") {

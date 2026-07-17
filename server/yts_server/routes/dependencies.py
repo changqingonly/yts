@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import Depends, Header
+from fastapi import Cookie, Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.session import get_sessionmaker
@@ -23,13 +23,16 @@ DbSession = Annotated[AsyncSession, Depends(db_session)]
 async def current_user(
     session: DbSession,
     authorization: Annotated[str | None, Header()] = None,
+    device_id: Annotated[str | None, Cookie(alias="yts-device")] = None,
 ) -> AuthenticatedUser:
     if not authorization or not authorization.startswith("Bearer "):
         raise AppError.unauthorized("missing bearer token")
     token = authorization.removeprefix("Bearer ").strip()
     if not token:
         raise AppError.unauthorized("missing bearer token")
-    return await authenticate_bearer_token(session, token)
+    if not device_id:
+        raise AppError.unauthorized("missing device credential")
+    return await authenticate_bearer_token(session, token, device_id)
 
 
 CurrentUser = Annotated[AuthenticatedUser, Depends(current_user)]

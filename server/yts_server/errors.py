@@ -31,6 +31,10 @@ class AppError(Exception):
         return cls(status_code=403, code="forbidden", message=message)
 
     @classmethod
+    def too_many_requests(cls, message: str) -> AppError:
+        return cls(status_code=429, code="rate_limited", message=message)
+
+    @classmethod
     def not_found(cls, code: str, message: str) -> AppError:
         return cls(status_code=404, code=code, message=message)
 
@@ -73,14 +77,11 @@ def register_error_handlers(app: FastAPI) -> None:
     async def handle_request_validation_error(
         request: Request, error: RequestValidationError
     ) -> JSONResponse:
-        body = await request.body()
         logger.warning(
-            "Request validation failed path=%s method=%s field=%s errors=%s body=%s",
+            "Request validation failed path=%s method=%s fields=%s",
             request.url.path,
             request.method,
             _validation_fields(error.errors()),
-            error.errors(),
-            _decode_body(body),
         )
         return JSONResponse(status_code=422, content={"detail": error.errors()})
 
@@ -94,7 +95,3 @@ def _validation_fields(errors: list[dict[str, Any]]) -> str:
     if not fields:
         raise ValueError("request validation error missing loc")
     return ",".join(fields)
-
-
-def _decode_body(body: bytes) -> str:
-    return body.decode("utf-8")

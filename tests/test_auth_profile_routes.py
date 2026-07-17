@@ -189,6 +189,21 @@ def test_argon2_hash_verifies_and_rejects_plaintext() -> None:
     assert not verify_password("WrongPassword123", digest)
 
 
+def test_validation_log_does_not_include_authentication_body(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    marker = "SENSITIVE-CIPHERTEXT-MARKER"
+    caplog.set_level(logging.WARNING, logger="yts_server.errors")
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/api/auth/login",
+            json={"key_id": "rk-invalid", "password_ciphertext_b64": marker},
+        )
+
+    assert response.status_code == 422
+    assert marker not in caplog.text
+
+
 def test_register_login_me_profile_logout_flow() -> None:
     with TestClient(create_app()) as client:
         registered = register_via_test_crypto(client, "me@example.com", "Password123")

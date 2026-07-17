@@ -20,12 +20,14 @@ class DiagnosticCORSMiddleware(CORSMiddleware):
         allow_origins: Sequence[str] = (),
         allow_methods: Sequence[str] = ("GET",),
         allow_headers: Sequence[str] = (),
+        allow_credentials: bool = False,
     ) -> None:
         super().__init__(
             app,
             allow_origins=allow_origins,
             allow_methods=allow_methods,
             allow_headers=allow_headers,
+            allow_credentials=allow_credentials,
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:

@@ -33,3 +33,15 @@ def verify_password(password: str, password_hash: str) -> bool:
         return _hasher.verify(password_hash, password)
     except VerifyMismatchError:
         return False
+
+
+def verify_and_update_password(
+    password: str, password_hash: str, *, time_cost: int | None = None
+) -> tuple[bool, str | None]:
+    hasher = _hasher if time_cost is None else PasswordHasher(time_cost=time_cost)
+    try:
+        hasher.verify(password_hash, password)
+    except VerifyMismatchError:
+        return False, None
+    replacement = hasher.hash(password) if hasher.check_needs_rehash(password_hash) else None
+    return True, replacement

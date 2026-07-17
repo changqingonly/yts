@@ -1,4 +1,4 @@
-import { requestJson } from "./http";
+import { requestJsonOverHttp } from "./transport";
 
 function base64Std(bytes) {
   let binary = "";
@@ -25,9 +25,9 @@ async function encryptWithKey(publicKey, plaintext) {
 }
 
 export async function registerUser({ email, password, confirmPassword, agreementAccepted }) {
-  const key = await requestJson("/api/auth/register_key", { auth: false });
+  const key = await requestJsonOverHttp("/api/auth/register_key", { auth: false });
   const publicKey = await importRsaOaepPublicKey(key.jwk);
-  return requestJson("/api/auth/register", {
+  return requestJsonOverHttp("/api/auth/register", {
     method: "POST",
     auth: false,
     body: JSON.stringify({
@@ -41,9 +41,9 @@ export async function registerUser({ email, password, confirmPassword, agreement
 }
 
 export async function loginUser({ account, password }) {
-  const key = await requestJson("/api/auth/login_key", { auth: false });
+  const key = await requestJsonOverHttp("/api/auth/login_key", { auth: false });
   const publicKey = await importRsaOaepPublicKey(key.jwk);
-  return requestJson("/api/auth/login", {
+  return requestJsonOverHttp("/api/auth/login", {
     method: "POST",
     auth: false,
     body: JSON.stringify({
@@ -55,9 +55,17 @@ export async function loginUser({ account, password }) {
 }
 
 export function fetchCurrentUser() {
-  return requestJson("/api/auth/me");
+  return requestJsonOverHttp("/api/auth/me");
+}
+
+export function refreshCurrentSession() {
+  return requestJsonOverHttp("/api/auth/refresh", {
+    method: "POST",
+    auth: false,
+    headers: { "X-Refresh-Request-ID": crypto.randomUUID() },
+  });
 }
 
 export function logoutUser() {
-  return requestJson("/api/auth/logout", { method: "POST" });
+  return requestJsonOverHttp("/api/auth/logout", { method: "POST" });
 }

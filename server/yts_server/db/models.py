@@ -43,10 +43,25 @@ class UserAccount(Base):
 class UserSession(Base):
     __tablename__ = "user_session"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("user_account.id"), index=True)
     user_uuid: Mapped[str] = mapped_column(String(64), index=True)
+    device_id: Mapped[str] = mapped_column(String(64), index=True)
+    refresh_token_hash: Mapped[str] = mapped_column(String(64))
+    previous_refresh_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    refresh_generation: Mapped[int] = mapped_column(Integer, default=0)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    absolute_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_refresh_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_refresh_request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    client_type: Mapped[str] = mapped_column(String(32), default="web")
+    device_name: Mapped[str] = mapped_column(String(128), default="Web browser")
+    app_version: Mapped[str] = mapped_column(String(64), default="")
+    user_agent: Mapped[str] = mapped_column(String(512), default="")
+    ip_address: Mapped[str] = mapped_column(String(64), default="")
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoke_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

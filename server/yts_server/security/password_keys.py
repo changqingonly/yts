@@ -14,6 +14,7 @@ from ..errors import AppError
 
 KEY_TTL_SECONDS = 5 * 60
 RSA_BITS = 2048
+MAX_CACHED_KEYS = 256
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,10 @@ _lock = Lock()
 
 
 def issue_password_key() -> IssuedPasswordKey:
+    with _lock:
+        _purge_expired_locked()
+        if len(_cache) >= MAX_CACHED_KEYS:
+            raise AppError.too_many_requests("password key capacity exhausted")
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=RSA_BITS)
     public_key = private_key.public_key()
     numbers = public_key.public_numbers()
@@ -48,7 +53,8 @@ def issue_password_key() -> IssuedPasswordKey:
         "e": _to_base64url(numbers.e.to_bytes((numbers.e.bit_length() + 7) // 8, "big")),
     }
     with _lock:
-        _purge_expired_locked()
+        if len(_cache) >= MAX_CACHED_KEYS:
+            raise AppError.too_many_requests("password key capacity exhausted")
         _cache[key_id] = _CachedKey(created_at=time.monotonic(), private_key=private_key)
     return IssuedPasswordKey(key_id=key_id, jwk=jwk, public_key=public_key)
 

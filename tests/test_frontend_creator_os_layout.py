@@ -82,8 +82,7 @@ def test_frontend_http_unauthorized_clears_session_and_announces_expiry() -> Non
     http = read_source("services/transport.js")
 
     assert "status === 401" in http
-    assert 'localStorage.removeItem("yts-access-token")' in http
-    assert 'localStorage.removeItem("yts-user")' in http
+    assert 'setAccessToken("")' in http
     assert 'window.dispatchEvent(new CustomEvent("yts-auth-expired"' in http
 
 
@@ -98,9 +97,9 @@ def test_app_shell_redirects_to_login_when_auth_expires() -> None:
 def test_auth_store_only_absorbs_unauthorized_hydration_errors() -> None:
     auth = read_source("stores/auth.js")
 
-    assert "if (err?.status === 401)" in auth
+    assert "if (error?.status !== 401) throw error;" in auth
     assert "this.clearSession();" in auth
-    assert "throw err;" in auth
+    assert "onInvalid: () => this.clearSession()" in auth
 
 
 def test_frontend_deep_sea_theme_tokens_are_defined() -> None:
@@ -299,7 +298,9 @@ def test_music_stream_generation_uses_global_api_target() -> None:
     assert '<select v-model="streamTarget"' not in music
     assert 'target = "local"' not in player
     assert "target = selectedApiTarget()" in player
-    assert 'import { openBinaryStream } from "../services/transport";' in stream_player
+    assert "currentAccessToken" in stream_player
+    assert "openBinaryStream" in stream_player
+    assert 'authorization: token ? `Bearer ${token}` : ""' in stream_player
     assert 'openBinaryStream("", {' in stream_player
     assert "streamEndpointForTarget(target)" in transport
     assert "const WS_BASES = {" not in stream_player
@@ -1160,10 +1161,12 @@ def test_music_page_player_surface_has_no_panel_frame_or_wavesurfer_rendering() 
 def test_music_page_uses_right_drawer_for_queue_and_history() -> None:
     music = read_source("pages/MusicPage.vue")
     template = music.split("<template>", 1)[1].split("</template>", 1)[0]
-    drawer_layer_block = template.split('<div v-if="playlistDrawerOpen" class="drawer-layer"', 1)[1].split(
-        "</aside>", 1
+    drawer_layer_block = template.split('<div v-if="playlistDrawerOpen" class="drawer-layer"', 1)[
+        1
+    ].split("</aside>", 1)[0]
+    drawer_header_block = drawer_layer_block.split('<header class="drawer-header"', 1)[1].split(
+        "</header>", 1
     )[0]
-    drawer_header_block = drawer_layer_block.split('<header class="drawer-header"', 1)[1].split("</header>", 1)[0]
     drawer_layer_rule = music.split(".drawer-layer {", 1)[1].split("}", 1)[0]
     drawer_scrim_rule = music.split(".drawer-scrim {", 1)[1].split("}", 1)[0]
     drawer_header_rule = music.split(".drawer-header {", 1)[1].split("}", 1)[0]
@@ -1192,7 +1195,9 @@ def test_music_page_uses_right_drawer_for_queue_and_history() -> None:
     assert '@click="playlistDrawerOpen = false"' in drawer_layer_block
     assert '<ListMusic :size="18" />' in drawer_header_block
     assert '<button class="drawer-collapse"' in drawer_header_block
-    assert drawer_header_block.index('class="drawer-title"') < drawer_header_block.index('class="drawer-collapse"')
+    assert drawer_header_block.index('class="drawer-title"') < drawer_header_block.index(
+        'class="drawer-collapse"'
+    )
     assert "position: fixed;" in drawer_layer_rule
     assert "inset: 0;" in drawer_layer_rule
     assert "pointer-events: none;" in drawer_layer_rule
@@ -1214,7 +1219,7 @@ def test_music_playlist_drawer_supports_delete_history_and_restore_actions() -> 
 
     for token in [
         "deletedTracks",
-        "drawerMode === \"deleted\"",
+        'drawerMode === "deleted"',
         "handleDeletePlaylistItem",
         "handleRestorePlaylistItem",
         "await playlist.deleteItem(track.id)",
@@ -1288,3 +1293,15 @@ def test_music_page_uses_edge_progress_and_vertical_side_actions_without_large_f
     assert "border: 0;" in minimal_player_rule
     assert "border: 0;" in media_shell_rule
     assert "box-shadow: none;" in media_shell_rule
+
+
+def test_auth_credentials_are_not_persisted_in_web_storage() -> None:
+    combined = (
+        read_source("stores/auth.js")
+        + read_source("services/transport.js")
+        + read_source("router/index.js")
+    )
+
+    assert "yts-access-token" not in combined
+    assert "localStorage" not in combined
+    assert "sessionStorage" not in combined

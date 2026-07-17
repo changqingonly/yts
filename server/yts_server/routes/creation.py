@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Cookie, Header
 from yts_core.config import get_settings
 from yts_core.orchestration import run_creation, run_inspiration
 from yts_core.orchestration.checkpointing import build_langgraph_checkpointer
@@ -26,9 +26,10 @@ async def create(
     req: CreationRequest,
     session: DbSession,
     authorization: str | None = Header(default=None),
+    device_id: str | None = Cookie(default=None, alias="yts-device"),
 ) -> CreationResult:
     settings = get_settings()
-    user = await billing_user_if_required(session, authorization)
+    user = await billing_user_if_required(session, authorization, device_id)
     async with GenerationBillingGuard(
         session=session,
         user=user,
@@ -45,8 +46,9 @@ async def fill_inspiration(
     req: InspirationRequest,
     session: DbSession,
     authorization: str | None = Header(default=None),
+    device_id: str | None = Cookie(default=None, alias="yts-device"),
 ) -> InspirationResult:
-    user = await billing_user_if_required(session, authorization)
+    user = await billing_user_if_required(session, authorization, device_id)
     async with GenerationBillingGuard(
         session=session,
         user=user,

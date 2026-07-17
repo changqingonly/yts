@@ -10,12 +10,12 @@ async def create_all_tables() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_validate_auth_schema)
         await conn.run_sync(_upgrade_music_schema)
 
 
 def _upgrade_music_schema(connection) -> None:
-    inspector = inspect(connection)
-    table_names = set(inspector.get_table_names())
+    table_names = set(inspect(connection).get_table_names())
     if "music_playlist" in table_names:
         _add_missing_columns(
             connection,
@@ -36,36 +36,40 @@ def _upgrade_music_schema(connection) -> None:
         _add_missing_columns(
             connection,
             "music_playlist_item",
-            {
-                "title_alias": "VARCHAR(255)",
-                "artist_alias": "VARCHAR(255)",
-            },
+            {"title_alias": "VARCHAR(255)", "artist_alias": "VARCHAR(255)"},
         )
         _upgrade_music_playlist_item_legacy_columns(connection)
         connection.execute(
             text(
-                "UPDATE music_playlist_item "
-                "SET title_alias = title "
+                "UPDATE music_playlist_item SET title_alias = title "
                 "WHERE title_alias IS NULL AND title IS NOT NULL"
             )
         )
         connection.execute(
             text(
-                "UPDATE music_playlist_item "
-                "SET artist_alias = artist "
+                "UPDATE music_playlist_item SET artist_alias = artist "
                 "WHERE artist_alias IS NULL AND artist IS NOT NULL"
             )
         )
     if {"music_playlist", "music_playlist_item"}.issubset(table_names):
         connection.execute(
             text(
-                "UPDATE music_playlist "
-                "SET item_count = ("
+                "UPDATE music_playlist SET item_count = ("
                 "SELECT COUNT(*) FROM music_playlist_item "
                 "WHERE music_playlist_item.playlist_id = music_playlist.id "
-                "AND music_playlist_item.deleted_at_ms IS NULL"
-                ")"
+                "AND music_playlist_item.deleted_at_ms IS NULL)"
             )
+        )
+
+
+def _validate_auth_schema(connection) -> None:
+    columns = {column["name"] for column in inspect(connection).get_columns("user_session")}
+    required = {"device_id", "refresh_token_hash", "absolute_expires_at", "user_id"}
+    missing = sorted(required - columns)
+    if missing:
+        raise RuntimeError(
+            "legacy authentication schema detected; run `alembic upgrade head` before startup; "
+            f"missing columns: {', '.join(missing)}"
         )
 
 

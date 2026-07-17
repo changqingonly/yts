@@ -133,7 +133,9 @@ def test_workflow_run_route_logs_explicit_model_error(
     assert "parse_intent must return a strict JSON object" in caplog.text
 
 
-def test_workflow_validation_error_logs_request_body(caplog: pytest.LogCaptureFixture) -> None:
+def test_workflow_validation_error_logs_fields_without_request_body(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     caplog.set_level(logging.WARNING, logger="yts_server.errors")
 
     with TestClient(create_app()) as client:
@@ -145,8 +147,8 @@ def test_workflow_validation_error_logs_request_body(caplog: pytest.LogCaptureFi
     assert response.status_code == 422
     assert "Request validation failed" in caplog.text
     assert "path=/api/workflows/pro_creation_hitl_v1/threads" in caplog.text
-    assert "field=user_prompt" in caplog.text
-    assert 'body={"thread_id":"missing-user-prompt"}' in caplog.text
+    assert "fields=user_prompt" in caplog.text
+    assert "missing-user-prompt" not in caplog.text
 
 
 def test_workflow_run_resume_trace_routes(monkeypatch) -> None:
