@@ -23,6 +23,7 @@ data/zvec/
 data/*.csv
 data/famous_song.jsonl
 .superpowers/
+.worktrees/
 
 # --- Rust / Tauri ---
 target/
