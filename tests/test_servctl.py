@@ -62,6 +62,19 @@ def test_preflight_probe_lives_in_real_python_file() -> None:
     )
 
 
+def test_locked_install_keeps_root_uv_lockfile_in_source_control() -> None:
+    install_source = (_REPO_ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+    ignore_rules = {
+        line.strip()
+        for line in (_REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    assert "uv sync --locked" in install_source
+    assert (_REPO_ROOT / "uv.lock").is_file()
+    assert "uv.lock" not in ignore_rules
+
+
 def test_require_profile_config_rejects_missing_real_env_file(tmp_path: Path) -> None:
     conf_dir = tmp_path / "conf"
     conf_dir.mkdir()

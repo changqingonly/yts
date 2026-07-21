@@ -38,7 +38,6 @@ dist-tauri/
 *.local
 
 # --- uv / Python build ---
-uv.lock
 build/
 *.spec.bak
 
