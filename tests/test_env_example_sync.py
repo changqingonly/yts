@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -9,11 +10,21 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from scripts.servctl import load_profile_env  # noqa: E402
 from scripts.sync_env_examples import (  # noqa: E402
     ExampleSyncError,
     render_example,
     sync_examples,
 )
+
+_SAFE_NON_SECRET_TOKEN_FIELDS = {
+    "YTS_AUTH_ACCESS_TOKEN_TTL_SECONDS",
+    "YTS_GATEWAY_TEXT_MAX_TOKENS",
+}
+_DATABASE_PLACEHOLDER_VALUES = {
+    "postgresql+asyncpg://USER:PASSWORD@HOST:5432/DBNAME",
+    "postgresql://USER:PASSWORD@HOST:5432/DBNAME",
+}
 
 
 def test_render_example_preserves_structure_and_sanitizes_values() -> None:
@@ -98,3 +109,50 @@ def test_sync_examples_does_not_replace_either_target_when_rendering_fails(
 
     assert cloud_example.read_text(encoding="utf-8") == "cloud sentinel\n"
     assert local_example.read_text(encoding="utf-8") == "local sentinel\n"
+
+
+@pytest.mark.parametrize("profile", ["cloud", "local"])
+def test_committed_example_is_safe_and_parseable(profile: str) -> None:
+    example_path = _REPO_ROOT / "conf" / f"{profile}.example.env"
+
+    assert example_path.is_file()
+    values = load_profile_env(_REPO_ROOT, f"{profile}.example")
+
+    nonempty_sensitive_fields = [
+        name
+        for name, value in values.items()
+        if name not in _SAFE_NON_SECRET_TOKEN_FIELDS
+        and any(marker in name.upper() for marker in ("KEY", "SECRET", "PASSWORD", "TOKEN"))
+        and value
+    ]
+    credential_bearing_urls = []
+    undocumented_absolute_paths = []
+    for name, value in values.items():
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme
+            and parsed.netloc
+            and (parsed.username is not None or parsed.password is not None)
+            and value not in _DATABASE_PLACEHOLDER_VALUES
+        ):
+            credential_bearing_urls.append(name)
+        if (
+            Path(value).is_absolute() or PureWindowsPath(value).is_absolute()
+        ) and value != "/path/to/value":
+            undocumented_absolute_paths.append(name)
+
+    assert values["YTS_PROFILE"] == profile
+    assert nonempty_sensitive_fields == []
+    assert credential_bearing_urls == []
+    assert undocumented_absolute_paths == []
+
+
+def test_gitignore_keeps_real_configs_private_and_examples_trackable() -> None:
+    ignore_rules = {
+        line.strip()
+        for line in (_REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    assert "conf/*.env" in ignore_rules
+    assert "!conf/*.example.env" in ignore_rules

@@ -84,6 +84,16 @@ OpenAI-compatible 或 DeepSeek 都属于 `cloud` 路由,不要把 provider 名�
 `conf/*.env` 是 Python 侧唯一的本地配置入口,已覆盖日志、数据库、鉴权、存储、CORS、
 LangGraph checkpoint、LiteLLM/OpenAI/本地网关文本模型,以及图片/音频/音乐模型槽位。
 
+修改真实配置的字段或安全默认值后,从本地 `conf/cloud.env` 和 `conf/local.env` 重新生成脱敏模板:
+
+```bash
+./.tools/uv/uv run python scripts/sync_env_examples.py
+git diff -- conf/cloud.example.env conf/local.example.env
+```
+
+真实 `conf/*.env` 只作为本地参考且绝不暂存;只提交生成的 `conf/*.example.env`。如果任一值无法
+确定性脱敏,生成命令会在替换任何 example 文件前直接失败。
+
 本地推理需先准备各模态 GGML 二进制+模型(各一条命令,自动构建+下模型+生成配置):
 ```bash
 bash scripts/build_llamacpp.sh       # 文本:llama.cpp + Qwen2.5-7B GGUF(~4.4GB,Apache-2.0)
