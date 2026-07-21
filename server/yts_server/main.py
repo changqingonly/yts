@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from yts_core.config import get_settings
 from yts_core.orchestration.checkpointing import close_langgraph_checkpointer
 
@@ -48,11 +50,24 @@ def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings)
     app = FastAPI(title="yts", version="0.1.0", lifespan=lifespan)
+    avatar_storage_dir = Path(settings.avatar_storage_dir)
+    avatar_storage_dir.mkdir(parents=True, exist_ok=True)
+    app.mount(
+        "/static/user/avatar/uploaded",
+        StaticFiles(directory=avatar_storage_dir),
+        name="uploaded-avatars",
+    )
     app.add_middleware(
         DiagnosticCORSMiddleware,
         allow_origins=settings.server_allowed_origins,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "X-Refresh-Request-ID"],
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+            "X-Refresh-Request-ID",
+            "X-Yts-Client",
+            "X-Yts-Device-Id",
+        ],
         allow_credentials=True,
     )
     register_error_handlers(app)

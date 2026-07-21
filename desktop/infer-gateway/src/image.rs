@@ -14,7 +14,6 @@ use std::process::Stdio;
 use axum::http::StatusCode;
 use axum::Json;
 use base64::Engine;
-use image::{ImageEncoder, Rgb, RgbImage};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
@@ -55,7 +54,7 @@ pub async fn gen_image(Json(req): Json<ImageReq>) -> Result<Json<ImageResp>, (St
 async fn produce_png(req: &ImageReq) -> Result<(Vec<u8>, String), String> {
     match std::env::var("YTS_IMAGEGEN_CMD") {
         Ok(cmd) if !cmd.trim().is_empty() => spawn_external(&cmd, req).await,
-        _ => Ok((placeholder_png(req), "placeholder".into())),
+        _ => Err("YTS_IMAGEGEN_CMD is required for local image generation".into()),
     }
 }
 
@@ -91,24 +90,4 @@ async fn spawn_external(cmd_tmpl: &str, req: &ImageReq) -> Result<(Vec<u8>, Stri
         return Err("imagegen produced empty png".into());
     }
     Ok((png, "sd.cpp".into()))
-}
-
-/// 内置占位 PNG:随 prompt 变色的对角渐变(无依赖验证 /image 管线用)。
-fn placeholder_png(req: &ImageReq) -> Vec<u8> {
-    let (w, h) = (req.width.clamp(16, 2048), req.height.clamp(16, 2048));
-    let seed = req.prompt.bytes().fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
-    let mut img = RgbImage::new(w, h);
-    for y in 0..h {
-        for x in 0..w {
-            let r = ((x * 255 / w) as u8) ^ (seed as u8);
-            let g = ((y * 255 / h) as u8).wrapping_add((seed >> 8) as u8);
-            let b = (((x + y) * 255 / (w + h)) as u8) ^ (seed >> 16) as u8;
-            img.put_pixel(x, y, Rgb([r, g, b]));
-        }
-    }
-    let mut buf = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut buf)
-        .write_image(img.as_raw(), w, h, image::ExtendedColorType::Rgb8)
-        .expect("encode placeholder png");
-    buf
 }

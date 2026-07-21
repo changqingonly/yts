@@ -28,6 +28,8 @@ from .credits import grant_daily_login_credit, grant_welcome_register_credit
 
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
+LOCAL_USER_UUID = "local-device"
+
 
 @dataclass(frozen=True)
 class AuthenticatedUser:
@@ -50,6 +52,26 @@ class IssuedSession:
 def register_key_response() -> dict:
     issued = issue_password_key()
     return {"key_id": issued.key_id, "jwk": issued.jwk, "algorithm": "RSA-OAEP-256"}
+
+
+async def ensure_local_user(session: AsyncSession) -> UserAccount:
+    """本地(非 cloud)profile 单机单用户:账号体系本身只走云端,本地业务接口
+    (歌曲/歌单/资料等)不要求真实会话,统一落到这一个固定的本地隐式账号上。"""
+    user = await _find_user_by_uuid(session, LOCAL_USER_UUID)
+    if user is not None:
+        return user
+    user = UserAccount(
+        id=_new_i64_id(),
+        uuid=LOCAL_USER_UUID,
+        username="本地用户",
+        email="local@device.internal",
+        avatar_url=None,
+        password_hash="",
+        agreement_accepted=True,
+    )
+    session.add(user)
+    await session.flush()
+    return user
 
 
 async def register_user(

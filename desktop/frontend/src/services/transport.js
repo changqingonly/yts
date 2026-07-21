@@ -1,6 +1,7 @@
 import {
   assertApiTarget,
   endpointForTarget,
+  isTauriRuntime,
   selectedApiTarget,
   streamEndpointForTarget,
 } from "./environment";
@@ -8,6 +9,7 @@ import {
 const JSON_CONTENT_TYPE = "application/json";
 const WS_CONNECT_FAILED = "WS_CONNECT_FAILED";
 let accessToken = "";
+let deviceId = "";
 
 export function setAccessToken(token) {
   accessToken = token || "";
@@ -17,8 +19,22 @@ export function currentAccessToken() {
   return accessToken;
 }
 
+/** 打包态跨源 cookie 不可靠,yts-device cookie 常常送不到;显式带上同一个 device_id 作为
+ * 请求头兜底,和 /api/auth/refresh 的 body 兜底同一个道理,后端 current_user() 两处都认。 */
+export function setDeviceId(id) {
+  deviceId = id || "";
+}
+
+export function currentDeviceId() {
+  return deviceId;
+}
+
 export function apiBase(target = selectedApiTarget()) {
   return endpointForTarget(assertApiTarget(target)).apiBase;
+}
+
+export function apiResourceUrl(path, target = selectedApiTarget()) {
+  return new URL(path, `${apiBase(target)}/`).toString();
 }
 
 export function websocketBase(target = selectedApiTarget()) {
@@ -135,6 +151,7 @@ export async function uploadForm(path, formData, options = {}) {
   const requestTarget = target ?? selectedApiTarget();
   const baseUrl = apiBase(requestTarget);
   const headers = {
+    ...(isTauriRuntime() && deviceId ? { "X-Yts-Device-Id": deviceId } : {}),
     ...(token && auth !== false ? { Authorization: `Bearer ${token}` } : {}),
     ...(extraHeaders ?? {}),
   };
@@ -169,6 +186,7 @@ export async function requestBlob(path, options = {}) {
   const requestTarget = target ?? selectedApiTarget();
   const baseUrl = apiBase(requestTarget);
   const headers = {
+    ...(isTauriRuntime() && deviceId ? { "X-Yts-Device-Id": deviceId } : {}),
     ...(token && auth !== false ? { Authorization: `Bearer ${token}` } : {}),
     ...(extraHeaders ?? {}),
   };
@@ -275,6 +293,8 @@ function sendRpcMessage(target, message) {
 function jsonHeaders({ token, auth, extraHeaders }) {
   return {
     "Content-Type": JSON_CONTENT_TYPE,
+    ...(isTauriRuntime() ? { "X-Yts-Client": "desktop" } : {}),
+    ...(isTauriRuntime() && deviceId ? { "X-Yts-Device-Id": deviceId } : {}),
     ...(token && auth !== false ? { Authorization: `Bearer ${token}` } : {}),
     ...(extraHeaders ?? {}),
   };

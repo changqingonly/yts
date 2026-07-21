@@ -2,20 +2,26 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   Activity,
+  ArrowUp,
   Braces,
   CheckCircle2,
   Circle,
   Clock3,
+  Copy,
+  FileText,
   GitBranch,
   Hand,
   History,
   ListPlus,
+  MessageSquare,
+  Plus,
   Play,
   RefreshCw,
   RotateCcw,
   Save,
   Search,
   Settings2,
+  Sparkles,
   SquarePen,
   Trash2,
   Workflow,
@@ -30,7 +36,7 @@ import {
 } from "../services/http";
 import { saveSong } from "../services/songs";
 import { openJsonStream } from "../services/transport";
-import { getWorkflowTrace, listWorkflowHistory } from "../services/workflows";
+import { getWorkflowRunResult, listWorkflowHistory } from "../services/workflows";
 import { useEnvironmentStore } from "../stores/environment";
 
 const workflowId = "pro_creation_hitl_v1";
@@ -38,7 +44,7 @@ const environment = useEnvironmentStore();
 const template = ref(null);
 const draftTemplate = ref(null);
 const threadId = ref(`workflow-${Date.now()}`);
-const prompt = ref("下雨的午后，大雨倾盆，思念远方的故人");
+const prompt = ref("");
 const selectedNodeId = ref("validate_request");
 const userSelectedNodeId = ref("");
 const nodeConfigText = ref("{}");
@@ -51,6 +57,7 @@ const result = ref(null);
 const status = ref("idle");
 const error = ref("");
 const saveMessage = ref("");
+const copyMessage = ref("");
 const workflowSocket = ref(null);
 const workflowSocketClosing = ref(false);
 const drawerMode = ref(null);
@@ -58,6 +65,12 @@ const historyDrawerOpen = ref(false);
 const historyItems = ref([]);
 const historyLoading = ref(false);
 const selectedHistoryThreadId = ref("");
+const pageMode = ref("creator");
+const inspirationItems = [
+  { label: "雨夜与思念", prompt: "下雨的夜晚，我忽然想起很久没有见面的故人。" },
+  { label: "夏日公路", prompt: "盛夏傍晚开车离开熟悉的城市，既自由又有一点不舍。" },
+  { label: "重新出发", prompt: "一段关系结束以后，终于鼓起勇气重新开始生活。" },
+];
 const drawerModes = [
   { id: "config", label: "配置", icon: Settings2 },
   { id: "io", label: "输入输出", icon: GitBranch },
@@ -99,6 +112,24 @@ const flowStageDefinitions = [
     ],
   },
   { id: "delivery", label: "06 交付评审", nodeIds: ["build_response", "final_review", "done"] },
+];
+
+const creatorStageDefinitions = [
+  { id: "understand", label: "理解需求", description: "提取故事、情绪与表达方向", nodeIds: ["validate_request", "parse_intent"] },
+  {
+    id: "compose",
+    label: "构思",
+    description: "设计歌曲简报、风格、Hook 与结构",
+    nodeIds: ["build_song_brief", "plan_music_style", "hook_lab", "draft_structure_blueprints", "critique_structure"],
+  },
+  { id: "write", label: "写作", description: "生成完整歌词", nodeIds: ["plan_style_prompt", "generate_lyrics"] },
+  {
+    id: "polish",
+    label: "润色",
+    description: "检查质量、修复格式并确定歌名",
+    nodeIds: ["review_quality", "repair_lyrics", "normalize_suno_format", "refine_title"],
+  },
+  { id: "complete", label: "完成", description: "整理最终交付", nodeIds: ["build_response", "final_review", "done"] },
 ];
 
 const statusLabels = {
@@ -296,6 +327,41 @@ const finalDelivery = computed(() => {
     style,
     lyrics,
   };
+});
+const creatorProgressStages = computed(() => {
+  return creatorStageDefinitions.map((stage) => {
+    const statuses = stage.nodeIds.map((nodeId) => nodeStatus(nodeId));
+    let stageStatus = "pending";
+    if (statuses.includes("waiting")) {
+      stageStatus = "waiting";
+    } else if (statuses.includes("executing") || statuses.includes("repairing")) {
+      stageStatus = "active";
+    } else if (statuses.length > 0 && statuses.every((item) => item === "completed")) {
+      stageStatus = "completed";
+    }
+    return { ...stage, status: stageStatus };
+  });
+});
+const activeCreatorStage = computed(() => {
+  return creatorProgressStages.value.find((stage) => stage.status === "waiting" || stage.status === "active") ?? null;
+});
+const activeCreatorStageNumber = computed(() => {
+  if (finalDelivery.value) return 5;
+  const activeIndex = creatorProgressStages.value.findIndex(
+    (stage) => stage.status === "waiting" || stage.status === "active",
+  );
+  if (activeIndex >= 0) return activeIndex + 1;
+  if (!hasRunStarted.value) return 0;
+  const completedStages = creatorProgressStages.value.filter((stage) => stage.status === "completed").length;
+  return Math.min(completedStages + 1, 5);
+});
+const creatorRunHeadline = computed(() => {
+  if (displayError.value) return "创作未完成";
+  if (finalDelivery.value) return "作品已经完成";
+  if (activeCreatorStage.value?.status === "waiting") return "需要你的决定";
+  if (activeCreatorStage.value) return `正在${activeCreatorStage.value.label}`;
+  if (hasRunStarted.value) return "正在准备创作";
+  return "准备开始";
 });
 const isFinalNode = computed(() => focusNode.value?.type === "output" || focusNode.value?.id === "done");
 const workspaceSummary = computed(() => {
@@ -695,6 +761,31 @@ function closeHistoryDrawer() {
   historyDrawerOpen.value = false;
 }
 
+function startNewCreation() {
+  if (isWorkflowBusy.value) {
+    error.value = "当前创作仍在进行，完成后才能开始新的创作";
+    return;
+  }
+  threadId.value = `workflow-${Date.now()}`;
+  prompt.value = "";
+  runResult.value = null;
+  trace.value = null;
+  liveNodeStatuses.value = {};
+  result.value = null;
+  error.value = "";
+  saveMessage.value = "";
+  copyMessage.value = "";
+  selectedHistoryThreadId.value = "";
+  userSelectedNodeId.value = "";
+}
+
+function applyInspiration(nextPrompt) {
+  if (typeof nextPrompt !== "string" || !nextPrompt.trim()) {
+    throw new Error("灵感提示必须包含创作内容");
+  }
+  prompt.value = nextPrompt;
+}
+
 async function loadHistoryItems() {
   historyLoading.value = true;
   error.value = "";
@@ -711,23 +802,22 @@ async function loadHistoryItems() {
 async function selectHistoryItem(item) {
   selectedHistoryThreadId.value = item.thread_id;
   error.value = "";
+  copyMessage.value = "";
   try {
     await ensureWorkflowTargetOnline();
-    const selectedTrace = await getWorkflowTrace(workflowId, item.thread_id, { target: workflowTarget() });
+    const selectedResult = await getWorkflowRunResult(workflowId, item.thread_id, { target: workflowTarget() });
+    const replayWaiting = selectedResult.waiting
+      ? { ...selectedResult.waiting, actions: [] }
+      : null;
     threadId.value = item.thread_id;
     prompt.value = item.user_prompt;
-    trace.value = selectedTrace;
-    result.value = null;
+    trace.value = selectedResult.trace;
+    result.value = selectedResult.output;
     runResult.value = {
-      workflow_id: selectedTrace.workflow_id,
-      thread_id: selectedTrace.thread_id,
-      run_id: selectedTrace.run_id,
-      status: item.status,
-      waiting: waitingFromTrace(selectedTrace),
-      output: null,
-      trace: selectedTrace,
+      ...selectedResult,
+      waiting: replayWaiting,
     };
-    userSelectedNodeId.value = focusNodeIdFromTrace(selectedTrace);
+    userSelectedNodeId.value = focusNodeIdFromTrace(selectedResult.trace);
     selectedNodeId.value = userSelectedNodeId.value || draftTemplate.value?.start_node_id || selectedNodeId.value;
     centerTab.value = "workspace";
     historyDrawerOpen.value = false;
@@ -755,6 +845,21 @@ async function saveFinalDeliveryToAssets() {
   });
 }
 
+async function copyDeliveryText(text, label) {
+  if (typeof text !== "string" || !text.trim()) {
+    error.value = `${label}没有可复制的内容`;
+    return;
+  }
+  error.value = "";
+  copyMessage.value = "";
+  try {
+    await navigator.clipboard.writeText(text);
+    copyMessage.value = `已复制${label}`;
+  } catch (err) {
+    error.value = `${label}复制失败：${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 function selectNode(nodeId) {
   selectedNodeId.value = nodeId;
   userSelectedNodeId.value = nodeId;
@@ -768,19 +873,6 @@ function openDrawer(mode) {
 
 function closeDrawer() {
   drawerMode.value = null;
-}
-
-function waitingFromTrace(selectedTrace) {
-  const waitingNode = [...(selectedTrace.nodes ?? [])].reverse().find((node) => node.status === "waiting");
-  if (!waitingNode) return null;
-  return {
-    node_id: waitingNode.node_id,
-    kind: waitingNode.node_type.replace(/^hitl_/, ""),
-    prompt: waitingNode.summary,
-    actions: [],
-    editable_fields: [],
-    state_preview: waitingNode.artifact_preview ?? {},
-  };
 }
 
 function focusNodeIdFromTrace(selectedTrace) {
@@ -964,6 +1056,7 @@ onMounted(() => {
   window.addEventListener(API_TARGET_CHANGED_EVENT, handleApiTargetChanged);
   environment.setSwitchLocked(isWorkflowBusy.value);
   void loadTemplate();
+  void loadHistoryItems();
 });
 onUnmounted(() => {
   window.removeEventListener(API_TARGET_CHANGED_EVENT, handleApiTargetChanged);
@@ -977,12 +1070,190 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main class="app-shell">
+  <main class="creator-page">
+    <section v-if="pageMode === 'creator'" class="creator-mode">
+      <aside class="creation-session-sidebar">
+        <header class="session-title">创作记录</header>
+        <button class="new-creation-button" type="button" :disabled="isWorkflowBusy" @click="startNewCreation">
+          <Plus :size="16" />
+          新创作
+        </button>
+        <div class="session-list-head">
+          <span>最近创作</span>
+          <button type="button" title="刷新历史创作" :disabled="historyLoading" @click="loadHistoryItems">
+            <RefreshCw :size="14" />
+          </button>
+        </div>
+        <div class="session-list">
+          <p v-if="historyLoading" class="session-empty">正在加载历史创作</p>
+          <p v-else-if="!historyItems.length" class="session-empty">还没有历史创作</p>
+          <button
+            v-for="item in historyItems"
+            v-else
+            :key="item.thread_id"
+            :class="['session-row', selectedHistoryThreadId === item.thread_id ? 'active' : '']"
+            type="button"
+            @click="selectHistoryItem(item)"
+          >
+            <MessageSquare :size="15" />
+            <span><strong>{{ item.title }}</strong><small>{{ item.user_prompt }}</small></span>
+            <time :datetime="item.updated_at">{{ formatHistoryTime(item.updated_at) }}</time>
+          </button>
+        </div>
+        <button class="advanced-mode-link" type="button" @click="pageMode = 'advanced'">
+          <Settings2 :size="15" />
+          高级模式
+        </button>
+      </aside>
+
+      <section :class="['creator-conversation', { 'is-empty': !hasRunStarted, 'is-completed': Boolean(finalDelivery) }]">
+        <header v-if="!finalDelivery" class="creator-header">
+          <h1>{{ finalDelivery?.title ?? "创作" }}</h1>
+        </header>
+
+        <div v-if="hasRunStarted" class="creation-feed">
+          <article class="prompt-entry">
+            <div class="manuscript-quote">
+              <div class="feed-entry-label"><FileText :size="14" /> 你的创作想法</div>
+              <p>{{ prompt }}</p>
+            </div>
+          </article>
+
+          <section v-if="!finalDelivery" class="creator-progress" aria-label="创作进度" aria-live="polite">
+            <section v-if="activeCreatorStage" class="progress-summary">
+              <span class="active-stage-signal"><span></span></span>
+              <div>
+                <strong>{{ creatorRunHeadline }}</strong>
+                <p>{{ activeCreatorStage.description }}</p>
+              </div>
+              <em>{{ activeCreatorStageNumber }}/5</em>
+            </section>
+            <ol>
+              <li
+                v-for="stage in creatorProgressStages"
+                :key="stage.id"
+                :class="[`stage-${stage.status}`]"
+              >
+                <span class="creator-stage-marker">
+                  <CheckCircle2 v-if="stage.status === 'completed'" :size="15" />
+                  <Circle v-else :size="12" />
+                </span>
+                <span><strong>{{ stage.label }}</strong></span>
+              </li>
+            </ol>
+          </section>
+
+          <p v-if="displayError" class="error-box compact-error" role="alert">{{ displayError }}</p>
+
+          <section
+            v-if="hasLiveWaitingAction && focusNode?.id === runResult.waiting.node_id"
+            class="creator-decision"
+          >
+            <span class="decision-mark"><Hand :size="17" /></span>
+            <div><strong>需要你的决定</strong><p>{{ runResult.waiting.prompt }}</p></div>
+            <div class="decision-actions">
+              <button
+                v-for="action in runResult.waiting.actions"
+                :key="action"
+                type="button"
+                :disabled="status !== 'idle'"
+                @click="resumeThread(action)"
+              >
+                {{ actionLabel(action) }}
+              </button>
+            </div>
+          </section>
+
+          <article v-if="finalDelivery" class="completed-work">
+            <header class="completed-work-head">
+              <div class="completed-work-title">
+                <span><CheckCircle2 :size="14" /> 创作完成</span>
+                <h2>{{ finalDelivery.title }}</h2>
+              </div>
+              <div class="completed-work-actions">
+                <button class="primary-button" type="button" :disabled="status !== 'idle'" @click="saveFinalDeliveryToAssets">
+                  <Save :size="15" /> 保存到资产
+                </button>
+              </div>
+            </header>
+            <section class="completed-style">
+              <div class="completed-field-label">
+                <span>Style Prompt</span>
+                <button type="button" title="复制 Style Prompt" @click="copyDeliveryText(finalDelivery.style, 'Style Prompt')">
+                  <Copy :size="14" />
+                </button>
+              </div>
+              <p>{{ finalDelivery.style || "暂无 Style Prompt" }}</p>
+            </section>
+            <section class="completed-lyrics">
+              <div class="completed-field-label">
+                <span>歌词</span>
+                <button type="button" title="复制歌词" @click="copyDeliveryText(finalDelivery.lyrics, '歌词')">
+                  <Copy :size="14" />
+                </button>
+              </div>
+              <pre>{{ finalDelivery.lyrics || "暂无歌词" }}</pre>
+            </section>
+            <p v-if="saveMessage" class="save-message">{{ saveMessage }}</p>
+            <p v-if="copyMessage" class="copy-message" role="status">{{ copyMessage }}</p>
+          </article>
+        </div>
+
+        <footer v-if="!hasRunStarted && !isWorkflowExecuting" :class="['composer-dock', { 'is-empty': !hasRunStarted }]">
+          <div v-if="!hasRunStarted" class="empty-composer-intro">
+            <span class="empty-spark"><Sparkles :size="20" /></span>
+            <h2>今天想写一首什么歌？</h2>
+            <p>写下一个画面、一段关系，或此刻最想表达的情绪。</p>
+          </div>
+          <div class="creator-composer">
+            <textarea
+              v-model="prompt"
+              :disabled="isWorkflowBusy"
+              rows="2"
+              maxlength="1000"
+              placeholder="例如：下雨的午后，我忽然想起很久没见的故人。"
+            ></textarea>
+            <div class="composer-toolbar">
+              <span class="composer-mode" title="当前创作模式">
+                <Sparkles :size="15" />
+                歌词创作
+              </span>
+              <span>通常 1–2 句话就够了</span>
+              <button
+                class="composer-submit"
+                type="button"
+                title="开始创作"
+                :disabled="!prompt.trim() || isWorkflowBusy"
+                @click="runThread"
+              >
+                <ArrowUp :size="18" />
+              </button>
+            </div>
+          </div>
+          <div class="inspiration-row">
+            <span>试试这些方向</span>
+            <button
+              v-for="item in inspirationItems"
+              :key="item.label"
+              type="button"
+              :disabled="isWorkflowBusy"
+              @click="applyInspiration(item.prompt)"
+            >
+              {{ item.label }}
+            </button>
+          </div>
+        </footer>
+      </section>
+
+    </section>
+
+    <section v-else class="advanced-workspace">
+      <div class="app-shell">
     <aside class="left-rail">
       <div class="brand-block">
         <div class="brand-mark"><Workflow :size="18" /></div>
         <div>
-          <h1>深海工作室</h1>
+          <h1>乐兔工作室</h1>
           <p>制作流程</p>
         </div>
       </div>
@@ -1101,7 +1372,7 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <p v-if="displayError" class="error-box compact-error">{{ displayError }}</p>
+        <p v-if="displayError" class="error-box advanced-compact-error">{{ displayError }}</p>
         <div v-if="hasLiveWaitingAction && focusNode?.id === runResult.waiting.node_id" class="workspace-gate compact-gate">
           <div>
             <strong>{{ runResult.waiting.kind === "approval" ? "等待确认" : "等待处理" }}</strong>
@@ -1393,6 +1664,8 @@ onUnmounted(() => {
         </aside>
       </div>
     </Transition>
+      </div>
+    </section>
   </main>
 </template>
 
@@ -1411,7 +1684,7 @@ onUnmounted(() => {
 
 body {
   margin: 0;
-  min-width: 1240px;
+  min-width: 320px;
   background: var(--color-bg);
 }
 
@@ -1454,6 +1727,635 @@ textarea {
 
 textarea {
   resize: vertical;
+}
+
+.creator-page {
+  min-height: 100vh;
+}
+
+.creator-mode {
+  background: #070c14;
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+  height: 100vh;
+  min-width: 0;
+}
+
+.creation-session-sidebar {
+  background: #091522;
+  border-right: 1px solid var(--color-border-soft);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 10px 12px;
+}
+
+.session-row > span {
+  display: grid;
+  min-width: 0;
+}
+
+.session-title {
+  color: var(--color-heading);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 2px 7px 14px;
+}
+
+.session-row small,
+.session-row time,
+.session-empty {
+  color: var(--color-muted);
+  font-size: 10px;
+}
+
+.new-creation-button {
+  background: transparent;
+  border-color: rgba(125, 211, 252, 0.16);
+  color: var(--color-heading);
+  justify-content: flex-start;
+  min-height: 36px;
+  width: 100%;
+}
+
+.new-creation-button:hover,
+.new-creation-button:focus-visible {
+  background: rgba(14, 165, 233, 0.1);
+  border-color: rgba(34, 211, 238, 0.34);
+}
+
+.session-list-head {
+  align-items: center;
+  color: var(--color-muted);
+  display: flex;
+  font-size: 10px;
+  font-weight: 700;
+  justify-content: space-between;
+  padding: 20px 7px 8px;
+}
+
+.session-list-head button {
+  background: transparent;
+  border: 0;
+  color: var(--color-muted);
+  min-height: 26px;
+  padding: 0;
+  width: 26px;
+}
+
+.session-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.session-empty {
+  margin: 8px 7px;
+}
+
+.session-row {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  justify-content: stretch;
+  margin-bottom: 3px;
+  min-height: 48px;
+  padding: 7px;
+  text-align: left;
+  width: 100%;
+}
+
+.session-row:hover,
+.session-row.active {
+  background: rgba(14, 165, 233, 0.12);
+  box-shadow: inset 2px 0 0 var(--color-brand-cyan);
+}
+
+.session-row > svg {
+  color: var(--color-muted);
+  margin-top: 2px;
+}
+
+.session-row strong,
+.session-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row strong {
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.session-row time {
+  grid-column: 2;
+}
+
+.advanced-mode-link {
+  background: transparent;
+  border: 0;
+  color: var(--color-muted);
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+
+.creator-conversation {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.creator-conversation.is-empty {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.creator-conversation.is-completed {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.creator-header {
+  align-items: center;
+  border-bottom: 1px solid var(--color-border-soft);
+  display: flex;
+  justify-content: space-between;
+  margin: 0 24px;
+  min-height: 56px;
+}
+
+.creator-header h1 {
+  color: var(--color-heading);
+  font-size: 15px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.creation-feed {
+  margin: 0 auto;
+  max-width: 780px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 30px 24px 42px;
+  width: 100%;
+}
+
+.empty-spark {
+  color: var(--color-brand-green);
+  filter: drop-shadow(0 0 8px var(--color-brand-glow));
+}
+
+.empty-composer-intro {
+  margin: 0 auto 22px;
+  max-width: 720px;
+  text-align: left;
+  width: 100%;
+}
+
+.empty-composer-intro .empty-spark {
+  display: inline-flex;
+  margin-bottom: 12px;
+}
+
+.empty-composer-intro h2 {
+  font-family: "Songti SC", "Noto Serif SC", Georgia, serif;
+  font-size: 28px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.empty-composer-intro p {
+  color: #7890a5;
+  font-size: 13px;
+  margin: 0;
+}
+
+.prompt-entry,
+.creator-progress,
+.creator-decision {
+  border-top: 1px solid var(--color-border-soft);
+  margin-bottom: 28px;
+  padding-top: 16px;
+}
+
+.prompt-entry {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.manuscript-quote {
+  border-left: 2px solid rgba(99, 215, 199, 0.56);
+  max-width: 680px;
+  padding: 3px 0 3px 18px;
+}
+
+.feed-entry-label {
+  align-items: center;
+  color: var(--color-muted);
+  display: flex;
+  font-size: 10px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.manuscript-quote p {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  color: #e6e3dc;
+  display: -webkit-box;
+  font-family: "Songti SC", "Noto Serif SC", Georgia, serif;
+  font-size: 15px;
+  line-height: 1.75;
+  margin: 10px 0 0;
+  overflow: hidden;
+}
+
+.progress-summary {
+  align-items: center;
+  display: grid;
+  gap: 11px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  padding: 2px 0 15px;
+}
+
+.active-stage-signal {
+  align-items: center;
+  display: inline-flex;
+  height: 20px;
+  justify-content: center;
+  width: 20px;
+}
+
+.active-stage-signal > span {
+  animation: creatorPulse 1.6s ease-in-out infinite;
+  background: var(--color-brand-cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 0 6px rgba(34, 211, 238, 0.07);
+  height: 8px;
+  width: 8px;
+}
+
+.progress-summary > div {
+  display: grid;
+  gap: 2px;
+}
+
+.progress-summary p {
+  color: #7890a5;
+  font-size: 11px;
+}
+
+.progress-summary strong {
+  color: var(--color-heading);
+  font-size: 14px;
+}
+
+.progress-summary p {
+  margin: 0;
+}
+
+.progress-summary em {
+  color: var(--color-brand-cyan);
+  font-size: 11px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.creator-progress ol {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  list-style: none;
+  border-top: 1px solid var(--color-border-soft);
+  margin: 0;
+  padding-top: 14px;
+}
+
+.creator-progress li {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: 18px minmax(0, 1fr);
+  min-width: 0;
+  position: relative;
+}
+
+.creator-progress li strong {
+  color: #7890a5;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.creator-progress li:not(:last-child)::after {
+  background: var(--color-border-soft);
+  content: "";
+  height: 1px;
+  left: 18px;
+  position: absolute;
+  right: 6px;
+  top: 8px;
+}
+
+.creator-stage-marker {
+  align-items: center;
+  background: var(--color-bg);
+  color: var(--color-muted);
+  display: inline-flex;
+  height: 17px;
+  justify-content: center;
+  position: relative;
+  width: 17px;
+  z-index: 1;
+}
+
+.creator-progress li.stage-completed .creator-stage-marker {
+  color: var(--color-brand-green);
+}
+
+.creator-progress li.stage-active .creator-stage-marker,
+.creator-progress li.stage-active strong {
+  color: var(--color-brand-cyan);
+}
+
+.creator-progress li.stage-waiting .creator-stage-marker,
+.creator-progress li.stage-waiting strong {
+  color: #ff8e82;
+}
+
+.creator-decision {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+}
+
+.decision-mark {
+  align-items: center;
+  background: rgba(255, 142, 130, 0.1);
+  color: #ff8e82;
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.creator-decision strong {
+  color: var(--color-heading);
+  font-size: 13px;
+}
+
+.creator-decision p {
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 4px 0 0;
+}
+
+.decision-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.completed-work {
+  border-top: 1px solid rgba(99, 215, 199, 0.28);
+  padding: 25px 0 72px;
+}
+
+.completed-work-head {
+  align-items: end;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+  margin-bottom: 27px;
+}
+
+.completed-work-title > span {
+  align-items: center;
+  color: var(--color-brand-green);
+  display: flex;
+  font-size: 10px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.completed-work-title h2 {
+  color: #f2eee5;
+  font-family: "Songti SC", "Noto Serif SC", Georgia, serif;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 8px 0 0;
+}
+
+.completed-work-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.completed-work-actions button:first-child {
+  background: transparent;
+  border-color: var(--color-border-soft);
+}
+
+.completed-style {
+  border-bottom: 1px solid var(--color-border-soft);
+  border-top: 1px solid var(--color-border-soft);
+  display: grid;
+  gap: 20px;
+  grid-template-columns: 104px minmax(0, 1fr);
+  padding: 16px 0;
+}
+
+.completed-field-label {
+  align-items: center;
+  align-self: start;
+  display: flex;
+  gap: 7px;
+}
+
+.completed-field-label > span {
+  color: #7890a5;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.completed-field-label button {
+  background: transparent;
+  border: 0;
+  color: #7890a5;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  width: 26px;
+}
+
+.completed-field-label button:hover,
+.completed-field-label button:focus-visible {
+  background: rgba(34, 211, 238, 0.08);
+  color: var(--color-brand-cyan);
+}
+
+.completed-style p {
+  color: #b8c9d8;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 0;
+}
+
+.completed-lyrics {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: 104px minmax(0, 1fr);
+  padding-top: 26px;
+}
+
+.completed-lyrics pre {
+  color: #e6e3dc;
+  font-family: "Songti SC", "Noto Serif SC", Georgia, serif;
+  font-size: 15px;
+  line-height: 2;
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.copy-message {
+  color: var(--color-brand-green);
+  font-size: 11px;
+  margin: 14px 0 0;
+  text-align: right;
+}
+
+.composer-dock {
+  background: #070c14;
+  padding: 18px 24px 20px;
+}
+
+.composer-dock.is-empty {
+  align-content: center;
+  align-self: stretch;
+  background: transparent;
+  display: grid;
+  padding-bottom: 9vh;
+}
+
+.creator-composer,
+.inspiration-row {
+  margin: 0 auto;
+  max-width: 720px;
+}
+
+.creator-composer {
+  background: #0f1b28;
+  border: 1px solid rgba(138, 164, 189, 0.22);
+  border-radius: 22px;
+  box-shadow: 0 18px 48px rgba(0, 5, 15, 0.32);
+  max-width: 720px;
+  padding: 16px 17px 13px;
+  width: 100%;
+}
+
+.creator-composer:focus-within {
+  border-color: rgba(34, 211, 238, 0.5);
+  box-shadow: 0 18px 48px rgba(0, 5, 15, 0.32), 0 0 0 3px rgba(34, 211, 238, 0.06);
+}
+
+.creator-composer textarea {
+  background: transparent;
+  border: 0;
+  color: var(--color-heading);
+  font-family: "Songti SC", "Noto Serif SC", Georgia, serif;
+  font-size: 14px;
+  height: 64px;
+  line-height: 1.65;
+  max-height: 154px;
+  outline: 0;
+  padding: 0 2px;
+  resize: none;
+}
+
+.composer-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  margin-top: 8px;
+}
+
+.composer-mode {
+  align-items: center;
+  background: rgba(7, 20, 38, 0.35);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 7px;
+  border-color: var(--color-border-soft);
+  color: var(--color-text);
+  display: inline-flex;
+  font-size: 11px;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 9px;
+}
+
+.composer-mode svg:first-child {
+  color: var(--color-brand-cyan);
+}
+
+.composer-toolbar > span {
+  color: var(--color-muted);
+  font-size: 10px;
+}
+
+.composer-submit {
+  background: var(--color-brand-green);
+  border: 0;
+  border-radius: 50%;
+  color: #05221d;
+  height: 36px;
+  margin-left: auto;
+  min-height: 36px;
+  padding: 0;
+  width: 36px;
+}
+
+.composer-submit:disabled {
+  background: #2b3d4f;
+  color: #70869a;
+}
+
+.inspiration-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 5px 0;
+}
+
+.inspiration-row > span {
+  color: var(--color-muted);
+  font-size: 10px;
+  margin-right: 3px;
+}
+
+.inspiration-row button {
+  background: transparent;
+  border-color: var(--color-border-soft);
+  color: var(--color-muted);
+  font-size: 10px;
+  min-height: 27px;
+  padding: 0 8px;
+}
+
+.save-message {
+  color: var(--color-brand-green);
+  font-size: 11px;
+  margin: 10px 0 0;
+  text-align: right;
+}
+
+.advanced-workspace {
+  min-width: 1240px;
 }
 
 .app-shell {
@@ -2936,7 +3838,87 @@ textarea {
   }
 }
 
+@keyframes creatorPulse {
+  0%,
+  100% {
+    opacity: 0.7;
+    transform: scale(0.86);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+
+@media (max-width: 900px) {
+  .creation-session-sidebar {
+    display: none;
+  }
+
+  .creator-mode {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .creator-header {
+    margin: 0 18px;
+  }
+
+  .creation-feed {
+    padding: 26px 18px 36px;
+  }
+
+  .composer-dock {
+    padding-inline: 14px;
+  }
+
+  .creator-progress ol {
+    gap: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .creator-progress li {
+    min-height: 46px;
+  }
+
+  .creator-progress li:not(:last-child)::after {
+    bottom: 0;
+    height: auto;
+    left: 8px;
+    right: auto;
+    top: 20px;
+    width: 1px;
+  }
+
+  .creator-decision {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .decision-actions {
+    grid-column: 2;
+  }
+
+  .completed-work-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .completed-work-actions {
+    width: 100%;
+  }
+
+  .completed-work-actions button {
+    flex: 1 1 0;
+  }
+
+  .completed-style,
+  .completed-lyrics {
+    gap: 9px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .active-stage-signal > span,
   .timeline-node.status-executing,
   .timeline-node.status-executing .timeline-dot::after,
   .workflow-node.status-executing {

@@ -1,10 +1,10 @@
 export function createSessionRefresher({ refresh, onInvalid = () => {} }) {
   let active = null;
 
-  async function refreshNow() {
+  async function refreshNow(args) {
     if (active) return active;
     active = Promise.resolve()
-      .then(refresh)
+      .then(() => refresh(args))
       .catch((error) => {
         if (error?.status === 401) onInvalid(error);
         throw error;

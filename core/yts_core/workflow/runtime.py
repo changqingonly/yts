@@ -404,6 +404,43 @@ async def workflow_thread_trace(*, thread_id: str, checkpointer) -> WorkflowTrac
     return trace
 
 
+async def workflow_thread_result(*, thread_id: str, checkpointer) -> WorkflowRunResult:
+    started_at = perf_counter()
+    _require_hitl_checkpointer(checkpointer)
+    if not thread_id.strip():
+        raise ValueError("thread_id must not be empty")
+    graph = _build_template_graph(
+        default_workflow_template(), backend=None, checkpointer=checkpointer
+    )
+    snapshot = await asyncio.to_thread(
+        graph.get_state,
+        workflow_config(checkpointer=checkpointer, thread_id=thread_id.strip()),
+    )
+    values = dict(snapshot.values or {})
+    waiting = _waiting_from_interrupts(snapshot.interrupts)
+    trace = _trace_from_state(values, waiting)
+    output = None if waiting else _creation_result_from_state(values)
+    result = WorkflowRunResult(
+        workflow_id=trace.workflow_id,
+        thread_id=trace.thread_id,
+        run_id=trace.run_id,
+        status="waiting" if waiting else "completed",
+        waiting=waiting,
+        output=output,
+        trace=trace,
+    )
+    logger.info(
+        "workflow.thread.result_loaded",
+        workflow_id=result.workflow_id,
+        thread_id=thread_id.strip(),
+        run_id=result.run_id,
+        status=result.status,
+        trace_node_count=len(result.trace.nodes),
+        duration_ms=_elapsed_ms(started_at),
+    )
+    return result
+
+
 def _build_template_graph(template: WorkflowDefinition, *, backend, checkpointer):
     _validate_workflow_definition(template)
     graph = StateGraph(WorkflowState)

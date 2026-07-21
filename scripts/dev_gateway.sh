@@ -5,15 +5,14 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 VENDOR="$HERE/../desktop/vendor"
 
-# 自动加载各模态 producer 配置(跑过对应 build_*.sh 后即存在):
-#   llamacpp.env → YTS_LLAMA_CMD/BASE_URL(文本);imagegen.env → YTS_IMAGEGEN_CMD(图片)
-for envf in llamacpp.env imagegen.env; do
-  if [ -f "$VENDOR/$envf" ]; then
-    # shellcheck disable=SC1090
-    source "$VENDOR/$envf"
-    echo "已加载 $envf"
-  fi
-done
+ROOT="$(cd "$HERE/.." && pwd)"
+set -a
+source "$ROOT/conf/local.env"
+set +a
+resolve() { [[ "$1" = /* ]] && printf '%s' "$1" || printf '%s/%s' "$ROOT" "$1"; }
+export YTS_LLAMA_BASE_URL="http://127.0.0.1:${YTS_LLAMA_PORT:-18080}"
+export YTS_LLAMA_CMD="$(resolve "$YTS_LLAMA_SERVER_BIN") -m $(resolve "$YTS_LLAMA_MODEL") --host 127.0.0.1 --port ${YTS_LLAMA_PORT:-18080} -c ${YTS_LLAMA_CTX:-4096} -ngl ${YTS_LLAMA_GPU_LAYERS:-99} --log-disable"
+export YTS_IMAGEGEN_CMD="$(resolve "$YTS_IMAGEGEN_BIN") --diffusion-model $(resolve "$YTS_IMAGEGEN_DIFFUSION_MODEL") --vae $(resolve "$YTS_IMAGEGEN_VAE") --clip_l $(resolve "$YTS_IMAGEGEN_CLIP_L") --t5xxl $(resolve "$YTS_IMAGEGEN_T5XXL") -p {prompt} -o {out} -W {width} -H {height} --steps 4 --cfg-scale 1.0 --sampling-method euler"
 [ -n "${YTS_LLAMA_CMD:-}" ] && echo "文本 producer:llama-server(${YTS_LLAMA_CMD##*/})"
 [ -n "${YTS_IMAGEGEN_CMD:-}" ] && echo "图片 producer:${YTS_IMAGEGEN_CMD%% *}"
 

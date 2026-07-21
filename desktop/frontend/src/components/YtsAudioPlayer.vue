@@ -9,6 +9,7 @@ const props = defineProps({
   seekTime: { type: Number, default: null },
   loopMode: { type: String, required: true },
   loopLabel: { type: String, required: true },
+  repeatCurrent: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -258,7 +259,7 @@ watch(
       <audio
         ref="audioRef"
         slot="media"
-        :loop="loopMode === 'single'"
+        :loop="repeatCurrent || loopMode === 'single'"
         preload="metadata"
         @durationchange="handleDurationChange"
         @ended="handleEnded"
@@ -278,43 +279,43 @@ watch(
     </div>
 
     <media-control-bar class="media-controls" mediacontroller="yts-audio-controller">
-      <div class="control-row">
-        <div class="track-summary">
-          <strong>{{ trackTitle }}</strong>
-          <small>{{ trackArtist }}</small>
-        </div>
-        <div class="button-groups">
-          <div class="transport-group" aria-label="播放控制">
-            <button
-              class="transport-button"
-              type="button"
-              title="上一首"
-              :disabled="!sourceUrl"
-              @click="emit('previous')"
-            >
-              <SkipBack :size="18" />
-            </button>
-            <media-play-button mediacontroller="yts-audio-controller"></media-play-button>
-            <button
-              class="transport-button"
-              type="button"
-              title="下一首"
-              :disabled="!sourceUrl"
-              @click="emit('next')"
-            >
-              <SkipForward :size="18" />
-            </button>
+        <div class="control-row">
+          <div class="track-summary">
+            <strong>{{ trackTitle }}</strong>
+            <small>{{ trackArtist }}</small>
           </div>
-          <div class="utility-group" aria-label="声音与播放模式">
-            <media-mute-button mediacontroller="yts-audio-controller"></media-mute-button>
-            <media-volume-range mediacontroller="yts-audio-controller"></media-volume-range>
-            <button class="mode-button" type="button" title="播放模式" @click="emit('cycle-loop')">
-              <component :is="loopIcon" :size="18" />
-              <span>{{ loopLabel }}</span>
-            </button>
+          <div class="button-groups">
+            <div class="transport-group" aria-label="播放控制">
+              <button
+                class="transport-button"
+                type="button"
+                title="上一首"
+                :disabled="!sourceUrl"
+                @click="emit('previous')"
+              >
+                <SkipBack :size="18" />
+              </button>
+              <media-play-button mediacontroller="yts-audio-controller"></media-play-button>
+              <button
+                class="transport-button"
+                type="button"
+                title="下一首"
+                :disabled="!sourceUrl"
+                @click="emit('next')"
+              >
+                <SkipForward :size="18" />
+              </button>
+            </div>
+            <div class="utility-group" aria-label="声音与播放模式">
+              <media-mute-button mediacontroller="yts-audio-controller"></media-mute-button>
+              <media-volume-range mediacontroller="yts-audio-controller"></media-volume-range>
+              <button class="mode-button" type="button" title="播放模式" @click="emit('cycle-loop')">
+                <component :is="loopIcon" :size="18" />
+                <span>{{ loopLabel }}</span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
     </media-control-bar>
   </section>
 </template>
@@ -404,6 +405,7 @@ watch(
   padding-top: 22px;
   position: relative;
   width: calc(100vw - var(--shell-sidebar-width));
+  z-index: 2;
 }
 
 .control-row {

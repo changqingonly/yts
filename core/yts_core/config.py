@@ -171,7 +171,14 @@ class LoggingSettings(BaseModel):
 
 class ServerSettings(BaseModel):
     allowed_origins: list[str] = Field(
-        default_factory=lambda: ["http://127.0.0.1:1420", "http://localhost:1420"]
+        default_factory=lambda: [
+            "http://127.0.0.1:1420",
+            "http://localhost:1420",
+            # 打包态 Tauri webview 通过自定义协议加载前端资源,请求 Origin 固定为此值(macOS/Linux)。
+            # 与上面两个 devUrl(`tauri dev`)来源并列,而非替代——packaged 二进制不读取 conf/*.env
+            # (PyInstaller onefile 的 __file__ 不落在项目 conf/ 旁),必须靠此处代码默认值放行。
+            "tauri://localhost",
+        ]
     )
 
 

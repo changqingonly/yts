@@ -80,6 +80,68 @@ def test_refresh_replay_revokes_the_session() -> None:
         assert rejected.status_code == 401
 
 
+def test_register_omits_refresh_token_from_json_body_by_default() -> None:
+    with TestClient(create_app()) as client:
+        body = register_via_test_crypto(client, "web-client@example.com", "Password123")
+
+        assert "refresh_token" not in body
+        assert "device_id" not in body
+
+
+def test_register_includes_refresh_token_for_desktop_client() -> None:
+    with TestClient(create_app()) as client:
+        client.headers["X-Yts-Client"] = "desktop"
+        body = register_via_test_crypto(client, "desktop-client@example.com", "Password123")
+
+        assert body["refresh_token"] == client.cookies.get("yts-refresh")
+        assert body["device_id"] == client.cookies.get("yts-device")
+
+
+def test_refresh_accepts_explicit_body_when_cookies_absent() -> None:
+    with TestClient(create_app()) as client:
+        client.headers["X-Yts-Client"] = "desktop"
+        registered = register_via_test_crypto(client, "desktop-boot@example.com", "Password123")
+        device_id = registered["device_id"]
+        refresh_token = registered["refresh_token"]
+        client.cookies.delete("yts-refresh")
+        client.cookies.delete("yts-device")
+
+        response = client.post(
+            "/api/auth/refresh",
+            json={"device_id": device_id, "refresh_token": refresh_token},
+            headers={"X-Refresh-Request-ID": "desktop-boot-1"},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["refresh_token"] != refresh_token
+
+
+def test_refresh_prefers_cookie_over_body_when_both_present() -> None:
+    with TestClient(create_app()) as client:
+        register_via_test_crypto(client, "cookie-wins@example.com", "Password123")
+
+        response = client.post(
+            "/api/auth/refresh",
+            json={"device_id": "wrong-device", "refresh_token": "wrong-refresh-token"},
+            headers={"X-Refresh-Request-ID": "cookie-wins-1"},
+        )
+
+        assert response.status_code == 200, response.text
+
+
+def test_refresh_rejects_when_both_cookie_and_body_are_missing() -> None:
+    with TestClient(create_app()) as client:
+        register_via_test_crypto(client, "no-credential@example.com", "Password123")
+        client.cookies.delete("yts-refresh")
+        client.cookies.delete("yts-device")
+
+        response = client.post(
+            "/api/auth/refresh", headers={"X-Refresh-Request-ID": "no-credential-1"}
+        )
+
+        assert response.status_code == 401
+
+
 def test_email_is_normalized_for_uniqueness() -> None:
     with TestClient(create_app()) as client:
         register_via_test_crypto(client, "Case@Example.com", "Password123")

@@ -25,6 +25,29 @@ def isolated_sqlite_db(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[No
     reset_cached_db_engine()
 
 
+def test_local_profile_business_routes_bypass_auth_with_stable_local_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("YTS_PROFILE", "local")
+    with TestClient(create_app()) as client:
+        first = client.get("/api/user/profile")
+        second = client.get("/api/user/profile")
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["username"] == second.json()["username"]
+
+
+def test_cloud_profile_business_routes_still_require_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("YTS_PROFILE", "cloud")
+    with TestClient(create_app()) as client:
+        response = client.get("/api/user/profile")
+
+    assert response.status_code == 401
+
+
 def test_health_still_works_with_error_handlers() -> None:
     with TestClient(create_app()) as client:
         response = client.get("/health")
@@ -103,6 +126,39 @@ def test_profile_update_preflight_allows_put_from_frontend_origin() -> None:
     assert response.text == "OK"
     assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:1420"
     assert "PUT" in response.headers["access-control-allow-methods"]
+
+
+def test_profile_update_preflight_allows_packaged_tauri_webview_origin() -> None:
+    with TestClient(create_app()) as client:
+        response = client.options(
+            "/api/user/profile",
+            headers={
+                "Origin": "tauri://localhost",
+                "Access-Control-Request-Method": "PUT",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.text == "OK"
+    assert response.headers["access-control-allow-origin"] == "tauri://localhost"
+    assert "PUT" in response.headers["access-control-allow-methods"]
+
+
+def test_profile_update_preflight_allows_x_yts_client_header() -> None:
+    with TestClient(create_app()) as client:
+        response = client.options(
+            "/api/user/profile",
+            headers={
+                "Origin": "tauri://localhost",
+                "Access-Control-Request-Method": "PUT",
+                "Access-Control-Request-Headers": "authorization,content-type,x-yts-client",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.text == "OK"
+    assert response.headers["access-control-allow-origin"] == "tauri://localhost"
 
 
 def test_profile_update_preflight_uses_configured_allowed_origins(
@@ -237,6 +293,32 @@ def test_register_login_me_profile_logout_flow() -> None:
 
         rejected = client.get("/api/auth/me", headers=headers)
         assert rejected.status_code == 401
+
+
+def test_uploaded_avatar_is_served_from_returned_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    avatar_dir = tmp_path / "avatars"
+    monkeypatch.setenv("YTS_AVATAR_STORAGE_DIR", str(avatar_dir))
+
+    with TestClient(create_app()) as client:
+        registered = register_via_test_crypto(client, "avatar@example.com", "Password123")
+        headers = {"Authorization": f"Bearer {registered['access_token']}"}
+        image_bytes = b"\x89PNG\r\n\x1a\n"
+        image_data_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+
+        uploaded = client.post(
+            "/api/user/avatar/upload",
+            headers=headers,
+            json={"image_data_url": image_data_url},
+        )
+
+        assert uploaded.status_code == 200
+        avatar = client.get(uploaded.json()["avatar_url"])
+        assert avatar.status_code == 200
+        assert avatar.content == image_bytes
+        assert avatar.headers["content-type"] == "image/png"
 
 
 def register_via_test_crypto(client: TestClient, email: str, password: str) -> dict:

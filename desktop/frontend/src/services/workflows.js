@@ -13,3 +13,9 @@ export function getWorkflowTrace(workflowId, threadId, options = {}) {
     target: options.target,
   });
 }
+
+export function getWorkflowRunResult(workflowId, threadId, options = {}) {
+  return requestJson(`/api/workflows/${workflowId}/threads/${encodeURIComponent(threadId)}/result`, {
+    target: options.target,
+  });
+}

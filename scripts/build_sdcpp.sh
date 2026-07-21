@@ -9,7 +9,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR="$ROOT/desktop/vendor"
 SRC="$VENDOR/stable-diffusion.cpp"
 MODELS="$VENDOR/sd-models"
-ENVFILE="$VENDOR/imagegen.env"
 mkdir -p "$VENDOR" "$MODELS"
 
 # ---- 模型清单(可用 env 覆盖)----
@@ -44,13 +43,7 @@ dl() {  # dl <file>
 echo "下载模型到 $MODELS (仓库: $SD_MODEL_REPO)"
 dl "$SD_DIFFUSION"; dl "$SD_VAE"; dl "$SD_CLIP"; dl "$SD_T5"
 
-# ---- 3) 生成 producer 配置(infer-gateway 读 YTS_IMAGEGEN_CMD)----
-cat > "$ENVFILE" <<EOF
-# 由 scripts/build_sdcpp.sh 自动生成。dev_gateway.sh 会自动 source 本文件。
-export YTS_IMAGEGEN_CMD='${SD_BIN} --diffusion-model ${MODELS}/${SD_DIFFUSION} --vae ${MODELS}/${SD_VAE} --clip_l ${MODELS}/${SD_CLIP} --t5xxl ${MODELS}/${SD_T5} -p {prompt} -o {out} -W {width} -H {height} --steps ${SD_STEPS} --cfg-scale ${SD_CFG} --sampling-method ${SD_SAMPLER}'
-EOF
-
 echo ""
-echo "✅ 完成。图片生成已就绪(配置写入 $ENVFILE)。"
-echo "   启动:bash scripts/dev_gateway.sh   # 会自动加载上面的 YTS_IMAGEGEN_CMD"
+echo "✅ 完成。图片生成已就绪。"
+echo "   启动:./servctl start --profile local"
 echo "   换模型:设 SD_MODEL_REPO/SD_DIFFUSION 等 env 后重跑本脚本(如 SDXL / Qwen-Image)。"

@@ -1,14 +1,18 @@
 <script setup>
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { Boxes, Cloud, HardDrive, Music2, Settings2, Sparkles, SquarePen } from "@lucide/vue";
 import { useAuthStore } from "../stores/auth";
 import { useEnvironmentStore } from "../stores/environment";
+import { isTauriRuntime } from "../services/environment";
+
+const MusicPage = defineAsyncComponent(() => import("../pages/MusicPage.vue"));
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const environment = useEnvironmentStore();
+const musicMounted = ref(false);
 
 const primaryNavItems = [
   { key: "music", label: "音乐", to: "/music", icon: Music2 },
@@ -19,6 +23,14 @@ const settingsNavItem = { key: "settings", label: "设置", to: "/settings", ico
 const targetIcons = { local: HardDrive, cloud: Cloud };
 
 const activeNav = computed(() => route.meta.activeNav || "music");
+
+watch(
+  activeNav,
+  (nextActiveNav) => {
+    if (nextActiveNav === "music") musicMounted.value = true;
+  },
+  { immediate: true },
+);
 
 function handleAuthExpired() {
   auth.clearSession();
@@ -65,13 +77,22 @@ onUnmounted(() => {
           :class="['creator-nav-item', { active: activeNav === item.key }]"
           :to="item.to"
         >
-          <component :is="item.icon" :size="18" />
-          <span>{{ item.label }}</span>
+          <span
+            v-if="item.key === 'music'"
+            id="music-nav-butterchurn-target"
+            class="music-nav-visualizer-target"
+            aria-hidden="true"
+          ></span>
+          <span class="creator-nav-content">
+            <component :is="item.icon" :size="18" />
+            <span>{{ item.label }}</span>
+          </span>
         </RouterLink>
       </nav>
 
       <nav class="creator-bottom-nav" aria-label="底部导航">
-        <div class="global-target-switch" aria-label="API 环境">
+        <!-- Web 版只有云端模式,本地/云端切换只对 Desktop(Tauri)有意义。 -->
+        <div v-if="isTauriRuntime()" class="global-target-switch" aria-label="API 环境">
           <button
             v-for="item in environment.options"
             :key="item.value"
@@ -102,7 +123,17 @@ onUnmounted(() => {
     </aside>
 
     <section class="creator-main">
-      <RouterView />
+      <p v-if="auth.persistenceError" class="persistence-banner" role="alert">
+        本地登录状态无法保存到系统密钥串（{{ auth.persistenceError }}），退出后需要重新登录。
+        <RouterLink to="/settings?section=account">改用本地密码保存</RouterLink>
+      </p>
+      <MusicPage
+        v-if="musicMounted"
+        v-show="activeNav === 'music'"
+      />
+      <RouterView v-slot="{ Component }">
+        <component :is="Component" v-if="activeNav !== 'music'" />
+      </RouterView>
     </section>
   </main>
 </template>
@@ -259,7 +290,26 @@ onUnmounted(() => {
   gap: 5px;
   justify-content: center;
   min-height: 52px;
+  overflow: hidden;
   padding: 6px 0;
+  position: relative;
+}
+
+.creator-nav-content {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  position: relative;
+  z-index: 1;
+}
+
+.music-nav-visualizer-target {
+  border-radius: inherit;
+  inset: 0;
+  overflow: hidden;
+  position: absolute;
+  z-index: 0;
 }
 
 .creator-nav-item:hover,
@@ -274,4 +324,23 @@ onUnmounted(() => {
   position: relative;
   z-index: 0;
 }
+
+.persistence-banner {
+  background: var(--color-warning-soft);
+  border-bottom: 1px solid var(--color-warning);
+  color: var(--color-warning);
+  font-size: 12px;
+  margin: 0;
+  padding: 9px 16px;
+  position: relative;
+  z-index: 1;
+}
+
+.persistence-banner a {
+  color: inherit;
+  font-weight: 700;
+  margin-left: 6px;
+  text-decoration: underline;
+}
+
 </style>

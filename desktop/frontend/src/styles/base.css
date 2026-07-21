@@ -27,7 +27,6 @@ html {
   background: var(--color-bg);
   color: var(--color-text);
 }
-
 html,
 body,
 #app {

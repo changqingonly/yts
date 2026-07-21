@@ -71,16 +71,12 @@ def test_music_page_persists_and_restores_last_playback_position() -> None:
     assert "trackId: track.id" in music
     assert "contentHash: track.contentHash" in music
     assert "currentTime: normalizedTime" in music
-    assert "wasPlaying: player.isPlaying" in music
     assert "player.setQueue(tracks.value);" in refresh_block
     assert "restorePlaybackResumeState();" in refresh_block
     assert refresh_block.index("player.setQueue(tracks.value);") < refresh_block.index(
         "restorePlaybackResumeState();"
     )
-    assert (
-        "player.selectAt(resumeIndex, { currentTime: resumeState.currentTime, isPlaying: resumeState.wasPlaying });"
-        in music
-    )
+    assert "player.selectAt(resumeIndex, { currentTime: resumeState.currentTime, isPlaying: false });" in music
     assert "resumeSeekTime.value = resumeState.currentTime;" in music
     assert "writePlaybackResumeState(currentTrack.value, currentTime);" in time_update_block
     assert "selectAt(index, { currentTime = 0, isPlaying = false } = {})" in player_store
@@ -89,6 +85,24 @@ def test_music_page_persists_and_restores_last_playback_position() -> None:
     assert '@seek-applied="handleSeekApplied"' in music
     assert 'seekTime: { type: Number, default: null }' in player
     assert '"seek-applied"' in player
+
+
+def test_page_reload_restores_position_without_requesting_blocked_autoplay() -> None:
+    music = read_source("pages/MusicPage.vue")
+    read_block = music.split("function readPlaybackResumeState()", 1)[1].split(
+        "function writePlaybackResumeState", 1
+    )[0]
+    write_block = music.split("function writePlaybackResumeState(track, currentTime)", 1)[1].split(
+        "function restorePlaybackResumeState", 1
+    )[0]
+    restore_block = music.split("function restorePlaybackResumeState()", 1)[1].split(
+        "async function startStreamPreview", 1
+    )[0]
+
+    assert "wasPlaying" not in read_block
+    assert "wasPlaying" not in write_block
+    assert "resumeState.wasPlaying" not in restore_block
+    assert "isPlaying: false" in restore_block
 
 
 def test_audio_player_applies_seek_time_after_source_load_before_playback_intent() -> None:
@@ -154,9 +168,59 @@ def test_audio_player_does_not_surface_autoplay_interruption_from_superseded_sou
     assert "if (loadingSource.value && props.playing) return;" in pause_block
 
 
+def test_queue_loop_repeats_the_current_track_when_the_queue_has_only_one_song() -> None:
+    music = read_source("pages/MusicPage.vue")
+    player = read_source("components/YtsAudioPlayer.vue")
+    ended_block = music.split("function handleAudioEnded()", 1)[1].split(
+        "function handleTimeUpdate", 1
+    )[0]
+
+    assert 'repeatCurrent: { type: Boolean, default: false }' in player
+    assert ':loop="repeatCurrent || loopMode === \'single\'"' in player
+    assert ':repeat-current="loopMode === \'queue\' && tracks.length === 1"' in music
+    assert 'if (loopMode.value === "queue" && tracks.value.length === 1) return;' in ended_block
+    assert "if (tracks.value.length > 1)" in ended_block
+
+
+def test_app_shell_keeps_the_music_audio_dom_mounted_across_authenticated_routes() -> None:
+    shell = read_source("app/AppShell.vue")
+
+    assert "defineAsyncComponent" in shell
+    assert 'const MusicPage = defineAsyncComponent(() => import("../pages/MusicPage.vue"));' in shell
+    assert "const musicMounted = ref(false);" in shell
+    assert "watch(" in shell
+    assert "musicMounted.value = true;" in shell
+    assert '<MusicPage\n        v-if="musicMounted"' in shell
+    assert 'v-show="activeNav === \'music\'"' in shell
+    assert ':active="activeNav === \'music\'"' not in shell
+    assert '<RouterView v-slot="{ Component }">' in shell
+    assert '<component :is="Component" v-if="activeNav !== \'music\'" />' in shell
+    assert "<KeepAlive" not in shell
+
+
+def test_music_navigation_uses_butterchurn_target_without_equalizer_animation() -> None:
+    shell = read_source("app/AppShell.vue")
+
+    assert 'import { usePlayerStore } from "../stores/player";' not in shell
+    assert "const player = usePlayerStore();" not in shell
+    assert 'id="music-nav-butterchurn-target"' in shell
+    assert 'class="music-nav-visualizer-target"' in shell
+    assert 'class="creator-nav-content"' in shell
+    assert "nav-playing-indicator" not in shell
+    assert "@keyframes nav-playing-level" not in shell
+
+
+def test_persistent_music_page_keeps_navigation_visualizer_bound_to_playback() -> None:
+    music = read_source("pages/MusicPage.vue")
+
+    assert ':playing="player.isPlaying"' in music
+    assert "props.active" not in music
+
+
 def test_music_page_mounts_butterchurn_backdrop_from_audio_player_element() -> None:
     package_json = read_frontend_file("package.json")
     music = read_source("pages/MusicPage.vue")
+    shell = read_source("app/AppShell.vue")
     player = read_source("components/YtsAudioPlayer.vue")
 
     assert '"butterchurn"' in package_json
@@ -171,11 +235,18 @@ def test_music_page_mounts_butterchurn_backdrop_from_audio_player_element() -> N
     assert ':audio-element="audioElement"' in music
     assert ':playing="player.isPlaying"' in music
     assert '@visualizer-error="handleVisualizerError"' in music
-    assert "class=\"butterchurn-backdrop\"" in music
-    assert music.index("<MusicButterchurnBackdrop") < music.index('<article class="player-stage')
+    assert '<Teleport to="#music-nav-butterchurn-target">' in music
+    assert 'class="music-nav-butterchurn"' in music
+    player_block = music.split('<YtsAudioPlayer', 1)[1].split('</YtsAudioPlayer>', 1)[0]
+    assert '<MusicButterchurnBackdrop' not in player_block
+    assert music.index('<MusicButterchurnBackdrop') < music.index('<article class="player-stage')
+    assert 'id="music-nav-butterchurn-target"' in shell
     assert '@audio-ready="handleAudioReady"' in music
     assert '"audio-ready"' in player
     assert 'emit("audio-ready", requireAudio());' in player
+    player_template = player.split("<template>", 1)[1].split("</template>", 1)[0]
+    assert 'class="control-visualizer-zone"' not in player_template
+    assert '<slot></slot>' not in player_template
 
 
 def test_butterchurn_backdrop_uses_explicit_webgl_lifecycle_without_fallback() -> None:

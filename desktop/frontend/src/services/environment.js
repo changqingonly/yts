@@ -21,9 +21,20 @@ export function assertApiTarget(target) {
   return target;
 }
 
+export function isTauriRuntime() {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 export function selectedApiTarget() {
   const stored = localStorage.getItem(ENVIRONMENT_STORAGE_KEY) || "";
   return stored ? assertApiTarget(stored) : DEFAULT_ENVIRONMENT_TARGET;
+}
+
+/** 打包态(Tauri 壳内)首次启动且无用户已选偏好时,把默认目标预置为本地推理。 */
+export function ensureDesktopDefaultTarget() {
+  if (isTauriRuntime() && !localStorage.getItem(ENVIRONMENT_STORAGE_KEY)) {
+    setSelectedApiTarget("local");
+  }
 }
 
 export function setSelectedApiTarget(target) {

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Header, Request, Response
+from fastapi import APIRouter, Body, Cookie, Header, Request, Response
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
@@ -27,6 +28,26 @@ class LoginRequest(BaseModel):
     account: str
     key_id: str
     password_ciphertext_b64: str
+
+
+class RefreshRequest(BaseModel):
+    device_id: str | None = None
+    refresh_token: str | None = None
+
+
+def _is_desktop_client(request: Request) -> bool:
+    return request.headers.get("x-yts-client") == "desktop"
+
+
+def _augment_desktop_response(
+    response: dict, issued: auth_domain.IssuedSession, request: Request
+) -> dict:
+    """打包态(Tauri webview)跨源 cookie 无法在重启后存活(WebKit ITP),
+    desktop 客户端需要在响应体里拿到 refresh_token/device_id 自行持久化(Keychain/密码保险库)。
+    Web 客户端响应保持原样,不受影响。"""
+    if not _is_desktop_client(request):
+        return response
+    return {**response, "refresh_token": issued.refresh_token, "device_id": issued.device_id}
 
 
 @router.get("/register_key")
@@ -73,7 +94,7 @@ async def register(
         await session.rollback()
         raise AppError.bad_request("registration_unavailable", "registration unavailable") from exc
     _set_session_cookies(response, issued)
-    return issued.response
+    return _augment_desktop_response(issued.response, issued, request)
 
 
 @router.post("/login")
@@ -97,27 +118,31 @@ async def login(
     )
     await session.commit()
     _set_session_cookies(response, issued)
-    return issued.response
+    return _augment_desktop_response(issued.response, issued, request)
 
 
 @router.post("/refresh")
 async def refresh(
     response: Response,
     session: DbSession,
+    request: Request,
+    body: Annotated[RefreshRequest | None, Body()] = None,
     refresh_token: str | None = Cookie(default=None, alias="yts-refresh"),
     device_id: str | None = Cookie(default=None, alias="yts-device"),
     request_id: str | None = Header(default=None, alias="X-Refresh-Request-ID"),
 ) -> dict:
-    auth_limiter.check("refresh", device_id or "missing", limit=20, window_seconds=60)
+    resolved_refresh_token = refresh_token or (body.refresh_token if body else None) or ""
+    resolved_device_id = device_id or (body.device_id if body else None) or ""
+    auth_limiter.check("refresh", resolved_device_id or "missing", limit=20, window_seconds=60)
     issued = await auth_domain.refresh_session(
         session,
-        refresh_token=refresh_token or "",
-        device_id=device_id or "",
+        refresh_token=resolved_refresh_token,
+        device_id=resolved_device_id,
         request_id=request_id or "",
     )
     await session.commit()
     _set_session_cookies(response, issued)
-    return issued.response
+    return _augment_desktop_response(issued.response, issued, request)
 
 
 @router.get("/me")

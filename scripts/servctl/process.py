@@ -37,6 +37,21 @@ class FrontendProcessConfig:
     pid_path: Path
     log_path: Path
 
+def _local_gateway_pid_path(root: Path) -> Path:
+    return root / RUN_DIR_NAME / "yts-gateway-local.pid"
+
+def _spawn_local_gateway(root: Path, profile: str) -> int:
+    from .config import _command_env
+    env = _command_env(root, profile)
+    log = root / RUN_DIR_NAME / "yts-gateway-local.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log_file = log.open("ab")
+    process = subprocess.Popen([str(root / "scripts" / "dev_gateway.sh")], cwd=root, env=env,
+                               stdin=subprocess.DEVNULL, stdout=log_file, stderr=subprocess.STDOUT,
+                               start_new_session=True)
+    _write_pid(_local_gateway_pid_path(root), process.pid)
+    return process.pid
+
 
 def spawn_server_process(config: ServerProcessConfig) -> int:
     config.pid_path.parent.mkdir(parents=True, exist_ok=True)
@@ -205,9 +220,7 @@ def _stop_pid_file_process(
     is_process_running_func = is_process_running_func or _process_exists
     pid = _read_pid(pid_path)
     if pid is None:
-        raise ServctlError(
-            f"{process_name} is not running for profile {profile}; missing pid file {pid_path}"
-        )
+        return
     if not is_process_running_func(pid):
         pid_path.unlink()
         return

@@ -54,6 +54,45 @@ def test_app_shell_router_and_default_music_route_are_defined() -> None:
         assert label in shell
 
 
+def test_main_mounts_immediately_without_a_desktop_backend_health_gate() -> None:
+    main = read_source("main.js")
+
+    assert 'import { ensureDesktopDefaultTarget } from "./services/environment";' in main
+    assert "ensureDesktopDefaultTarget();" in main
+    assert 'createApp(App).use(createPinia()).use(router).mount("#app");' in main
+    for token in [
+        "waitForDesktopBackend",
+        "desktop-startup-gate",
+        "DESKTOP_HEALTH_POLL_TIMEOUT_MS",
+        "本地服务启动超时",
+    ]:
+        assert token not in main
+
+
+def test_environment_store_lazily_starts_local_backend_with_bounded_retry() -> None:
+    env_store = read_source("stores/environment.js")
+
+    for token in [
+        'import { startGateway, startSidecar } from "../services/desktop";',
+        'const shouldRetry = requestTarget === "local" && isTauriRuntime();',
+        "void startSidecar().catch(() => {});",
+        "void startGateway().catch(() => {});",
+        "LOCAL_HEALTH_RETRY_TIMEOUT_MS",
+        "LOCAL_HEALTH_RETRY_INTERVAL_MS",
+    ]:
+        assert token in env_store
+
+
+def test_music_and_assets_pages_auto_retry_when_local_backend_recovers() -> None:
+    for relative_path, load_fn in [
+        ("pages/MusicPage.vue", "refreshPlaylist"),
+        ("pages/AssetsPage.vue", "loadAssets"),
+    ]:
+        source = read_source(relative_path)
+        assert "() => environment.targetHealth(environment.target)," in source
+        assert f'if (status === "online" && error.value) await {load_fn}();' in source
+
+
 def test_app_shell_sidebar_is_compact_dark_navigation_without_brand_or_user_chrome() -> None:
     shell = read_source("app/AppShell.vue")
 
@@ -97,9 +136,95 @@ def test_app_shell_redirects_to_login_when_auth_expires() -> None:
 def test_auth_store_only_absorbs_unauthorized_hydration_errors() -> None:
     auth = read_source("stores/auth.js")
 
-    assert "if (error?.status !== 401) throw error;" in auth
+    # 401(未登录)和网络层失败(云端不可达,error 没有 status)都按"静默回落到登录页"处理——
+    # 否则打包态一开机云端连不上,会像本地服务没起来时那样把整个应用卡死在空白页。
+    assert "if (error?.status && error.status !== 401) throw error;" in auth
     assert "this.clearSession();" in auth
     assert "onInvalid: () => this.clearSession()" in auth
+
+
+def test_auth_store_restores_desktop_session_from_keychain_before_refresh() -> None:
+    auth = read_source("stores/auth.js")
+
+    for token in [
+        'import { isTauriRuntime } from "../services/environment";',
+        "async persistDesktopCredentials()",
+        "async enableVaultPersistence(passphrase)",
+        "async restoreDesktopSession()",
+        "async unlockVault(passphrase)",
+        "async clearDesktopPersistence()",
+        "if (isTauriRuntime()) await this.restoreDesktopSession();",
+        "this.persistenceMode = \"unavailable\";",
+        "this.persistenceMode = \"keychain\";",
+        "this.persistenceMode = \"vault\";",
+    ]:
+        assert token in auth
+
+    # router.beforeEach(含 auth.hydrate())在 app.use(router) 时立即触发,desktop 会话必须在
+    # 第一次 refresh() 之前就从 Keychain 恢复,否则会用一个没有凭据的 cookie-only refresh 顶替。
+    assert auth.index("if (isTauriRuntime()) await this.restoreDesktopSession();") < auth.index(
+        "await this.refresh();"
+    )
+
+
+def test_auth_service_always_targets_cloud_regardless_of_generation_target() -> None:
+    auth = read_source("services/auth.js")
+
+    assert 'const AUTH_TARGET = "cloud";' in auth
+    for token in [
+        'requestJsonOverHttp("/api/auth/register_key", { auth: false, target: AUTH_TARGET });',
+        'requestJsonOverHttp("/api/auth/login_key", { auth: false, target: AUTH_TARGET });',
+        "target: AUTH_TARGET,",
+    ]:
+        assert token in auth
+    assert auth.count("target: AUTH_TARGET") >= 5
+
+
+def test_transport_tags_desktop_requests_for_backend_gating() -> None:
+    transport = read_source("services/transport.js")
+
+    assert "isTauriRuntime," in transport
+    assert '...(isTauriRuntime() ? { "X-Yts-Client": "desktop" } : {}),' in transport
+
+
+def test_desktop_service_exposes_keychain_and_vault_commands() -> None:
+    desktop = read_source("services/desktop.js")
+
+    for token in [
+        'export function keychainLoad() {\n  requireTauri();\n  return invoke("keychain_load");',
+        'return invoke("keychain_store", { deviceId, refreshToken });',
+        'return invoke("keychain_clear");',
+        'return invoke("vault_exists");',
+        'return invoke("vault_store", { passphrase, deviceId, refreshToken });',
+        'return invoke("vault_unlock", { passphrase });',
+        'return invoke("vault_clear");',
+    ]:
+        assert token in desktop
+
+
+def test_settings_page_offers_local_password_when_keychain_unavailable() -> None:
+    settings = read_source("pages/SettingsPage.vue")
+
+    for token in [
+        "auth.persistenceMode === 'unavailable'",
+        "async function saveVaultPassphrase()",
+        "auth.enableVaultPersistence(vaultPassphrase.value)",
+    ]:
+        assert token in settings
+
+
+def test_login_page_offers_vault_unlock_when_needed() -> None:
+    login = read_source("pages/LoginPage.vue")
+
+    for token in [
+        "const showVaultUnlock = ref(auth.needsVaultUnlock);",
+        "const forceAccountLogin = ref(false);",
+        "async function submitVaultUnlock()",
+        "await auth.unlockVault(vaultPassphrase.value);",
+        '"密码错误，请重试"',
+        '@click="forceAccountLogin = true"',
+    ]:
+        assert token in login
 
 
 def test_frontend_deep_sea_theme_tokens_are_defined() -> None:
@@ -180,10 +305,10 @@ def test_frontend_logo_uses_blue_green_gradient_mark() -> None:
     assert ".brand-mark svg" in creation
     assert "stroke: url(#yts-brand-gradient);" in creation
     assert "filter: drop-shadow(0 0 7px var(--color-brand-glow));" in creation
-    assert 'aria-label="深海工作室"' in favicon
+    assert 'aria-label="乐兔工作室"' in favicon
     assert "brand-spark-large" in favicon
     assert "brand-spark-small" in favicon
-    assert "<title>深海工作室</title>" in index
+    assert "<title>乐兔工作室</title>" in index
 
 
 def test_app_shell_settings_navigation_lives_at_sidebar_bottom_without_credit_card() -> None:
@@ -211,6 +336,108 @@ def test_app_shell_settings_navigation_lives_at_sidebar_bottom_without_credit_ca
     assert "歌词 {{" not in shell
 
 
+def test_settings_page_uses_compact_in_page_navigation_and_preserves_control_flow() -> None:
+    settings = read_source("pages/SettingsPage.vue")
+    template = settings.split("<template>", 1)[1].split("</template>", 1)[0]
+
+    for token in [
+        'const activeSection = ref("general");',
+        'key: "general"',
+        'key: "usage"',
+        'key: "account"',
+        'aria-label="设置分类"',
+        ':aria-current="activeSection === item.key ? \'page\' : undefined"',
+        'role="alert"',
+        'class="settings-content"',
+        'class="usage-progress"',
+        '@change="saveModelPreference"',
+        'to="/profile/setup"',
+        '@click="logout"',
+    ]:
+        assert token in settings
+
+    assert 'v-if="activeSection === \'general\'"' in template
+    assert 'v-else-if="activeSection === \'usage\'"' in template
+    assert "v-else" in template
+    assert "grid-template-columns: 168px minmax(0, 1fr);" in settings
+    assert "grid-template-columns: 1fr;" in settings
+    assert "linear-gradient" not in settings
+    assert "border-radius: 999px" not in settings
+    assert "fetchCreditBalance()" in settings
+    assert "fetchCreditLedger()" in settings
+    assert "fetchDailyUsage()" in settings
+    assert "await auth.logoutAction();" in settings
+    assert 'router.push({ name: "login" });' in settings
+
+
+def test_settings_page_reads_section_query_without_invalid_fallback() -> None:
+    settings = read_source("pages/SettingsPage.vue")
+
+    assert 'import { RouterLink, useRoute, useRouter } from "vue-router";' in settings
+    assert "const route = useRoute();" in settings
+    assert "function sectionFromQuery(value)" in settings
+    assert 'return "general";' in settings
+    assert 'throw new Error(`未知设置分类: ${String(value)}`);' in settings
+    assert "watch(" in settings
+    assert "() => route.query.section" in settings
+    assert "activeSection.value = sectionFromQuery(section);" in settings
+    assert "error.value = err instanceof Error ? err.message : String(err);" in settings
+
+
+def test_settings_surfaces_keep_grid_rows_top_aligned_across_tabs() -> None:
+    settings = read_source("pages/SettingsPage.vue")
+    profile = read_source("pages/ProfileSetupPage.vue")
+    settings_page_rule = settings.split(".settings-page {", 1)[1].split("}", 1)[0]
+    profile_page_rule = profile.split(".profile-page {", 1)[1].split("}", 1)[0]
+
+    assert "align-content: start;" in settings_page_rule
+    assert "align-content: start;" in profile_page_rule
+
+
+def test_profile_settings_integrates_navigation_form_and_explicit_async_errors() -> None:
+    profile = read_source("pages/ProfileSetupPage.vue")
+
+    for token in [
+        'to="/settings"',
+        ':to="{ path: \'/settings\', query: { section: \'usage\' } }"',
+        'aria-current="page"',
+        'form="profile-form"',
+        'id="profile-form"',
+        'role="alert"',
+        'role="status"',
+        "const profileLoading = ref(true);",
+        "const profileReady = ref(false);",
+        "const avatarUploading = ref(false);",
+        "profileReady.value = true;",
+        "!profileReady.value",
+        "profileLoading.value = false;",
+        "avatarUploading.value = true;",
+        "avatarUploading.value = false;",
+        "await fetchProfile();",
+        "await uploadAvatar(dataUrl);",
+        "await updateProfile({",
+    ]:
+        assert token in profile
+
+
+def test_profile_avatar_preview_uses_current_api_origin() -> None:
+    profile = read_source("pages/ProfileSetupPage.vue")
+    transport = read_source("services/transport.js")
+
+    assert "export function apiResourceUrl(path" in transport
+    assert "new URL(path, `${apiBase(target)}/`).toString()" in transport
+    assert 'import { apiResourceUrl } from "../services/transport";' in profile
+    assert "const avatarPreviewUrl = computed(() =>" in profile
+    assert 'v-if="avatarPreviewUrl" :src="avatarPreviewUrl"' in profile
+
+    assert profile.count("catch (err)") >= 3
+    assert profile.count("error.value = err instanceof Error ? err.message : String(err);") >= 3
+    assert "grid-template-columns: 168px minmax(0, 1fr);" in profile
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in profile
+    assert "grid-template-columns: 1fr;" in profile
+    assert "linear-gradient" not in profile
+
+
 def test_app_shell_api_target_switch_lives_above_settings_navigation() -> None:
     shell = read_source("app/AppShell.vue")
     bottom_nav_block = shell.split('<nav class="creator-bottom-nav"', 1)[1].split("</nav>", 1)[0]
@@ -234,6 +461,15 @@ def test_app_shell_api_target_switch_lives_above_settings_navigation() -> None:
     assert bottom_nav_block.index('class="global-target-switch"') < bottom_nav_block.index(
         ':to="settingsNavItem.to"'
     )
+
+
+def test_app_shell_api_target_switch_only_renders_on_desktop() -> None:
+    shell = read_source("app/AppShell.vue")
+    bottom_nav_block = shell.split('<nav class="creator-bottom-nav"', 1)[1].split("</nav>", 1)[0]
+
+    # Web 版只有云端模式,本地/云端切换只对 Desktop(Tauri)有意义。
+    assert 'import { isTauriRuntime } from "../services/environment";' in shell
+    assert 'v-if="isTauriRuntime()" class="global-target-switch"' in bottom_nav_block
 
 
 def test_app_shell_api_target_switch_only_highlights_selected_button() -> None:
@@ -438,6 +674,10 @@ def test_music_import_history_rows_match_playlist_and_history_item_style() -> No
     import_icon_rule = drawer.split(".history-icon {", 1)[1].split("}", 1)[0]
     import_title_rule = drawer.split(".history-row strong {", 1)[1].split("}", 1)[0]
     import_meta_rule = drawer.split(".history-row small {", 1)[1].split("}", 1)[0]
+    task_row_rule = drawer.split(".task-row {", 1)[1].split("}", 1)[0]
+    task_icon_rule = drawer.split(".task-icon {", 1)[1].split("}", 1)[0]
+    task_title_rule = drawer.split(".task-title {", 1)[1].split("}", 1)[0]
+    task_state_rule = drawer.split(".task-state {", 1)[1].split("}", 1)[0]
 
     assert '<span class="history-icon">' in history_row_block
     assert "{{ itemTitle(item) }}" in history_row_block
@@ -461,6 +701,7 @@ def test_music_import_history_rows_match_playlist_and_history_item_style() -> No
     ]:
         assert token in playlist_row_rule
         assert token in import_row_rule
+        assert token in task_row_rule
 
     assert "color: var(--color-muted);" in import_icon_rule
     assert "font-size: 11px;" in import_icon_rule
@@ -471,6 +712,26 @@ def test_music_import_history_rows_match_playlist_and_history_item_style() -> No
     assert "font-size: 13px;" not in import_title_rule
     assert "justify-self: end;" in import_meta_rule
     assert "line-height: 1;" in import_meta_rule
+    for token in [
+        "color: var(--color-muted);",
+        "display: inline-flex;",
+        "font-size: 11px;",
+        "line-height: 1;",
+    ]:
+        assert token in task_icon_rule
+    for token in [
+        "color: var(--color-heading);",
+        "font-size: 12px;",
+        "line-height: 1.1;",
+        "overflow: hidden;",
+        "text-overflow: ellipsis;",
+        "white-space: nowrap;",
+    ]:
+        assert token in task_title_rule
+    assert "justify-self: end;" in task_state_rule
+    assert "min-width: 0;" in task_state_rule
+    assert 'class="task-state"' in template
+    assert "task.error || statusLabels[task.status]" in template
 
 
 def test_music_page_uses_import_drawer_and_meta_song_tracks() -> None:
@@ -793,9 +1054,119 @@ def test_creation_page_uses_dark_theme_instead_of_broad_light_surfaces() -> None
 def test_creation_page_uses_deep_sea_studio_branding() -> None:
     source = read_source("pages/CreationPage.vue")
 
-    assert "深海工作室" in source
+    assert "乐兔工作室" in source
     assert "制作流程" in source
     assert "YTS Studio" not in source
+
+
+def test_creation_page_prioritizes_creator_session_feed() -> None:
+    source = read_source("pages/CreationPage.vue")
+    template = source.split("<template>", 1)[1].split("</template>", 1)[0]
+
+    for token in [
+        'class="creation-session-sidebar"',
+        'class="creation-feed"',
+        'class="creator-composer"',
+        'class="creator-progress"',
+        'class="completed-work"',
+        'const pageMode = ref("creator");',
+        "const creatorProgressStages = computed(() =>",
+        '@click="startNewCreation"',
+        '@click="applyInspiration(item.prompt)"',
+        ':disabled="!prompt.trim() || isWorkflowBusy"',
+        'const prompt = ref("");',
+    ]:
+        assert token in source
+
+    creator = template.split('v-if="pageMode === \'creator\'"', 1)[1].split(
+        'v-else class="advanced-workspace"', 1
+    )[0]
+    for technical_token in ["root id", "span id", "LLM 输入", "配置 JSON", "VueFlow"]:
+        assert technical_token not in creator
+
+
+def test_creation_page_uses_compose_first_empty_state_without_duplicate_navigation() -> None:
+    source = read_source("pages/CreationPage.vue")
+    template = source.split("<template>", 1)[1].split("</template>", 1)[0]
+    creator = template.split('v-if="pageMode === \'creator\'"', 1)[1].split(
+        'v-else class="advanced-workspace"', 1
+    )[0]
+
+    for token in [
+        ":class=\"['creator-conversation', { 'is-empty': !hasRunStarted, 'is-completed': Boolean(finalDelivery) }]\"",
+        'v-if="!hasRunStarted" class="empty-composer-intro"',
+        'v-if="hasRunStarted" class="creation-feed"',
+        ':class="[\'composer-dock\', { \'is-empty\': !hasRunStarted }]"',
+        '<span class="composer-mode" title="当前创作模式">',
+    ]:
+        assert token in creator
+
+    assert 'class="creator-history-button"' not in creator
+    assert "LYRICS MANUSCRIPT" not in creator
+    assert "ChevronDown" not in creator
+    inspirations = source.split("const inspirationItems = [", 1)[1].split("];", 1)[0]
+    assert inspirations.count("prompt: ") == 3
+
+    creator_mode_rule = source.split(".creator-mode {", 1)[1].split("}", 1)[0]
+    session_sidebar_rule = source.split(".creation-session-sidebar {", 1)[1].split("}", 1)[0]
+    composer_rule = source.split(".creator-composer {", 1)[1].split("}", 1)[0]
+    assert "grid-template-columns: 208px minmax(0, 1fr);" in creator_mode_rule
+    assert "radial-gradient" not in creator_mode_rule
+    assert "display: flex;" in session_sidebar_rule
+    assert "flex-direction: column;" in session_sidebar_rule
+    session_list_rule = source.split(".session-list {", 1)[1].split("}", 1)[0]
+    assert "flex: 1 1 auto;" in session_list_rule
+    assert "max-width: 720px;" in composer_rule
+
+
+def test_creation_page_maps_real_nodes_to_five_creator_progress_stages() -> None:
+    source = read_source("pages/CreationPage.vue")
+
+    for stage_id in ["understand", "compose", "write", "polish", "complete"]:
+        assert f'id: "{stage_id}"' in source
+    assert "nodeStatus(nodeId)" in source
+    assert "`stage-${stage.status}`" in source
+    for status in ["active", "completed", "waiting"]:
+        assert f'stageStatus = "{status}"' in source
+
+
+def test_creation_page_focuses_running_state_without_duplicate_status_dock() -> None:
+    source = read_source("pages/CreationPage.vue")
+    template = source.split("<template>", 1)[1].split("</template>", 1)[0]
+    creator = template.split('v-if="pageMode === \'creator\'"', 1)[1].split(
+        'v-else class="advanced-workspace"', 1
+    )[0]
+
+    for token in [
+        'class="manuscript-quote"',
+        'v-if="activeCreatorStage" class="progress-summary"',
+        "{{ activeCreatorStageNumber }}/5",
+        "v-if=\"!hasRunStarted && !isWorkflowExecuting\" :class=\"['composer-dock'",
+        'aria-live="polite"',
+        '@click="startNewCreation"',
+    ]:
+        assert token in creator
+
+    assert "const activeCreatorStageNumber = computed(() =>" in source
+    assert "completedCount }}/{{ draftTemplate?.nodes.length" not in creator
+    assert 'class="creator-composer"' in creator.split(
+        'v-if="!hasRunStarted && !isWorkflowExecuting"', 1
+    )[1]
+    assert 'class="run-status-dock"' not in creator
+    assert 'class="run-status-content"' not in creator
+
+
+def test_creation_page_collapses_creator_sidebar_and_drawer_on_narrow_screens() -> None:
+    source = read_source("pages/CreationPage.vue")
+    responsive = source.split("@media (max-width: 900px) {", 1)[1].split(
+        "@media (prefers-reduced-motion", 1
+    )[0]
+
+    assert ".creation-session-sidebar" in responsive
+    assert "display: none;" in responsive
+    assert "grid-template-columns: minmax(0, 1fr);" in source
+    assert ".completed-work-head" in responsive
+    assert "flex-direction: column;" in source.split(".completed-work-head {", 2)[2].split("}", 1)[0]
 
 
 def test_creation_page_shows_one_concise_user_facing_error_message() -> None:
@@ -830,19 +1201,83 @@ def test_creation_page_exposes_history_drawer_for_replaying_workflow_trace() -> 
     assert "historyItems" in source
     assert "historyLoading" in source
     assert "listWorkflowHistory(workflowId" in source
-    assert "getWorkflowTrace(workflowId, item.thread_id" in source
+    assert "getWorkflowRunResult(workflowId, item.thread_id" in source
     assert "function selectHistoryItem(item)" in source
     assert "threadId.value = item.thread_id;" in source
     assert "prompt.value = item.user_prompt;" in source
-    assert "trace.value = selectedTrace;" in source
+    assert "trace.value = selectedResult.trace;" in source
+    assert "result.value = selectedResult.output;" in source
     assert "runResult.value = {" in source
-    assert "waitingFromTrace(selectedTrace)" in source
-    assert "focusNodeIdFromTrace(selectedTrace)" in source
+    assert "focusNodeIdFromTrace(selectedResult.trace)" in source
     assert "hasArtifactValue(node.artifact_preview)" in source
     assert "history-list" in history_drawer_block
     assert "grid-template-columns: minmax(0, 1fr) 96px;" in history_list_rule
     assert "/api/workflows/${workflowId}/threads/history" in workflows
     assert "/api/workflows/${workflowId}/threads/${encodeURIComponent(threadId)}/trace" in workflows
+    assert "/api/workflows/${workflowId}/threads/${encodeURIComponent(threadId)}/result" in workflows
+
+
+def test_creation_page_restores_completed_history_result_inline() -> None:
+    source = read_source("pages/CreationPage.vue")
+    workflows = read_source("services/workflows.js")
+    history_selection = source.split("async function selectHistoryItem(item)", 1)[1].split(
+        "async function saveFinalDeliveryToAssets", 1
+    )[0]
+
+    assert "getWorkflowRunResult" in source
+    assert "getWorkflowRunResult(workflowId, item.thread_id" in history_selection
+    assert "result.value = selectedResult.output;" in history_selection
+    assert "trace.value = selectedResult.trace;" in history_selection
+    assert "runResult.value = {" in history_selection
+    assert "...selectedResult" in history_selection
+    assert "actions: []" in history_selection
+    assert "resultDrawerOpen" not in history_selection
+    assert "/api/workflows/${workflowId}/threads/${encodeURIComponent(threadId)}/result" in workflows
+
+
+def test_creation_page_renders_completed_work_as_primary_content_without_duplicate_completion_ui() -> None:
+    source = read_source("pages/CreationPage.vue")
+    template = source.split("<template>", 1)[1].split("</template>", 1)[0]
+    creator = template.split('v-if="pageMode === \'creator\'"', 1)[1].split(
+        'v-else class="advanced-workspace"', 1
+    )[0]
+
+    assert 'v-if="finalDelivery" class="completed-work"' in creator
+    completed_work = creator.split('v-if="finalDelivery" class="completed-work"', 1)[1].split(
+        "</article>", 1
+    )[0]
+    for token in [
+        "{{ finalDelivery.title }}",
+        "{{ finalDelivery.style || \"暂无 Style Prompt\" }}",
+        "{{ finalDelivery.lyrics || \"暂无歌词\" }}",
+        '@click="saveFinalDeliveryToAssets"',
+    ]:
+        assert token in completed_work
+
+    assert 'v-if="!finalDelivery" class="creator-progress"' in creator
+    assert 'class="result-entry"' not in creator
+    assert 'class="run-status-content completed"' not in creator
+    assert 'class="run-status-dock"' not in creator
+
+
+def test_creation_page_completed_work_removes_duplicate_actions_and_copies_delivery_fields() -> None:
+    source = read_source("pages/CreationPage.vue")
+    template = source.split("<template>", 1)[1].split("</template>", 1)[0]
+    creator = template.split('v-if="pageMode === \'creator\'"', 1)[1].split(
+        'v-else class="advanced-workspace"', 1
+    )[0]
+    completed_work = creator.split('v-if="finalDelivery" class="completed-work"', 1)[1].split(
+        "</article>", 1
+    )[0]
+
+    assert '<header v-if="!finalDelivery" class="creator-header">' in creator
+    assert '@click="startNewCreation"' not in completed_work
+    assert completed_work.count('@click="copyDeliveryText(') == 2
+    assert 'title="复制 Style Prompt"' in completed_work
+    assert 'title="复制歌词"' in completed_work
+    assert 'navigator.clipboard.writeText(text)' in source
+    assert 'const copyMessage = ref("");' in source
+    assert 'role="status"' in completed_work
 
 
 def test_creation_page_history_replay_does_not_lock_global_api_target_as_live_waiting() -> None:
@@ -864,22 +1299,71 @@ def test_auth_pages_include_yuetools_register_login_fields() -> None:
     login = read_source("pages/LoginPage.vue")
     register = read_source("pages/RegisterPage.vue")
 
-    assert "登录深海工作室" in login
-    assert "注册深海工作室" in register
+    assert "登录乐兔工作室" in login
+    assert "注册乐兔工作室" in register
     for old_brand in ["YTS Studio", "Creator OS"]:
         assert old_brand not in login
         assert old_brand not in register
-
     for text in ["账号", "密码", "登录"]:
         assert text in login
     assert "loginUser" in login
     assert "setSession" in login
-
     for text in ["邮箱", "密码", "确认密码", "同意", "注册"]:
         assert text in register
     assert "registerUser" in register
     assert "agreementAccepted" in register
 
+
+def test_login_page_uses_music_studio_composition_instead_of_centered_auth_card() -> None:
+    login = read_source("pages/LoginPage.vue")
+
+    for token in [
+        'class="login-stage"',
+        'class="login-brand"',
+        'class="record-visual"',
+        'src="/favicon.svg"',
+        'class="login-form-area"',
+        'class="input-shell"',
+        'class="password-toggle"',
+        'const showPassword = ref(false);',
+        ':type="showPassword ? \'text\' : \'password\'"',
+        ':aria-label="showPassword ? \'隐藏密码\' : \'显示密码\'"',
+    ]:
+        assert token in login
+
+    assert 'class="auth-panel"' not in login
+    assert "grid-template-columns: minmax(0, 1.18fr) minmax(420px, 0.82fr);" in login
+    assert "@media (max-width: 860px)" in login
+    assert "grid-template-columns: minmax(0, 1fr);" in login
+    assert "linear-gradient" not in login
+    assert "border-radius: 999px" not in login
+
+
+def test_register_page_matches_login_music_studio_composition() -> None:
+    register = read_source("pages/RegisterPage.vue")
+
+    for token in [
+        'class="register-stage"',
+        'class="register-brand"',
+        'class="record-visual"',
+        'src="/favicon.svg"',
+        'class="register-form-area"',
+        'class="input-shell"',
+        'const showPassword = ref(false);',
+        'const showConfirmPassword = ref(false);',
+        ':type="showPassword ? \'text\' : \'password\'"',
+        ':type="showConfirmPassword ? \'text\' : \'password\'"',
+        'class="agreement-row"',
+        'role="alert"',
+    ]:
+        assert token in register
+
+    assert 'class="auth-panel"' not in register
+    assert "grid-template-columns: minmax(0, 1.18fr) minmax(420px, 0.82fr);" in register
+    assert "@media (max-width: 860px)" in register
+    assert "grid-template-columns: minmax(0, 1fr);" in register
+    assert "linear-gradient" not in register
+    assert "border-radius: 999px" not in register
 
 def test_profile_and_settings_pages_cover_user_and_credit_surfaces() -> None:
     profile = read_source("pages/ProfileSetupPage.vue")
@@ -890,22 +1374,24 @@ def test_profile_and_settings_pages_cover_user_and_credit_surfaces() -> None:
     assert "uploadAvatar" in profile
     assert "updateProfile" in profile
 
-    for text in ["积分流水", "每日额度", "模型偏好", "歌词生成", "图片生成", "音频特效"]:
+    for text in ["最近积分变动", "今日额度", "默认模型通道", "歌词生成", "图片生成", "音频特效"]:
         assert text in settings
     assert "fetchCreditLedger" in settings
     assert "fetchDailyUsage" in settings
 
 
-def test_settings_page_exposes_logout_action_in_header() -> None:
+def test_settings_page_exposes_logout_action_in_account_section() -> None:
     settings = read_source("pages/SettingsPage.vue")
+    template = settings.split("<template>", 1)[1].split("</template>", 1)[0]
+    account_section = template.split("<section v-else", 1)[1]
 
     assert "退出登录" in settings
     assert "LogOut" in settings
     assert "useAuthStore" in settings
     assert "auth.logoutAction()" in settings
     assert 'router.push({ name: "login" })' in settings
-    assert "settings-actions" in settings
-    assert "logout-button" in settings
+    assert 'class="danger-zone"' in account_section
+    assert 'class="logout-button"' in account_section
 
 
 def test_assets_page_exposes_song_inspiration_gallery_and_audio_tabs() -> None:

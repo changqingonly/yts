@@ -9,7 +9,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR="$ROOT/desktop/vendor"
 SRC="$VENDOR/llama.cpp"
 MODELS="$VENDOR/llm-models"
-ENVFILE="$VENDOR/llamacpp.env"
 mkdir -p "$VENDOR" "$MODELS"
 
 LLM_MODEL_REPO="${LLM_MODEL_REPO:-bartowski/Qwen2.5-7B-Instruct-GGUF}"
@@ -38,14 +37,7 @@ else
     "https://huggingface.co/${LLM_MODEL_REPO}/resolve/main/${LLM_MODEL_FILE}?download=true"
 fi
 
-# ---- 3) 生成 producer 配置(网关按 YTS_LLAMA_CMD spawn 常驻 llama-server)----
-cat > "$ENVFILE" <<EOF
-# 由 scripts/build_llamacpp.sh 自动生成。dev_gateway.sh 会自动 source 本文件。
-export YTS_LLAMA_BASE_URL='http://127.0.0.1:${LLM_PORT}'
-export YTS_LLAMA_CMD='${LLAMA_BIN} -m ${dst} --host 127.0.0.1 --port ${LLM_PORT} -c ${LLM_CTX} -ngl 99 --log-disable'
-EOF
-
 echo ""
-echo "✅ 完成。文本已就绪(llama.cpp,配置写入 $ENVFILE)。"
-echo "   启动:bash scripts/dev_gateway.sh   # 网关自动 spawn 常驻 llama-server 并代理"
+echo "✅ 完成。文本已就绪(llama.cpp)。"
+echo "   启动:./servctl start --profile local"
 echo "   换模型:设 LLM_MODEL_REPO/LLM_MODEL_FILE 后重跑(如 Qwen3-8B / Llama3.x)。"

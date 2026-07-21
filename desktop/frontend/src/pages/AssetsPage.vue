@@ -3,6 +3,9 @@ import { computed, onMounted, ref, watch } from "vue";
 import { Clipboard, Image, Music4, Sparkles, X } from "@lucide/vue";
 import { fetchDailyUsage } from "../services/credits";
 import { listSongs } from "../services/songs";
+import { useEnvironmentStore } from "../stores/environment";
+
+const environment = useEnvironmentStore();
 
 const activeTab = ref("songs");
 const songs = ref([]);
@@ -96,8 +99,12 @@ const selectedAsset = computed(() => {
 
 async function loadAssets() {
   error.value = "";
-  songs.value = await listSongs();
-  dailyUsage.value = await fetchDailyUsage();
+  try {
+    songs.value = await listSongs();
+    dailyUsage.value = await fetchDailyUsage();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
 }
 
 function formatLyric(lyric) {
@@ -155,6 +162,15 @@ async function copyAssetText(label, text) {
 watch(activeTab, () => {
   selectedAssetKey.value = "";
 });
+
+// 本地服务是惰性启动的(见 stores/environment.js),首次挂载时大概率还没就绪;一旦健康检查
+// 转为 online 就自动重试一次,而不需要用户手动刷新页面。
+watch(
+  () => environment.targetHealth(environment.target),
+  async (status) => {
+    if (status === "online" && error.value) await loadAssets();
+  },
+);
 
 onMounted(loadAssets);
 </script>

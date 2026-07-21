@@ -226,7 +226,7 @@ def test_frontend_workflow_blocks_network_calls_when_selected_target_is_offline(
     )
     assert select_history_body.index(
         "await ensureWorkflowTargetOnline();"
-    ) < select_history_body.index("getWorkflowTrace(workflowId")
+    ) < select_history_body.index("getWorkflowRunResult(workflowId")
     assert save_asset_body.index("await ensureWorkflowTargetOnline();") < save_asset_body.index(
         "saveSong({"
     )

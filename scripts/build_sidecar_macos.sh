@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 TRIPLE="$(rustc -Vv | sed -n 's/host: //p')"
 echo "target triple: ${TRIPLE}"
-uv run pyinstaller desktop/sidecar/build_macos.spec --noconfirm
+uv run --group desktop-build pyinstaller desktop/sidecar/build_macos.spec --noconfirm
 # 重命名为 Tauri externalBin 约定
 OUT="desktop/src-tauri/binaries"
 mkdir -p "${OUT}"

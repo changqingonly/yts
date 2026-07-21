@@ -25,11 +25,13 @@ from .process import (
     ServerProcessConfig,
     _frontend_pid_path,
     _frontend_process_config,
+    _local_gateway_pid_path,
     _pid_path,
     _prepare_log_file,
     _process_exists,
     _read_pid,
     _server_process_config,
+    _spawn_local_gateway,
     _status_pid_file_process,
     _stop_pid_file_process,
     _terminate_process,
@@ -96,15 +98,27 @@ def start(
         backend_kwargs["progress"] = progress
         frontend_kwargs["progress"] = progress
         frontend_check_kwargs["progress"] = progress
-    check_frontend_func(root, profile, **frontend_check_kwargs)
-    if using_default_start_frontend:
-        frontend_kwargs["check_preconditions"] = False
-    start_backend_func(root, profile, **backend_kwargs)
+    local_started = False
+    backend_started = False
     try:
+        if profile == "local":
+            _report_progress(progress, "starting local inference gateway")
+            _spawn_local_gateway(root, profile)
+            local_started = True
+            wait_for_health("127.0.0.1", 8799, DEFAULT_HEALTH_TIMEOUT_SECONDS)
+        check_frontend_func(root, profile, **frontend_check_kwargs)
+        if using_default_start_frontend:
+            frontend_kwargs["check_preconditions"] = False
+        start_backend_func(root, profile, **backend_kwargs)
+        backend_started = True
         start_frontend_func(root, profile, **frontend_kwargs)
     except Exception:
-        _report_progress(progress, "frontend failed; stopping backend")
-        stop_backend_func(root, profile, host=host, port=port)
+        if local_started:
+            _stop_pid_file_process(_local_gateway_pid_path(root), "gateway", profile,
+                                   timeout_seconds=10.0, is_process_running_func=None)
+        _report_progress(progress, "startup failed; stopping backend")
+        if backend_started:
+            stop_backend_func(root, profile, host=host, port=port)
         raise
 
 
@@ -289,6 +303,10 @@ def stop(
         errors.append(f"backend: {exc}")
     if errors:
         raise ServctlError("; ".join(errors))
+    if profile == "local":
+        _stop_pid_file_process(_local_gateway_pid_path(root), "gateway", profile,
+                               timeout_seconds=10.0, is_process_running_func=None)
+        _wait_for_port_release("127.0.0.1", 8799, 10.0, "gateway")
 
 
 def restart(
@@ -391,6 +409,14 @@ def status(
         is_process_running_func=is_process_running_func,
         is_port_in_use_func=is_port_in_use_func,
     )
+    if profile == "local":
+        gateway = _status_pid_file_process(
+            _local_gateway_pid_path(root), "gateway", profile,
+            host="127.0.0.1", port=8799,
+            is_process_running_func=is_process_running_func,
+            is_port_in_use_func=is_port_in_use_func,
+        )
+        return f"backend: {backend}\nfrontend: {frontend}\ngateway: {gateway}"
     return f"backend: {backend}\nfrontend: {frontend}"
 
 

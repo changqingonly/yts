@@ -231,6 +231,41 @@ def test_workflow_history_lists_latest_thread_snapshot_after_run_and_resume(monk
         assert completed_items[0]["last_node_id"] == "done"
 
 
+def test_workflow_history_result_restores_completed_output_from_checkpoint(monkeypatch) -> None:
+    checkpointer = InMemorySaver()
+    monkeypatch.setattr(
+        workflow_route, "build_langgraph_checkpointer", lambda settings: checkpointer
+    )
+    monkeypatch.setattr(workflow_route, "make_backend", lambda: FakeRouteBackend())
+
+    with TestClient(create_app()) as client:
+        run_response = client.post(
+            "/api/workflows/pro_creation_hitl_v1/threads",
+            json={
+                "thread_id": "history-result-thread",
+                "user_prompt": "下雨的午后，大雨倾盆，思念远方的故人",
+            },
+        )
+        assert run_response.status_code == 200
+        resume_response = client.post(
+            "/api/workflows/pro_creation_hitl_v1/threads/history-result-thread/resume",
+            json={"node_id": "final_review", "action": "accept", "patch": {}},
+        )
+        assert resume_response.status_code == 200
+
+        result_response = client.get(
+            "/api/workflows/pro_creation_hitl_v1/threads/history-result-thread/result"
+        )
+
+    assert result_response.status_code == 200
+    body = result_response.json()
+    assert body["status"] == "completed"
+    assert body["output"]["title"] == "雨中故人"
+    assert body["output"]["style"]
+    assert body["output"]["lyrics"]
+    assert body["trace"]["nodes"][-1]["node_id"] == "done"
+
+
 def test_workflow_run_stream_pushes_node_trace_chunks(monkeypatch) -> None:
     checkpointer = InMemorySaver()
     monkeypatch.setattr(

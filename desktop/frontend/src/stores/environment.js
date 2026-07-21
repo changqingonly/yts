@@ -4,11 +4,19 @@ import {
   API_TARGET_CHANGED_EVENT,
   assertApiTarget,
   environmentOptions,
+  isTauriRuntime,
   selectedApiTarget,
   setSelectedApiTarget,
 } from "../services/environment";
+import { startGateway, startSidecar } from "../services/desktop";
 
 const pendingHealthChecks = new Map();
+const LOCAL_HEALTH_RETRY_INTERVAL_MS = 800;
+const LOCAL_HEALTH_RETRY_TIMEOUT_MS = 30000;
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export const useEnvironmentStore = defineStore("environment", {
   state: () => ({
@@ -43,6 +51,10 @@ export const useEnvironmentStore = defineStore("environment", {
       }
       return "未检查";
     },
+    /** 本地目标不在应用启动时无条件拉起 sidecar/gateway(耗时拖慢首屏),而是在第一次真正
+     * 用到本地目标时惰性拉起(见 desktop/src-tauri/src/lib.rs 的 setup() 注释)。这里既触发
+     * 拉起,也把单次健康检查换成有限时间的轮询,让"checking"这个已有状态覆盖住本地服务
+     * 真正启动完成前的这段等待,而不是第一次没连上就直接判"offline"。 */
     async checkHealth(target = this.target) {
       const requestTarget = assertApiTarget(target);
       if (pendingHealthChecks.has(requestTarget)) {
@@ -50,15 +62,28 @@ export const useEnvironmentStore = defineStore("environment", {
       }
       this.health[requestTarget] = "checking";
       this.healthError[requestTarget] = "";
+      const shouldRetry = requestTarget === "local" && isTauriRuntime();
       const healthPromise = (async () => {
+        if (shouldRetry) {
+          void startSidecar().catch(() => {});
+          void startGateway().catch(() => {});
+        }
+        const deadline = Date.now() + (shouldRetry ? LOCAL_HEALTH_RETRY_TIMEOUT_MS : 0);
         try {
-          await healthCheck(requestTarget);
-          this.health[requestTarget] = "online";
-          return "online";
-        } catch (error) {
-          this.health[requestTarget] = "offline";
-          this.healthError[requestTarget] = error instanceof Error ? error.message : String(error);
-          return "offline";
+          for (;;) {
+            try {
+              await healthCheck(requestTarget);
+              this.health[requestTarget] = "online";
+              return "online";
+            } catch (error) {
+              if (Date.now() >= deadline) {
+                this.health[requestTarget] = "offline";
+                this.healthError[requestTarget] = error instanceof Error ? error.message : String(error);
+                return "offline";
+              }
+              await wait(LOCAL_HEALTH_RETRY_INTERVAL_MS);
+            }
+          }
         } finally {
           pendingHealthChecks.delete(requestTarget);
         }

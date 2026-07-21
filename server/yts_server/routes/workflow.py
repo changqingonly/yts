@@ -20,6 +20,7 @@ from yts_core.workflow.runtime import (
     run_workflow_thread,
     stream_resume_workflow_thread,
     stream_workflow_thread,
+    workflow_thread_result,
     workflow_thread_trace,
 )
 
@@ -406,6 +407,36 @@ async def get_workflow_trace(
         trace_node_count=len(trace.nodes),
     )
     return trace
+
+
+@router.get("/{workflow_id}/threads/{thread_id}/result", response_model=WorkflowRunResult)
+async def get_workflow_result(
+    workflow_id: str,
+    thread_id: str,
+    session: DbSession,
+    authorization: str | None = Header(default=None),
+    device_id: str | None = Cookie(default=None, alias="yts-device"),
+) -> WorkflowRunResult:
+    _require_workflow_template(workflow_id)
+    user = await billing_user_if_required(session, authorization, device_id)
+    await workflow_history_domain.require_workflow_owner(
+        session,
+        workflow_id=workflow_id,
+        thread_id=thread_id,
+        user_uuid=user.user_uuid if user else None,
+    )
+    settings = get_settings()
+    checkpointer = build_langgraph_checkpointer(settings)
+    logger.info("workflow.result.requested", workflow_id=workflow_id, thread_id=thread_id)
+    result = await workflow_thread_result(thread_id=thread_id, checkpointer=checkpointer)
+    logger.info(
+        "workflow.result.completed",
+        workflow_id=workflow_id,
+        thread_id=thread_id,
+        run_id=result.run_id,
+        status=result.status,
+    )
+    return result
 
 
 def _require_workflow_template(workflow_id: str) -> WorkflowDefinition:

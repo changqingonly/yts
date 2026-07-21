@@ -28,6 +28,9 @@ dev = [
     "respx>=0.21",
     "ruff>=0.15",
 ]
+desktop-build = [
+    "pyinstaller>=6.0",
+]
 
 [tool.ruff]
 line-length = 100

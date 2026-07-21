@@ -72,8 +72,6 @@ def validate_profile_config(root: Path, profile: str) -> None:
                 "YTS_OPENAI_API_KEY must be configured when "
                 "YTS_INFERENCE_BACKEND=cloud and YTS_DEFAULT_TEXT_MODEL uses OpenAI-compatible"
             )
-
-
 def _is_deepseek_model(model: str) -> bool:
     return model.startswith("deepseek/") or model.startswith("deepseek-")
 

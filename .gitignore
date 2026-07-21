@@ -43,9 +43,13 @@ build/
 *.spec.bak
 
 # --- PyInstaller sidecar output ---
+desktop/src-tauri/target/
 desktop/sidecar/build/
 desktop/sidecar/dist/
 desktop/vendor/
+
+# --- packaged externalBin sidecars (rebuilt by scripts/build_desktop_macos.sh) ---
+desktop/src-tauri/binaries/
 
 # --- models / weights (never commit) ---
 *.gguf

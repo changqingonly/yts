@@ -212,25 +212,29 @@ function readDeviceId() {
             <span>{{ tasks.length }} 个任务</span>
           </header>
           <article v-for="task in tasks" :key="task.id" :class="['task-row', task.status]">
-            <div class="task-icon">
+            <span class="task-icon">
               <AlertTriangle v-if="task.status === 'failed'" :size="18" />
               <CheckCircle2 v-else-if="task.status === 'done'" :size="18" />
               <FileAudio v-else :size="18" />
-            </div>
-            <div class="task-copy">
-              <strong>{{ task.titleAlias }}</strong>
-              <small>{{ statusLabels[task.status] }}</small>
-              <p v-if="task.error">{{ task.error }}</p>
-            </div>
-            <button
-              v-if="task.status === 'failed'"
-              class="retry-button"
-              type="button"
-              title="重试"
-              @click="retryImport(task)"
-            >
-              <RotateCcw :size="16" />
-            </button>
+            </span>
+            <strong class="task-title">{{ task.titleAlias }}</strong>
+            <span class="task-state">
+              <small
+                :title="task.error || undefined"
+                :aria-label="task.error || statusLabels[task.status]"
+              >
+                {{ task.error || statusLabels[task.status] }}
+              </small>
+              <button
+                v-if="task.status === 'failed'"
+                class="retry-button"
+                type="button"
+                title="重试"
+                @click="retryImport(task)"
+              >
+                <RotateCcw :size="14" />
+              </button>
+            </span>
           </article>
           <p v-if="!hasTasks" class="drawer-empty">新导入任务会显示在这里。</p>
         </section>
@@ -304,8 +308,7 @@ function readDeviceId() {
 
 .drawer-title p,
 .drawer-title h2,
-.drawer-empty,
-.task-copy p {
+.drawer-empty {
   margin: 0;
 }
 
@@ -474,27 +477,25 @@ function readDeviceId() {
 
 .task-row {
   align-items: center;
-  background: rgba(4, 16, 31, 0.42);
-  border-radius: 8px;
+  background: rgba(4, 16, 31, 0.3);
+  border: 0;
+  border-radius: 6px;
+  box-sizing: border-box;
+  color: var(--color-text);
   display: grid;
-  gap: 12px;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
-  min-height: 64px;
-  padding: 12px;
-}
-
-.task-row.uploading,
-.task-row.syncing {
-  background: linear-gradient(90deg, rgba(14, 165, 233, 0.2), rgba(4, 16, 31, 0.42));
-}
-
-.task-row.failed {
-  background: rgba(244, 63, 94, 0.12);
+  font: inherit;
+  gap: 6px;
+  grid-template-columns: 24px minmax(0, 1fr) minmax(48px, 78px);
+  min-height: 34px;
+  padding: 5px 8px;
+  width: 100%;
 }
 
 .task-icon {
-  color: var(--color-brand-cyan);
+  color: var(--color-muted);
   display: inline-flex;
+  font-size: 11px;
+  line-height: 1;
 }
 
 .task-row.done .task-icon {
@@ -505,26 +506,45 @@ function readDeviceId() {
   color: var(--color-danger);
 }
 
-.task-copy {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.task-copy strong {
+.task-title {
   color: var(--color-heading);
+  font-size: 12px;
+  line-height: 1.1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.task-copy small {
-  color: var(--color-muted);
-  font-size: 12px;
-  font-weight: 800;
+.task-state {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+  justify-self: end;
+  min-width: 0;
 }
 
-.task-copy p,
+.task-state small {
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-row.failed .task-state small {
+  color: var(--color-danger);
+}
+
+.retry-button {
+  border-radius: 5px;
+  flex: 0 0 auto;
+  height: 22px;
+  width: 22px;
+}
+
 .drawer-empty {
   color: var(--color-muted);
   font-size: 13px;

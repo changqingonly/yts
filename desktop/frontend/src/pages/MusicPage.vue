@@ -178,15 +178,11 @@ function readPlaybackResumeState() {
   if (typeof parsedState.contentHash !== "string" || !parsedState.contentHash) {
     throw new Error("音乐播放进度记录缺少 contentHash");
   }
-  if (typeof parsedState.wasPlaying !== "boolean") {
-    throw new Error("音乐播放进度记录缺少 wasPlaying");
-  }
   return {
     target: parsedState.target,
     trackId: parsedState.trackId,
     contentHash: parsedState.contentHash,
     currentTime: normalizePlaybackResumeTime(parsedState.currentTime),
-    wasPlaying: parsedState.wasPlaying,
   };
 }
 
@@ -206,7 +202,6 @@ function writePlaybackResumeState(track, currentTime) {
       trackId: track.id,
       contentHash: track.contentHash,
       currentTime: normalizedTime,
-      wasPlaying: player.isPlaying,
       updatedAt: Date.now(),
     }),
   );
@@ -221,7 +216,7 @@ function restorePlaybackResumeState() {
     (track) => track.id === resumeState.trackId || track.contentHash === resumeState.contentHash,
   );
   if (resumeIndex < 0) return;
-  player.selectAt(resumeIndex, { currentTime: resumeState.currentTime, isPlaying: resumeState.wasPlaying });
+  player.selectAt(resumeIndex, { currentTime: resumeState.currentTime, isPlaying: false });
   resumeSeekTime.value = resumeState.currentTime;
 }
 
@@ -341,6 +336,7 @@ function handleAudioPause() {
 
 function handleAudioEnded() {
   if (loopMode.value === "single") return;
+  if (loopMode.value === "queue" && tracks.value.length === 1) return;
   if (tracks.value.length > 1) {
     nextTrack();
   } else {
@@ -394,6 +390,15 @@ watch(
   },
 );
 
+// 本地服务是惰性启动的(见 stores/environment.js),首次挂载时大概率还没就绪;一旦健康检查
+// 转为 online 就自动重试一次,而不需要用户手动刷新页面。
+watch(
+  () => environment.targetHealth(environment.target),
+  async (status) => {
+    if (status === "online" && error.value) await refreshPlaylist();
+  },
+);
+
 onMounted(async () => {
   environment.attach();
   await refreshPlaylist();
@@ -433,12 +438,14 @@ onBeforeUnmount(() => {
 
     <p v-if="error" class="error-message">{{ error }}</p>
 
-    <MusicButterchurnBackdrop
-      class="butterchurn-backdrop"
-      :audio-element="audioElement"
-      :playing="player.isPlaying"
-      @visualizer-error="handleVisualizerError"
-    />
+    <Teleport to="#music-nav-butterchurn-target">
+      <MusicButterchurnBackdrop
+        class="music-nav-butterchurn"
+        :audio-element="audioElement"
+        :playing="player.isPlaying"
+        @visualizer-error="handleVisualizerError"
+      />
+    </Teleport>
 
     <article class="player-stage minimal-player">
       <div class="stage-glow"></div>
@@ -447,6 +454,7 @@ onBeforeUnmount(() => {
         :loop-label="activeLoopMode.label"
         :loop-mode="loopMode"
         :playing="player.isPlaying"
+        :repeat-current="loopMode === 'queue' && tracks.length === 1"
         :seek-time="resumeSeekTime"
         :track="currentTrack"
         @audio-ready="handleAudioReady"

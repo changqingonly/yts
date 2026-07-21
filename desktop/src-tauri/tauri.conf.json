@@ -1,22 +1,34 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "yts",
+  "productName": "乐兔",
   "version": "0.1.0",
   "identifier": "com.yuetools.yts",
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": { "script": "npm run dev", "cwd": "../frontend" },
+    "beforeBuildCommand": { "script": "npm run build", "cwd": "../frontend" }
   },
   "app": {
     "windows": [
-      { "title": "yts", "width": 1100, "height": 720 }
+      { "title": "乐兔", "width": 1100, "height": 720 }
     ],
     "security": { "csp": null }
   },
   "bundle": {
-    "active": false,
-    "targets": "app"
+    "active": true,
+    "targets": ["dmg", "app"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": ["binaries/yts-sidecar", "binaries/infer-gateway"],
+    "macOS": {
+      "signingIdentity": "yts-desktop-dev",
+      "hardenedRuntime": false
+    }
   }
 }
