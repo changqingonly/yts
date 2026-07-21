@@ -7,6 +7,7 @@ TOOLS_DIR="${ROOT}/.tools"
 UV_HOME="${TOOLS_DIR}/uv"
 NODE_HOME="${TOOLS_DIR}/node"
 NODE_VERSION="${YTS_NODE_VERSION:-v24.18.0}"
+PYTHON_VERSION="${YTS_PYTHON_VERSION:-3.10}"
 
 mkdir -p "${TOOLS_DIR}"
 
@@ -75,8 +76,8 @@ install_uv
 install_node
 
 cd "${ROOT}"
-uv python install
-uv venv "${ROOT}/.venv"
+uv python install "${PYTHON_VERSION}"
+uv venv --python "${PYTHON_VERSION}" "${ROOT}/.venv"
 uv sync --locked
 
 cd "${ROOT}/desktop/frontend"

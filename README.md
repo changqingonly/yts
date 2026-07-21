@@ -27,6 +27,9 @@ scripts/   安装 / 开发 / 打包脚本
 # 1) 安装客户机运行环境到当前项目目录(.tools + .venv + node_modules)
 ./install
 
+# 默认使用 Python 3.10；可显式选择其他受项目依赖支持的版本
+YTS_PYTHON_VERSION=3.13 ./install
+
 # 2) 准备真实 profile 配置
 cp conf/cloud.example.env conf/cloud.env
 # 编辑 conf/cloud.env,填入数据库、鉴权、LLM 等真实值
@@ -49,6 +52,8 @@ bash scripts/build_desktop_macos.sh
 
 `./install` 会用 `curl` 拉取 uv 和 Node 官方二进制到项目 `.tools/` 下,并把 Python
 运行环境创建在当前目录 `.venv/`,前端依赖安装到 `desktop/frontend/node_modules/`。
+Python 默认版本为 `3.10`;设置 `YTS_PYTHON_VERSION` 后,项目内的 uv 会安装或复用指定版本,
+并只将它用于 `.venv`,不会替换系统 Python。指定版本不可用或依赖不兼容时安装会直接失败。
 `servctl start` 会在暴露后端端口前检查 `conf/{profile}.env`、端口占用、数据库连接、
 FastAPI app 装配和当前推理后端的最小文本调用,后端健康后再用 Vite preview 暴露
 Web 前端 `http://127.0.0.1:1420/`。后端默认端口按 profile 区分:`cloud` 使用

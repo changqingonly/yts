@@ -75,6 +75,16 @@ def test_locked_install_keeps_root_uv_lockfile_in_source_control() -> None:
     assert "uv.lock" not in ignore_rules
 
 
+def test_install_allows_explicit_python_version_selection() -> None:
+    install_source = (_REPO_ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
+
+    assert 'PYTHON_VERSION="${YTS_PYTHON_VERSION:-3.10}"' in install_source
+    assert 'uv python install "${PYTHON_VERSION}"' in install_source
+    assert 'uv venv --python "${PYTHON_VERSION}" "${ROOT}/.venv"' in install_source
+    assert "uv python install\n" not in install_source
+    assert 'uv venv "${ROOT}/.venv"' not in install_source
+
+
 def test_require_profile_config_rejects_missing_real_env_file(tmp_path: Path) -> None:
     conf_dir = tmp_path / "conf"
     conf_dir.mkdir()
