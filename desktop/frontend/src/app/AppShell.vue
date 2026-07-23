@@ -79,7 +79,7 @@ onUnmounted(() => {
         >
           <span
             v-if="item.key === 'music'"
-            id="music-nav-spectrum-target"
+            id="music-nav-playback-target"
             class="music-nav-visualizer-target"
             aria-hidden="true"
           ></span>

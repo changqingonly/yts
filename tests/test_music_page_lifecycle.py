@@ -198,12 +198,12 @@ def test_app_shell_keeps_the_music_audio_dom_mounted_across_authenticated_routes
     assert "<KeepAlive" not in shell
 
 
-def test_music_navigation_uses_spectrum_target_without_equalizer_animation() -> None:
+def test_music_navigation_uses_playback_target_without_equalizer_animation() -> None:
     shell = read_source("app/AppShell.vue")
 
     assert 'import { usePlayerStore } from "../stores/player";' not in shell
     assert "const player = usePlayerStore();" not in shell
-    assert 'id="music-nav-spectrum-target"' in shell
+    assert 'id="music-nav-playback-target"' in shell
     assert 'class="music-nav-visualizer-target"' in shell
     assert 'class="creator-nav-content"' in shell
     assert "nav-playing-indicator" not in shell
@@ -217,59 +217,41 @@ def test_persistent_music_page_keeps_navigation_visualizer_bound_to_playback() -
     assert "props.active" not in music
 
 
-def test_music_page_mounts_spectrum_backdrop_from_audio_player_element() -> None:
+def test_music_page_mounts_static_playback_backdrop() -> None:
     package_json = read_frontend_file("package.json")
     music = read_source("pages/MusicPage.vue")
     shell = read_source("app/AppShell.vue")
-    player = read_source("components/YtsAudioPlayer.vue")
-
     assert '"butterchurn"' not in package_json
     assert '"butterchurn-presets"' not in package_json
-    assert 'import MusicSpectrumBackdrop from "../components/MusicSpectrumBackdrop.vue";' in music
-    assert "const audioElement = ref(null);" in music
-    assert "function handleAudioReady(element)" in music
-    assert "audioElement.value = element;" in music
-    assert "function handleVisualizerError(message)" in music
-    assert "error.value = message;" in music
-    assert "<MusicSpectrumBackdrop" in music
-    assert ':audio-element="audioElement"' in music
+    assert 'import MusicPlaybackBackdrop from "../components/MusicPlaybackBackdrop.vue";' in music
+    assert "const audioElement = ref(null);" not in music
+    assert "function handleAudioReady(element)" not in music
+    assert "function handleVisualizerError(message)" not in music
+    assert "<MusicPlaybackBackdrop" in music
     assert ':playing="player.isPlaying"' in music
-    assert '@visualizer-error="handleVisualizerError"' in music
-    assert '<Teleport to="#music-nav-spectrum-target">' in music
-    assert 'class="music-nav-spectrum"' in music
+    assert '<Teleport to="#music-nav-playback-target">' in music
+    assert 'class="music-nav-playback"' in music
     player_block = music.split('<YtsAudioPlayer', 1)[1].split('</YtsAudioPlayer>', 1)[0]
-    assert '<MusicSpectrumBackdrop' not in player_block
-    assert music.index('<MusicSpectrumBackdrop') < music.index('<article class="player-stage')
-    assert 'id="music-nav-spectrum-target"' in shell
-    assert '@audio-ready="handleAudioReady"' in music
-    assert '"audio-ready"' in player
-    assert 'emit("audio-ready", requireAudio());' in player
-    player_template = player.split("<template>", 1)[1].split("</template>", 1)[0]
-    assert 'class="control-visualizer-zone"' not in player_template
-    assert '<slot></slot>' not in player_template
+    assert '<MusicPlaybackBackdrop' not in player_block
+    assert music.index('<MusicPlaybackBackdrop') < music.index('<article class="player-stage')
+    assert 'id="music-nav-playback-target"' in shell
+    assert '@audio-ready=' not in player_block
 
 
-def test_lightweight_spectrum_uses_bounded_canvas_and_analyser_work() -> None:
-    spectrum_path = FRONTEND / "components/MusicSpectrumBackdrop.vue"
-    assert spectrum_path.exists(), "lightweight spectrum component is required"
-    spectrum = spectrum_path.read_text(encoding="utf-8")
+def test_playback_backdrop_has_no_continuous_runtime_work() -> None:
+    backdrop_path = FRONTEND / "components/MusicPlaybackBackdrop.vue"
+    assert backdrop_path.exists(), "static playback backdrop is required"
+    backdrop = backdrop_path.read_text(encoding="utf-8")
 
-    assert "const TARGET_FRAME_RATE = 4;" in spectrum
-    assert "const BAR_COUNT = 12;" in spectrum
-    assert "const MAX_PIXEL_RATIO = 1.25;" in spectrum
-    assert "audioContext.value.createMediaElementSource(props.audioElement)" in spectrum
-    assert "audioContext.value.createAnalyser()" in spectrum
-    assert "analyserNode.value.fftSize = 64;" in spectrum
-    assert "sourceNode.value.connect(analyserNode.value)" in spectrum
-    assert "analyserNode.value.connect(audioContext.value.destination)" in spectrum
-    assert 'canvas.getContext("2d")' in spectrum
-    assert "analyserNode.value.getByteFrequencyData(frequencyData)" in spectrum
-    assert "renderTimerId = window.setTimeout(renderFrame, FRAME_INTERVAL_MS)" in spectrum
-    assert "clearTimeout(renderTimerId)" in spectrum
-    assert "requestAnimationFrame" not in spectrum
-    assert 'document.visibilityState === "visible"' in spectrum
-    assert 'document.addEventListener("visibilitychange", syncVisualizerState)' in spectrum
-    assert 'document.removeEventListener("visibilitychange", syncVisualizerState)' in spectrum
-    assert "butterchurn" not in spectrum.lower()
-    assert "webgl" not in spectrum.lower()
+    assert "playing: { type: Boolean, default: false }" in backdrop
+    assert 'v-for="index in 3"' in backdrop
+    assert "music-playback-backdrop" in backdrop
+    assert "AudioContext" not in backdrop
+    assert "audioElement" not in backdrop
+    assert "canvas" not in backdrop.lower()
+    assert "setTimeout" not in backdrop
+    assert "requestAnimationFrame" not in backdrop
+    assert "butterchurn" not in backdrop.lower()
+    assert "webgl" not in backdrop.lower()
     assert not (FRONTEND / "components/MusicButterchurnBackdrop.vue").exists()
+    assert not (FRONTEND / "components/MusicSpectrumBackdrop.vue").exists()

@@ -1,35 +1,35 @@
-# Lightweight Music Spectrum Implementation Plan
+# Static Music Playback Backdrop Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace Butterchurn with a low-cost audio-reactive canvas in the music navigation item.
+**Goal:** Replace Butterchurn with a zero-loop playback-state background in the music navigation item.
 
-**Architecture:** A Vue component builds a single Web Audio analyser graph around the existing audio element and draws twelve bars into a 2D canvas at 4 FPS. MusicPage retains its public wiring while all Butterchurn runtime code is removed.
+**Architecture:** A Vue component renders three fixed bars and changes opacity only when playback state changes. MusicPage passes only `playing`; no audio graph, Canvas, timer, or animation frame remains.
 
-**Tech Stack:** Vue 3, Web Audio API, Canvas 2D, pytest source-contract tests, Vite, Tauri 2.
+**Tech Stack:** Vue 3, CSS, pytest source-contract tests, Vite, Tauri 2.
 
 ## Global Constraints
 
-- Preserve native audio playback behavior and existing MusicPage event wiring.
-- Stop visual rendering when paused or hidden.
-- Fail explicitly on analyser or canvas errors; no fallback or silent degradation.
+- Preserve native audio playback behavior.
+- Perform no continuous visual work while playing, paused, or hidden.
+- Do not add fallback or silent degradation paths.
 - Preserve unrelated dirty-worktree changes.
 
 ---
 
-### Task 1: Lightweight spectrum component
+### Task 1: Static playback component
 
 **Files:**
-- Create: `desktop/frontend/src/components/MusicSpectrumBackdrop.vue`
+- Create: `desktop/frontend/src/components/MusicPlaybackBackdrop.vue`
 - Modify: `tests/test_music_page_lifecycle.py`
 
 **Interfaces:**
-- Consumes: `audioElement: HTMLAudioElement | null`, `playing: boolean`
-- Produces: `visualizer-error(message: string)`
+- Consumes: `playing: boolean`
+- Produces: a static active/inactive visual state
 
-- [ ] Write a failing source-contract test requiring `AnalyserNode`, Canvas 2D, twelve bars, 4 FPS, DPR 1.25, and visibility cleanup.
+- [ ] Write a failing source-contract test requiring three fixed bars and prohibiting Web Audio, Canvas, timers, and animation frames.
 - [ ] Run `pytest tests/test_music_page_lifecycle.py -q` and verify failure because the component does not exist.
-- [ ] Implement the component with one explicit audio graph and one animation-frame loop.
+- [ ] Implement the component with a prop-driven class and static CSS.
 - [ ] Run the focused lifecycle tests and Ruff until they pass.
 
 ### Task 2: Replace Butterchurn wiring
@@ -37,13 +37,14 @@
 **Files:**
 - Modify: `desktop/frontend/src/pages/MusicPage.vue`
 - Delete: `desktop/frontend/src/components/MusicButterchurnBackdrop.vue`
+- Delete: `desktop/frontend/src/components/MusicSpectrumBackdrop.vue`
 - Modify: `tests/test_music_page_lifecycle.py`
 
 **Interfaces:**
-- Consumes: `MusicSpectrumBackdrop` contract from Task 1
+- Consumes: `MusicPlaybackBackdrop` contract from Task 1
 - Produces: unchanged MusicPage player and error behavior
 
-- [ ] Update the test to require `MusicSpectrumBackdrop` and reject Butterchurn imports and component references.
+- [ ] Update the test to require `MusicPlaybackBackdrop` and reject Butterchurn, spectrum, and audio-element bridge references.
 - [ ] Run the focused test and verify it fails on the old MusicPage import.
 - [ ] Replace the component import/template reference and delete the obsolete component.
 - [ ] Run all lifecycle tests, Ruff, and the Vite production build.

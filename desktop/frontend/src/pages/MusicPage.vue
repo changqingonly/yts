@@ -10,7 +10,7 @@ import {
   Upload,
   X,
 } from "@lucide/vue";
-import MusicSpectrumBackdrop from "../components/MusicSpectrumBackdrop.vue";
+import MusicPlaybackBackdrop from "../components/MusicPlaybackBackdrop.vue";
 import MusicImportDrawer from "../components/MusicImportDrawer.vue";
 import YtsAudioPlayer from "../components/YtsAudioPlayer.vue";
 import { usePlayerStore } from "../stores/player";
@@ -31,7 +31,6 @@ const loopMode = ref("queue");
 const playHistory = ref([]);
 const trackUrlByHash = ref(new Map());
 const resumeSeekTime = ref(null);
-const audioElement = ref(null);
 
 const PLAYBACK_RESUME_STORAGE_KEY = "yts-music-playback-state";
 
@@ -365,14 +364,6 @@ function handleAudioError(message) {
   player.setPlaying(false);
 }
 
-function handleAudioReady(element) {
-  audioElement.value = element;
-}
-
-function handleVisualizerError(message) {
-  error.value = message;
-}
-
 function recordHistory(track) {
   if (!track) return;
   const playedAt = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -407,7 +398,6 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   writePlaybackResumeState(currentTrack.value, player.currentTime);
   environment.detach();
-  audioElement.value = null;
   player.setQueue([]);
   revokePlayableTrackUrls();
 });
@@ -438,12 +428,10 @@ onBeforeUnmount(() => {
 
     <p v-if="error" class="error-message">{{ error }}</p>
 
-    <Teleport to="#music-nav-spectrum-target">
-      <MusicSpectrumBackdrop
-        class="music-nav-spectrum"
-        :audio-element="audioElement"
+    <Teleport to="#music-nav-playback-target">
+      <MusicPlaybackBackdrop
+        class="music-nav-playback"
         :playing="player.isPlaying"
-        @visualizer-error="handleVisualizerError"
       />
     </Teleport>
 
@@ -457,7 +445,6 @@ onBeforeUnmount(() => {
         :repeat-current="loopMode === 'queue' && tracks.length === 1"
         :seek-time="resumeSeekTime"
         :track="currentTrack"
-        @audio-ready="handleAudioReady"
         @cycle-loop="cycleLoopMode"
         @duration-change="handleDurationChange"
         @ended="handleAudioEnded"
@@ -649,7 +636,7 @@ onBeforeUnmount(() => {
   z-index: 1;
 }
 
-.music-nav-spectrum {
+.music-nav-playback {
   z-index: 0;
 }
 
