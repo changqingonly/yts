@@ -604,29 +604,58 @@ def test_local_import_upload_allows_owned_local_file_sync() -> None:
         assert downloaded.content == audio_bytes
 
 
-def test_song_file_preserves_uploaded_mp4_audio_content_type() -> None:
+def test_song_file_uses_extracted_container_mime_instead_of_upload_mime() -> None:
     audio_bytes = wav_bytes()
     expected_hash = hashlib.sha256(audio_bytes).hexdigest()
 
     with TestClient(create_app()) as client:
         token = register_via_test_crypto(
-            client, "mp4-playback@example.com", "Password123"
+            client, "container-mime@example.com", "Password123"
         )["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
         uploaded = client.post(
             "/api/music/upload",
             headers=headers,
-            files={"file": ("voice.mp4", audio_bytes, "audio/mp4")},
+            files={"file": ("voice.mp4", audio_bytes, "video/mp4")},
         )
         assert uploaded.status_code == 200, uploaded.text
         assert uploaded.json()["content_hash"] == expected_hash
+        assert uploaded.json()["mime"] == "video/mp4"
+        assert uploaded.json()["meta_song"]["container_format"] == "audio/wav"
 
         downloaded = client.get(f"/api/music/file/{expected_hash}", headers=headers)
 
         assert downloaded.status_code == 200, downloaded.text
-        assert downloaded.headers["content-type"] == "audio/mp4"
+        assert downloaded.headers["content-type"] == "audio/wav"
         assert downloaded.content == audio_bytes
+
+
+def test_song_file_fails_explicitly_when_extracted_metadata_is_missing() -> None:
+    audio_bytes = wav_bytes()
+    expected_hash = hashlib.sha256(audio_bytes).hexdigest()
+
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(
+            client, "missing-container-mime@example.com", "Password123"
+        )["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        uploaded = client.post(
+            "/api/music/upload",
+            headers=headers,
+            files={"file": ("voice.mp4", audio_bytes, "video/mp4")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        assert uploaded.json()["content_hash"] == expected_hash
+
+        db_path = os.environ["YTS_DATABASE_URL"].removeprefix("sqlite+aiosqlite:///")
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("DELETE FROM meta_song WHERE content_hash = ?", (expected_hash,))
+
+        downloaded = client.get(f"/api/music/file/{expected_hash}", headers=headers)
+
+        assert downloaded.status_code == 404, downloaded.text
+        assert downloaded.json()["code"] == "local_import_metadata_missing"
 
 
 def test_legacy_local_import_upload_route_is_removed() -> None:

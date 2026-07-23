@@ -144,10 +144,20 @@ async def local_import_file_for_user(
     blob = await session.get(LocalImportBlob, content_hash)
     if blob is None:
         raise AppError.not_found("local_import_missing", "local import blob not found")
+    meta_song = await session.get(MetaSong, content_hash)
+    if meta_song is None:
+        raise AppError.not_found(
+            "local_import_metadata_missing", "local import metadata not found"
+        )
+    if not meta_song.container_format:
+        raise AppError.not_found(
+            "local_import_container_format_missing",
+            "local import container format not found",
+        )
     path = Path(blob.path)
     if not path.exists():
         raise AppError.not_found("local_import_file_missing", "local import file not found")
-    return LocalImportFile(path=path, mime=blob.mime)
+    return LocalImportFile(path=path, mime=meta_song.container_format)
 
 
 async def _ensure_owner_row(session: AsyncSession, *, user_uuid: str, content_hash: str) -> None:
