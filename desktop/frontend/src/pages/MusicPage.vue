@@ -10,7 +10,7 @@ import {
   Upload,
   X,
 } from "@lucide/vue";
-import MusicButterchurnBackdrop from "../components/MusicButterchurnBackdrop.vue";
+import MusicSpectrumBackdrop from "../components/MusicSpectrumBackdrop.vue";
 import MusicImportDrawer from "../components/MusicImportDrawer.vue";
 import YtsAudioPlayer from "../components/YtsAudioPlayer.vue";
 import { usePlayerStore } from "../stores/player";
@@ -438,9 +438,9 @@ onBeforeUnmount(() => {
 
     <p v-if="error" class="error-message">{{ error }}</p>
 
-    <Teleport to="#music-nav-butterchurn-target">
-      <MusicButterchurnBackdrop
-        class="music-nav-butterchurn"
+    <Teleport to="#music-nav-spectrum-target">
+      <MusicSpectrumBackdrop
+        class="music-nav-spectrum"
         :audio-element="audioElement"
         :playing="player.isPlaying"
         @visualizer-error="handleVisualizerError"
@@ -649,7 +649,7 @@ onBeforeUnmount(() => {
   z-index: 1;
 }
 
-.butterchurn-backdrop {
+.music-nav-spectrum {
   z-index: 0;
 }
 

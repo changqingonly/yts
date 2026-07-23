@@ -198,12 +198,12 @@ def test_app_shell_keeps_the_music_audio_dom_mounted_across_authenticated_routes
     assert "<KeepAlive" not in shell
 
 
-def test_music_navigation_uses_butterchurn_target_without_equalizer_animation() -> None:
+def test_music_navigation_uses_spectrum_target_without_equalizer_animation() -> None:
     shell = read_source("app/AppShell.vue")
 
     assert 'import { usePlayerStore } from "../stores/player";' not in shell
     assert "const player = usePlayerStore();" not in shell
-    assert 'id="music-nav-butterchurn-target"' in shell
+    assert 'id="music-nav-spectrum-target"' in shell
     assert 'class="music-nav-visualizer-target"' in shell
     assert 'class="creator-nav-content"' in shell
     assert "nav-playing-indicator" not in shell
@@ -217,30 +217,30 @@ def test_persistent_music_page_keeps_navigation_visualizer_bound_to_playback() -
     assert "props.active" not in music
 
 
-def test_music_page_mounts_butterchurn_backdrop_from_audio_player_element() -> None:
+def test_music_page_mounts_spectrum_backdrop_from_audio_player_element() -> None:
     package_json = read_frontend_file("package.json")
     music = read_source("pages/MusicPage.vue")
     shell = read_source("app/AppShell.vue")
     player = read_source("components/YtsAudioPlayer.vue")
 
-    assert '"butterchurn"' in package_json
-    assert '"butterchurn-presets"' in package_json
-    assert 'import MusicButterchurnBackdrop from "../components/MusicButterchurnBackdrop.vue";' in music
+    assert '"butterchurn"' not in package_json
+    assert '"butterchurn-presets"' not in package_json
+    assert 'import MusicSpectrumBackdrop from "../components/MusicSpectrumBackdrop.vue";' in music
     assert "const audioElement = ref(null);" in music
     assert "function handleAudioReady(element)" in music
     assert "audioElement.value = element;" in music
     assert "function handleVisualizerError(message)" in music
     assert "error.value = message;" in music
-    assert "<MusicButterchurnBackdrop" in music
+    assert "<MusicSpectrumBackdrop" in music
     assert ':audio-element="audioElement"' in music
     assert ':playing="player.isPlaying"' in music
     assert '@visualizer-error="handleVisualizerError"' in music
-    assert '<Teleport to="#music-nav-butterchurn-target">' in music
-    assert 'class="music-nav-butterchurn"' in music
+    assert '<Teleport to="#music-nav-spectrum-target">' in music
+    assert 'class="music-nav-spectrum"' in music
     player_block = music.split('<YtsAudioPlayer', 1)[1].split('</YtsAudioPlayer>', 1)[0]
-    assert '<MusicButterchurnBackdrop' not in player_block
-    assert music.index('<MusicButterchurnBackdrop') < music.index('<article class="player-stage')
-    assert 'id="music-nav-butterchurn-target"' in shell
+    assert '<MusicSpectrumBackdrop' not in player_block
+    assert music.index('<MusicSpectrumBackdrop') < music.index('<article class="player-stage')
+    assert 'id="music-nav-spectrum-target"' in shell
     assert '@audio-ready="handleAudioReady"' in music
     assert '"audio-ready"' in player
     assert 'emit("audio-ready", requireAudio());' in player
@@ -249,81 +249,26 @@ def test_music_page_mounts_butterchurn_backdrop_from_audio_player_element() -> N
     assert '<slot></slot>' not in player_template
 
 
-def test_butterchurn_backdrop_uses_explicit_webgl_lifecycle_without_fallback() -> None:
-    visualizer_path = FRONTEND / "components/MusicButterchurnBackdrop.vue"
+def test_lightweight_spectrum_uses_bounded_canvas_and_analyser_work() -> None:
+    spectrum_path = FRONTEND / "components/MusicSpectrumBackdrop.vue"
+    assert spectrum_path.exists(), "lightweight spectrum component is required"
+    spectrum = spectrum_path.read_text(encoding="utf-8")
 
-    assert visualizer_path.exists()
-    visualizer = visualizer_path.read_text(encoding="utf-8")
-
-    assert 'import("butterchurn")' in visualizer
-    assert 'import("butterchurn-presets")' in visualizer
-    assert 'audioElement: { type: Object, default: null }' in visualizer
-    assert 'playing: { type: Boolean, default: false }' in visualizer
-    assert '"visualizer-error"' in visualizer
-    assert 'canvasRef.value.getContext("webgl2", WEBGL_OPTIONS)' in visualizer
-    assert "当前浏览器不支持 WebGL2 动态背景" in visualizer
-    assert "new AudioContext()" in visualizer
-    assert "audioContext.value.createMediaElementSource(props.audioElement)" in visualizer
-    assert "butterchurn.value.createVisualizer(audioContext.value, canvasRef.value" in visualizer
-    assert "visualizer.value.connectAudio(sourceNode.value)" in visualizer
-    assert "butterchurnPresets.value.getPresets()" in visualizer
-    assert "visualizer.value.loadPreset(selectedPreset, 0)" in visualizer
-    assert "visualizer.value.render()" in visualizer
-    assert "requestAnimationFrame(renderFrame)" in visualizer
-    assert "cancelAnimationFrame(animationFrameId)" in visualizer
-    assert "function destroyVisualizer()" in visualizer
-    assert "fallback" not in visualizer.lower()
-
-
-def test_butterchurn_backdrop_caps_render_rate_resolution_and_hidden_work() -> None:
-    visualizer = read_source("components/MusicButterchurnBackdrop.vue")
-    assert "function renderFrame(timestamp)" in visualizer
-    resize_block = visualizer.split("function resizeVisualizer()", 1)[1].split(
-        "async function ensureVisualizer", 1
-    )[0]
-    render_block = visualizer.split("function renderFrame(timestamp)", 1)[1].split(
-        "async function startRendering", 1
-    )[0]
-    mounted_block = visualizer.split("onMounted(() => {", 1)[1].split("});", 1)[0]
-    unmount_block = visualizer.split("onBeforeUnmount(() => {", 1)[1].split("});", 1)[0]
-
-    assert "const TARGET_FRAME_RATE = 30;" in visualizer
-    assert "const FRAME_INTERVAL_MS = 1000 / TARGET_FRAME_RATE;" in visualizer
-    assert "const MAX_PIXEL_RATIO = 1.25;" in visualizer
-    assert "Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO)" in resize_block
-    create_block = visualizer.split(
-        "butterchurn.value.createVisualizer(audioContext.value, canvasRef.value, {", 1
-    )[1].split("});", 1)[0]
-    assert "pixelRatio: 1," in create_block
-    assert 'document.visibilityState === "visible"' in visualizer
-    assert "timestamp - lastRenderAt >= FRAME_INTERVAL_MS" in render_block
-    assert "visualizer.value.render();" in render_block
-    assert 'window.addEventListener("resize", resizeVisualizer);' in mounted_block
-    assert 'document.addEventListener("visibilitychange", syncVisualizerState);' in mounted_block
-    assert 'window.removeEventListener("resize", resizeVisualizer);' in unmount_block
-    assert 'document.removeEventListener("visibilitychange", syncVisualizerState);' in unmount_block
-
-
-def test_butterchurn_backdrop_uses_full_spectrum_composition_without_hue_rotation() -> None:
-    visualizer = read_source("components/MusicButterchurnBackdrop.vue")
-    style = visualizer.split("<style scoped>", 1)[1].split("</style>", 1)[0]
-    normal_style, reduced_motion_style = style.split(
-        "@media (prefers-reduced-motion: reduce)", 1
-    )
-
-    active = css_declarations(normal_style, ".music-butterchurn-backdrop.active")
-    overlay = css_declarations(normal_style, ".music-butterchurn-backdrop::after")
-    canvas = css_declarations(normal_style, ".music-butterchurn-backdrop canvas")
-    reduced_motion_active = css_declarations(
-        reduced_motion_style, ".music-butterchurn-backdrop.active"
-    )
-
-    assert active["opacity"] == "0.9"
-    assert canvas["filter"].split() == ["saturate(1.5)", "contrast(1.08)"]
-    assert overlay["background"] == (
-        "radial-gradient(circle at 50% 42%, transparent 0 64%, "
-        "rgba(4, 11, 21, 0.24) 100%), "
-        "linear-gradient(180deg, rgba(4, 11, 21, 0.02), "
-        "rgba(4, 11, 21, 0.18))"
-    )
-    assert reduced_motion_active["opacity"] == "0"
+    assert "const TARGET_FRAME_RATE = 12;" in spectrum
+    assert "const BAR_COUNT = 12;" in spectrum
+    assert "const MAX_PIXEL_RATIO = 1.25;" in spectrum
+    assert "audioContext.value.createMediaElementSource(props.audioElement)" in spectrum
+    assert "audioContext.value.createAnalyser()" in spectrum
+    assert "analyserNode.value.fftSize = 64;" in spectrum
+    assert "sourceNode.value.connect(analyserNode.value)" in spectrum
+    assert "analyserNode.value.connect(audioContext.value.destination)" in spectrum
+    assert 'canvas.getContext("2d")' in spectrum
+    assert "analyserNode.value.getByteFrequencyData(frequencyData)" in spectrum
+    assert "requestAnimationFrame(renderFrame)" in spectrum
+    assert "cancelAnimationFrame(animationFrameId)" in spectrum
+    assert 'document.visibilityState === "visible"' in spectrum
+    assert 'document.addEventListener("visibilitychange", syncVisualizerState)' in spectrum
+    assert 'document.removeEventListener("visibilitychange", syncVisualizerState)' in spectrum
+    assert "butterchurn" not in spectrum.lower()
+    assert "webgl" not in spectrum.lower()
+    assert not (FRONTEND / "components/MusicButterchurnBackdrop.vue").exists()
