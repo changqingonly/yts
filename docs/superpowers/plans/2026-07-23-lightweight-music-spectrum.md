@@ -4,7 +4,7 @@
 
 **Goal:** Replace Butterchurn with a low-cost audio-reactive canvas in the music navigation item.
 
-**Architecture:** A Vue component builds a single Web Audio analyser graph around the existing audio element and draws twelve bars into a 2D canvas at 12 FPS. MusicPage retains its public wiring while all Butterchurn runtime code is removed.
+**Architecture:** A Vue component builds a single Web Audio analyser graph around the existing audio element and draws twelve bars into a 2D canvas at 4 FPS. MusicPage retains its public wiring while all Butterchurn runtime code is removed.
 
 **Tech Stack:** Vue 3, Web Audio API, Canvas 2D, pytest source-contract tests, Vite, Tauri 2.
 
@@ -27,7 +27,7 @@
 - Consumes: `audioElement: HTMLAudioElement | null`, `playing: boolean`
 - Produces: `visualizer-error(message: string)`
 
-- [ ] Write a failing source-contract test requiring `AnalyserNode`, Canvas 2D, twelve bars, 12 FPS, DPR 1.25, and visibility cleanup.
+- [ ] Write a failing source-contract test requiring `AnalyserNode`, Canvas 2D, twelve bars, 4 FPS, DPR 1.25, and visibility cleanup.
 - [ ] Run `pytest tests/test_music_page_lifecycle.py -q` and verify failure because the component does not exist.
 - [ ] Implement the component with one explicit audio graph and one animation-frame loop.
 - [ ] Run the focused lifecycle tests and Ruff until they pass.

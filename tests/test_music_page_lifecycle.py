@@ -254,7 +254,7 @@ def test_lightweight_spectrum_uses_bounded_canvas_and_analyser_work() -> None:
     assert spectrum_path.exists(), "lightweight spectrum component is required"
     spectrum = spectrum_path.read_text(encoding="utf-8")
 
-    assert "const TARGET_FRAME_RATE = 12;" in spectrum
+    assert "const TARGET_FRAME_RATE = 4;" in spectrum
     assert "const BAR_COUNT = 12;" in spectrum
     assert "const MAX_PIXEL_RATIO = 1.25;" in spectrum
     assert "audioContext.value.createMediaElementSource(props.audioElement)" in spectrum
@@ -264,8 +264,9 @@ def test_lightweight_spectrum_uses_bounded_canvas_and_analyser_work() -> None:
     assert "analyserNode.value.connect(audioContext.value.destination)" in spectrum
     assert 'canvas.getContext("2d")' in spectrum
     assert "analyserNode.value.getByteFrequencyData(frequencyData)" in spectrum
-    assert "requestAnimationFrame(renderFrame)" in spectrum
-    assert "cancelAnimationFrame(animationFrameId)" in spectrum
+    assert "renderTimerId = window.setTimeout(renderFrame, FRAME_INTERVAL_MS)" in spectrum
+    assert "clearTimeout(renderTimerId)" in spectrum
+    assert "requestAnimationFrame" not in spectrum
     assert 'document.visibilityState === "visible"' in spectrum
     assert 'document.addEventListener("visibilitychange", syncVisualizerState)' in spectrum
     assert 'document.removeEventListener("visibilitychange", syncVisualizerState)' in spectrum

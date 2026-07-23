@@ -14,10 +14,9 @@ const sourceNode = ref(null);
 const analyserNode = ref(null);
 let canvasContext = null;
 let frequencyData = null;
-let animationFrameId = 0;
-let lastRenderAt = 0;
+let renderTimerId = 0;
 
-const TARGET_FRAME_RATE = 12;
+const TARGET_FRAME_RATE = 4;
 const FRAME_INTERVAL_MS = 1000 / TARGET_FRAME_RATE;
 const MAX_PIXEL_RATIO = 1.25;
 const BAR_COUNT = 12;
@@ -66,11 +65,10 @@ function visualizerShouldRender() {
 }
 
 function stopRendering() {
-  if (animationFrameId) {
-    cancelAnimationFrame(animationFrameId);
-    animationFrameId = 0;
+  if (renderTimerId) {
+    clearTimeout(renderTimerId);
+    renderTimerId = 0;
   }
-  lastRenderAt = 0;
 }
 
 function drawSpectrum() {
@@ -104,17 +102,14 @@ function reportVisualizerError(err) {
   emit("visualizer-error", formatVisualizerError(err));
 }
 
-function renderFrame(timestamp) {
+function renderFrame() {
   if (!visualizerShouldRender() || !analyserNode.value) {
-    animationFrameId = 0;
+    renderTimerId = 0;
     return;
   }
   try {
-    if (timestamp - lastRenderAt >= FRAME_INTERVAL_MS) {
-      drawSpectrum();
-      lastRenderAt = timestamp;
-    }
-    animationFrameId = requestAnimationFrame(renderFrame);
+    drawSpectrum();
+    renderTimerId = window.setTimeout(renderFrame, FRAME_INTERVAL_MS);
   } catch (err) {
     reportVisualizerError(err);
   }
@@ -129,9 +124,8 @@ async function startRendering() {
     await context.resume();
   }
   if (!visualizerShouldRender()) return;
-  if (!animationFrameId) {
-    lastRenderAt = performance.now() - FRAME_INTERVAL_MS;
-    animationFrameId = requestAnimationFrame(renderFrame);
+  if (!renderTimerId) {
+    renderFrame();
   }
 }
 

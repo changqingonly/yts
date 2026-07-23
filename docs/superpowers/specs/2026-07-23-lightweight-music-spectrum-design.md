@@ -6,7 +6,7 @@ Replace the Butterchurn navigation background with a lightweight audio-reactive 
 
 ## Design
 
-`MusicSpectrumBackdrop.vue` owns one `AudioContext`, one `MediaElementAudioSourceNode`, and one `AnalyserNode`. The media source connects through the analyser to the audio destination, preserving audible playback while exposing frequency data. A 2D canvas renders twelve mirrored spectrum bars at 12 FPS using a DPR cap of 1.25. Rendering stops while playback is paused or the document is hidden; audio graph failures are emitted explicitly through `visualizer-error`.
+`MusicSpectrumBackdrop.vue` owns one `AudioContext`, one `MediaElementAudioSourceNode`, and one `AnalyserNode`. The media source connects through the analyser to the audio destination, preserving audible playback while exposing frequency data. A 2D canvas renders twelve mirrored spectrum bars at 4 FPS using a DPR cap of 1.25 and a timer that does not wake on every display refresh. Rendering stops while playback is paused or the document is hidden; audio graph failures are emitted explicitly through `visualizer-error`.
 
 The component never imports Butterchurn, loads presets, creates WebGL contexts, or silently falls back. `MusicPage.vue` keeps the existing prop and event contract but imports the new component. The obsolete Butterchurn component is deleted after the new component and tests pass.
 
