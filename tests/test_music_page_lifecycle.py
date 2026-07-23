@@ -291,6 +291,10 @@ def test_butterchurn_backdrop_caps_render_rate_resolution_and_hidden_work() -> N
     assert "const FRAME_INTERVAL_MS = 1000 / TARGET_FRAME_RATE;" in visualizer
     assert "const MAX_PIXEL_RATIO = 1.25;" in visualizer
     assert "Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO)" in resize_block
+    create_block = visualizer.split(
+        "butterchurn.value.createVisualizer(audioContext.value, canvasRef.value, {", 1
+    )[1].split("});", 1)[0]
+    assert "pixelRatio: 1," in create_block
     assert 'document.visibilityState === "visible"' in visualizer
     assert "timestamp - lastRenderAt >= FRAME_INTERVAL_MS" in render_block
     assert "visualizer.value.render();" in render_block

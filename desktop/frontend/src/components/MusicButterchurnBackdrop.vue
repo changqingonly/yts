@@ -85,6 +85,7 @@ async function ensureVisualizer() {
   sourceNode.value.connect(audioContext.value.destination);
   visualizer.value = butterchurn.value.createVisualizer(audioContext.value, canvasRef.value, {
     height: canvasRef.value.height,
+    pixelRatio: 1,
     width: canvasRef.value.width,
   });
   visualizer.value.connectAudio(sourceNode.value);
