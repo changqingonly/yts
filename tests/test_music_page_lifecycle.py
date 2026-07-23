@@ -275,6 +275,31 @@ def test_butterchurn_backdrop_uses_explicit_webgl_lifecycle_without_fallback() -
     assert "fallback" not in visualizer.lower()
 
 
+def test_butterchurn_backdrop_caps_render_rate_resolution_and_hidden_work() -> None:
+    visualizer = read_source("components/MusicButterchurnBackdrop.vue")
+    assert "function renderFrame(timestamp)" in visualizer
+    resize_block = visualizer.split("function resizeVisualizer()", 1)[1].split(
+        "async function ensureVisualizer", 1
+    )[0]
+    render_block = visualizer.split("function renderFrame(timestamp)", 1)[1].split(
+        "async function startRendering", 1
+    )[0]
+    mounted_block = visualizer.split("onMounted(() => {", 1)[1].split("});", 1)[0]
+    unmount_block = visualizer.split("onBeforeUnmount(() => {", 1)[1].split("});", 1)[0]
+
+    assert "const TARGET_FRAME_RATE = 30;" in visualizer
+    assert "const FRAME_INTERVAL_MS = 1000 / TARGET_FRAME_RATE;" in visualizer
+    assert "const MAX_PIXEL_RATIO = 1.25;" in visualizer
+    assert "Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO)" in resize_block
+    assert 'document.visibilityState === "visible"' in visualizer
+    assert "timestamp - lastRenderAt >= FRAME_INTERVAL_MS" in render_block
+    assert "visualizer.value.render();" in render_block
+    assert 'window.addEventListener("resize", resizeVisualizer);' in mounted_block
+    assert 'document.addEventListener("visibilitychange", syncVisualizerState);' in mounted_block
+    assert 'window.removeEventListener("resize", resizeVisualizer);' in unmount_block
+    assert 'document.removeEventListener("visibilitychange", syncVisualizerState);' in unmount_block
+
+
 def test_butterchurn_backdrop_uses_full_spectrum_composition_without_hue_rotation() -> None:
     visualizer = read_source("components/MusicButterchurnBackdrop.vue")
     style = visualizer.split("<style scoped>", 1)[1].split("</style>", 1)[0]

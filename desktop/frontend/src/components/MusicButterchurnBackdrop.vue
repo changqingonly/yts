@@ -15,8 +15,12 @@ const visualizer = ref(null);
 const butterchurn = ref(null);
 const butterchurnPresets = ref(null);
 let animationFrameId = 0;
+let lastRenderAt = 0;
 
 const PRESET_NAME = "Flexi, martin + geiss - dedicated to the sherwin maxawow";
+const TARGET_FRAME_RATE = 30;
+const FRAME_INTERVAL_MS = 1000 / TARGET_FRAME_RATE;
+const MAX_PIXEL_RATIO = 1.25;
 const WEBGL_OPTIONS = {
   alpha: false,
   antialias: false,
@@ -60,7 +64,7 @@ function requirePreset() {
 function resizeVisualizer() {
   const canvas = requireCanvas();
   const rect = canvas.getBoundingClientRect();
-  const pixelRatio = window.devicePixelRatio || 1;
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
   const width = Math.max(1, Math.round(rect.width * pixelRatio));
   const height = Math.max(1, Math.round(rect.height * pixelRatio));
   canvas.width = width;
@@ -93,20 +97,29 @@ function stopRendering() {
     cancelAnimationFrame(animationFrameId);
     animationFrameId = 0;
   }
+  lastRenderAt = 0;
 }
 
-function renderFrame() {
-  if (!props.playing || !visualizer.value) {
+function visualizerShouldRender() {
+  return props.playing && document.visibilityState === "visible";
+}
+
+function renderFrame(timestamp) {
+  if (!visualizerShouldRender() || !visualizer.value) {
     animationFrameId = 0;
     return;
   }
-  visualizer.value.render();
+  if (timestamp - lastRenderAt >= FRAME_INTERVAL_MS) {
+    visualizer.value.render();
+    lastRenderAt = timestamp;
+  }
   animationFrameId = requestAnimationFrame(renderFrame);
 }
 
 async function startRendering() {
+  if (!visualizerShouldRender()) return;
   await ensureVisualizer();
-  if (!visualizer.value || !audioContext.value) return;
+  if (!visualizerShouldRender() || !visualizer.value || !audioContext.value) return;
   if (audioContext.value.state === "suspended") {
     await audioContext.value.resume();
   }
@@ -145,7 +158,7 @@ function destroyVisualizer() {
 }
 
 function syncVisualizerState() {
-  if (props.playing) {
+  if (visualizerShouldRender()) {
     startRendering().catch(reportVisualizerError);
   } else {
     stopRendering();
@@ -154,11 +167,13 @@ function syncVisualizerState() {
 
 onMounted(() => {
   window.addEventListener("resize", resizeVisualizer);
+  document.addEventListener("visibilitychange", syncVisualizerState);
   syncVisualizerState();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", resizeVisualizer);
+  document.removeEventListener("visibilitychange", syncVisualizerState);
   destroyVisualizer();
 });
 
