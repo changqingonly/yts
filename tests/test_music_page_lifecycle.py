@@ -255,3 +255,19 @@ def test_playback_backdrop_has_no_continuous_runtime_work() -> None:
     assert "webgl" not in backdrop.lower()
     assert not (FRONTEND / "components/MusicButterchurnBackdrop.vue").exists()
     assert not (FRONTEND / "components/MusicSpectrumBackdrop.vue").exists()
+
+
+def test_audio_player_uses_event_driven_native_controls_without_media_chrome() -> None:
+    player = read_source("components/YtsAudioPlayer.vue")
+
+    assert 'import "media-chrome";' not in player
+    assert "<media-controller" not in player
+    assert "<media-time-range" not in player
+    assert "<media-control-bar" not in player
+    assert "<media-play-button" not in player
+    assert "<media-mute-button" not in player
+    assert "<media-volume-range" not in player
+    assert '<input\n        class="timeline-range"' in player
+    assert '@input="handleSeekInput"' in player
+    assert '@click="togglePlayback"' in player
+    assert '@click="toggleMuted"' in player

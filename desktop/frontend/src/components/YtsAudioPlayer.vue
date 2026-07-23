@@ -1,7 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Repeat1, Repeat2, Shuffle, SkipBack, SkipForward } from "@lucide/vue";
-import "media-chrome";
+import { Pause, Play, Repeat1, Repeat2, Shuffle, SkipBack, SkipForward, Volume2, VolumeX } from "@lucide/vue";
 
 const props = defineProps({
   track: { type: Object, default: null },
@@ -32,6 +31,8 @@ const duration = ref(0);
 const mediaReady = ref(false);
 const sourceLoadVersion = ref(0);
 const loadingSource = ref(false);
+const muted = ref(false);
+const volume = ref(1);
 
 const MEDIA_ERROR_MESSAGES = {
   1: "播放被中止",
@@ -177,6 +178,47 @@ function handleTimeUpdate(event) {
   setCurrentTime(event.currentTarget.currentTime);
 }
 
+async function togglePlayback() {
+  const player = requireAudio();
+  if (!sourceUrl.value) return;
+  if (!player.paused) {
+    player.pause();
+    return;
+  }
+  try {
+    await player.play();
+  } catch (err) {
+    emit("play-error", formatPlaybackError(err));
+  }
+}
+
+function handleSeekInput(event) {
+  const nextTime = Number(event.currentTarget.value);
+  if (!Number.isFinite(nextTime) || nextTime < 0) {
+    throw new Error("播放进度必须是非负数字");
+  }
+  requireAudio().currentTime = nextTime;
+  setCurrentTime(nextTime);
+}
+
+function handleVolumeInput(event) {
+  const nextVolume = Number(event.currentTarget.value);
+  if (!Number.isFinite(nextVolume) || nextVolume < 0 || nextVolume > 1) {
+    throw new Error("播放音量必须在 0 到 1 之间");
+  }
+  const player = requireAudio();
+  player.volume = nextVolume;
+  player.muted = false;
+  volume.value = nextVolume;
+  muted.value = false;
+}
+
+function toggleMuted() {
+  const player = requireAudio();
+  player.muted = !player.muted;
+  muted.value = player.muted;
+}
+
 async function handleLoadedMetadata(event) {
   loadingSource.value = false;
   mediaReady.value = true;
@@ -255,30 +297,38 @@ watch(
     :class="{ empty: !sourceUrl, playing }"
     :style="{ '--timeline-progress': timelineProgress }"
   >
-    <media-controller id="yts-audio-controller" class="media-shell" audio>
-      <audio
-        ref="audioRef"
-        slot="media"
-        :loop="repeatCurrent || loopMode === 'single'"
-        preload="metadata"
-        @durationchange="handleDurationChange"
-        @ended="handleEnded"
-        @error="handleAudioElementError"
-        @loadedmetadata="handleLoadedMetadata"
-        @pause="handlePause"
-        @play="handlePlay"
-        @timeupdate="handleTimeUpdate"
-      ></audio>
-    </media-controller>
+    <audio
+      ref="audioRef"
+      class="native-audio"
+      :loop="repeatCurrent || loopMode === 'single'"
+      preload="metadata"
+      @durationchange="handleDurationChange"
+      @ended="handleEnded"
+      @error="handleAudioElementError"
+      @loadedmetadata="handleLoadedMetadata"
+      @pause="handlePause"
+      @play="handlePlay"
+      @timeupdate="handleTimeUpdate"
+    ></audio>
 
     <div class="timeline-row" aria-label="播放进度">
       <div :class="['time-progress', timelineLabelPlacement]" aria-label="时间进度">
         {{ currentTimeLabel }}/{{ durationLabel }}
       </div>
-      <media-time-range mediacontroller="yts-audio-controller"></media-time-range>
+      <input
+        class="timeline-range"
+        type="range"
+        aria-label="seek"
+        min="0"
+        :max="duration || 0"
+        step="0.1"
+        :value="currentTime"
+        :disabled="!sourceUrl || duration <= 0"
+        @input="handleSeekInput"
+      />
     </div>
 
-    <media-control-bar class="media-controls" mediacontroller="yts-audio-controller">
+    <div class="media-controls">
         <div class="control-row">
           <div class="track-summary">
             <strong>{{ trackTitle }}</strong>
@@ -295,7 +345,17 @@ watch(
               >
                 <SkipBack :size="18" />
               </button>
-              <media-play-button mediacontroller="yts-audio-controller"></media-play-button>
+              <button
+                class="transport-button primary"
+                type="button"
+                :title="playing ? '暂停' : '播放'"
+                :aria-label="playing ? 'pause' : 'play'"
+                :disabled="!sourceUrl"
+                @click="togglePlayback"
+              >
+                <Pause v-if="playing" :size="20" />
+                <Play v-else :size="20" />
+              </button>
               <button
                 class="transport-button"
                 type="button"
@@ -307,8 +367,26 @@ watch(
               </button>
             </div>
             <div class="utility-group" aria-label="声音与播放模式">
-              <media-mute-button mediacontroller="yts-audio-controller"></media-mute-button>
-              <media-volume-range mediacontroller="yts-audio-controller"></media-volume-range>
+              <button
+                class="volume-button"
+                type="button"
+                :title="muted ? '取消静音' : '静音'"
+                :aria-label="muted ? 'unmute' : 'mute'"
+                @click="toggleMuted"
+              >
+                <VolumeX v-if="muted || volume === 0" :size="18" />
+                <Volume2 v-else :size="18" />
+              </button>
+              <input
+                class="volume-range"
+                type="range"
+                aria-label="volume"
+                min="0"
+                max="1"
+                step="0.05"
+                :value="volume"
+                @input="handleVolumeInput"
+              />
               <button class="mode-button" type="button" title="播放模式" @click="emit('cycle-loop')">
                 <component :is="loopIcon" :size="18" />
                 <span>{{ loopLabel }}</span>
@@ -316,7 +394,7 @@ watch(
             </div>
           </div>
         </div>
-    </media-control-bar>
+    </div>
   </section>
 </template>
 
@@ -341,17 +419,9 @@ watch(
   z-index: 1;
 }
 
-.media-shell {
-  background: transparent;
-  border: 0;
-  box-shadow: none;
-  color: var(--color-heading);
-  height: 0;
-  min-width: 0;
-  overflow: hidden;
-  pointer-events: none;
+.native-audio {
   position: absolute;
-  width: 0;
+  visibility: hidden;
 }
 
 .media-controls {
@@ -473,31 +543,15 @@ watch(
   grid-template-columns: minmax(48px, auto) minmax(0, 1fr) minmax(48px, auto);
 }
 
-media-play-button,
-media-mute-button,
-media-time-display,
-media-duration-display,
-media-time-range,
-media-volume-range {
-  border-radius: 8px;
-}
-
-media-time-range {
-  --media-control-background: transparent;
-  --media-control-hover-background: transparent;
-  --media-range-padding: 0px;
-  --media-range-padding-left: 0px;
-  --media-range-padding-right: 0px;
-  --media-range-track-height: 2px;
-  --media-range-track-background: rgba(216, 231, 245, 0.28);
-  --media-time-range-buffered-color: transparent;
-  --media-time-range-track-background: transparent;
-
-  background: transparent;
+.timeline-range {
+  accent-color: var(--color-brand-cyan);
+  height: 18px;
+  margin: 0;
   width: 100%;
 }
 
 .transport-button,
+.volume-button,
 .mode-button {
   align-items: center;
   background: rgba(9, 25, 43, 0.58);
@@ -514,6 +568,20 @@ media-time-range {
 .transport-button {
   height: 44px;
   width: 44px;
+}
+
+.transport-button.primary {
+  background: rgba(14, 165, 233, 0.34);
+}
+
+.volume-button {
+  height: 44px;
+  width: 44px;
+}
+
+.volume-range {
+  accent-color: var(--color-brand-cyan);
+  width: 96px;
 }
 
 .mode-button {
@@ -538,7 +606,7 @@ button:disabled {
     max-width: min(840px, 88vw);
   }
 
-  media-volume-range,
+  .volume-range,
   .mode-button span {
     display: none;
   }
@@ -568,10 +636,8 @@ button:disabled {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  media-time-display,
-  media-duration-display,
-  media-mute-button,
-  media-volume-range {
+  .volume-button,
+  .volume-range {
     display: none;
   }
 }
