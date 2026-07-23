@@ -39,6 +39,12 @@ class PlaylistUpload:
     mime: str | None
 
 
+@dataclass(frozen=True)
+class LocalImportFile:
+    path: Path
+    mime: str
+
+
 async def sync_playlist(
     session: AsyncSession,
     *,
@@ -127,12 +133,12 @@ async def store_song_upload(
     }
 
 
-async def local_import_path_for_user(
+async def local_import_file_for_user(
     session: AsyncSession,
     *,
     user_uuid: str,
     content_hash: str,
-) -> Path:
+) -> LocalImportFile:
     _validate_hash(content_hash, "hash")
     await _ensure_local_import_owner(session, user_uuid=user_uuid, content_hash=content_hash)
     blob = await session.get(LocalImportBlob, content_hash)
@@ -141,7 +147,7 @@ async def local_import_path_for_user(
     path = Path(blob.path)
     if not path.exists():
         raise AppError.not_found("local_import_file_missing", "local import file not found")
-    return path
+    return LocalImportFile(path=path, mime=blob.mime)
 
 
 async def _ensure_owner_row(session: AsyncSession, *, user_uuid: str, content_hash: str) -> None:

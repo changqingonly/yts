@@ -266,9 +266,9 @@ async def serve_song_file(
     user: CurrentUser,
     session: DbSession,
 ) -> FileResponse:
-    path = await music_domain.local_import_path_for_user(
+    local_file = await music_domain.local_import_file_for_user(
         session,
         user_uuid=user.user_uuid,
         content_hash=content_hash,
     )
-    return FileResponse(path)
+    return FileResponse(local_file.path, media_type=local_file.mime)

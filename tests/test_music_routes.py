@@ -604,6 +604,31 @@ def test_local_import_upload_allows_owned_local_file_sync() -> None:
         assert downloaded.content == audio_bytes
 
 
+def test_song_file_preserves_uploaded_mp4_audio_content_type() -> None:
+    audio_bytes = wav_bytes()
+    expected_hash = hashlib.sha256(audio_bytes).hexdigest()
+
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(
+            client, "mp4-playback@example.com", "Password123"
+        )["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        uploaded = client.post(
+            "/api/music/upload",
+            headers=headers,
+            files={"file": ("voice.mp4", audio_bytes, "audio/mp4")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        assert uploaded.json()["content_hash"] == expected_hash
+
+        downloaded = client.get(f"/api/music/file/{expected_hash}", headers=headers)
+
+        assert downloaded.status_code == 200, downloaded.text
+        assert downloaded.headers["content-type"] == "audio/mp4"
+        assert downloaded.content == audio_bytes
+
+
 def test_legacy_local_import_upload_route_is_removed() -> None:
     with TestClient(create_app()) as client:
         token = register_via_test_crypto(client, "removed-local-upload@example.com", "Password123")[
