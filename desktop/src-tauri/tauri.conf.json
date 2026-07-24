@@ -28,7 +28,22 @@
     "externalBin": ["binaries/yts-sidecar", "binaries/infer-gateway"],
     "macOS": {
       "signingIdentity": "yts-desktop-dev",
-      "hardenedRuntime": false
+      "hardenedRuntime": false,
+      "dmg": {
+        "background": "./images/dmg-background.png",
+        "windowSize": {
+          "width": 760,
+          "height": 480
+        },
+        "appPosition": {
+          "x": 190,
+          "y": 280
+        },
+        "applicationFolderPosition": {
+          "x": 570,
+          "y": 280
+        }
+      }
     }
   }
 }
