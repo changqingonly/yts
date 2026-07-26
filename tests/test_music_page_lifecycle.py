@@ -271,3 +271,93 @@ def test_audio_player_uses_event_driven_native_controls_without_media_chrome() -
     assert '@input="handleSeekInput"' in player
     assert '@click="togglePlayback"' in player
     assert '@click="toggleMuted"' in player
+
+
+def test_audio_player_timeline_has_cross_background_contrast() -> None:
+    player = read_source("components/YtsAudioPlayer.vue")
+    template = player.split("<template>", 1)[1].split("</template>", 1)[0]
+
+    for token in [
+        "appearance: none;",
+        "-webkit-appearance: none;",
+        '<span class="timeline-track">',
+        '<span class="timeline-track-progress"></span>',
+        ".timeline-track",
+        ".timeline-track-progress",
+        ".timeline-range::-webkit-slider-runnable-track",
+        ".timeline-range::-webkit-slider-thumb",
+        ".timeline-range::-moz-range-track",
+        ".timeline-range::-moz-range-progress",
+        ".timeline-range::-moz-range-thumb",
+        "var(--timeline-progress)",
+        "rgba(2, 8, 18, 0.92)",
+        ".timeline-range:focus-visible::-webkit-slider-thumb",
+    ]:
+        assert token in player
+
+    assert template.index('<span class="timeline-track">') < template.index(
+        'class="timeline-range"'
+    )
+
+    timeline_track_rule = player.split(".timeline-track {", 1)[1].split("}", 1)[0]
+    assert "height: 2px;" in timeline_track_rule
+    assert "box-shadow:" not in timeline_track_rule
+    assert "linear-gradient" not in timeline_track_rule
+
+    timeline_progress_rule = player.split(".timeline-track-progress {", 1)[1].split("}", 1)[0]
+    assert "background: var(--color-brand-cyan);" in timeline_progress_rule
+    assert "width: var(--timeline-progress);" in timeline_progress_rule
+
+    timeline_range_rule = player.split(".timeline-range {", 1)[1].split("}", 1)[0]
+    for reset in ["border: 0;", "box-shadow: none;", "padding: 0;"]:
+        assert reset in timeline_range_rule
+
+    for selector in [
+        ".timeline-range::-webkit-slider-runnable-track",
+        ".timeline-range::-moz-range-track",
+        ".timeline-range::-moz-range-progress",
+    ]:
+        rule = player.split(f"{selector} {{", 1)[1].split("}", 1)[0]
+        assert "background: transparent;" in rule
+        assert "border: 0;" in rule
+        assert "box-shadow: none;" in rule
+        assert "height: 2px;" in rule
+
+    for selector in [
+        ".timeline-range::-webkit-slider-thumb",
+        ".timeline-range::-moz-range-thumb",
+    ]:
+        rule = player.split(f"{selector} {{", 1)[1].split("}", 1)[0]
+        assert "height: 10px;" in rule
+        assert "width: 10px;" in rule
+
+
+def test_audio_player_volume_range_has_cross_background_contrast() -> None:
+    player = read_source("components/YtsAudioPlayer.vue")
+
+    for token in [
+        ".volume-range {",
+        "-webkit-appearance: none;",
+        ".volume-range::-webkit-slider-runnable-track",
+        ".volume-range::-webkit-slider-thumb",
+        ".volume-range::-moz-range-track",
+        ".volume-range::-moz-range-thumb",
+        "background: rgba(237, 246, 255, 0.72);",
+    ]:
+        assert token in player
+
+    for selector in [
+        ".volume-range::-webkit-slider-runnable-track",
+        ".volume-range::-moz-range-track",
+    ]:
+        rule = player.split(f"{selector} {{", 1)[1].split("}", 1)[0]
+        assert "height: 4px;" in rule
+        assert "background: rgba(237, 246, 255, 0.72);" in rule
+
+    for selector in [
+        ".volume-range::-webkit-slider-thumb",
+        ".volume-range::-moz-range-thumb",
+    ]:
+        rule = player.split(f"{selector} {{", 1)[1].split("}", 1)[0]
+        assert "height: 12px;" in rule
+        assert "width: 12px;" in rule

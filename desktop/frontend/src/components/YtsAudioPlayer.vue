@@ -315,6 +315,9 @@ watch(
       <div :class="['time-progress', timelineLabelPlacement]" aria-label="时间进度">
         {{ currentTimeLabel }}/{{ durationLabel }}
       </div>
+      <span class="timeline-track">
+        <span class="timeline-track-progress"></span>
+      </span>
       <input
         class="timeline-range"
         type="range"
@@ -544,10 +547,100 @@ watch(
 }
 
 .timeline-range {
-  accent-color: var(--color-brand-cyan);
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
+  cursor: pointer;
+  grid-area: 1 / 1;
   height: 18px;
   margin: 0;
+  outline: none;
+  padding: 0;
+  position: relative;
   width: 100%;
+  z-index: 1;
+}
+
+.timeline-track {
+  align-self: center;
+  background: rgba(237, 246, 255, 0.72);
+  border-radius: 999px;
+  display: block;
+  grid-area: 1 / 1;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  width: 100%;
+}
+
+.timeline-track-progress {
+  background: var(--color-brand-cyan);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  width: var(--timeline-progress);
+}
+
+.timeline-range::-webkit-slider-runnable-track {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
+  height: 2px;
+}
+
+.timeline-range::-webkit-slider-thumb {
+  appearance: none;
+  background: var(--color-heading);
+  border: 2px solid var(--color-brand-cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(2, 8, 18, 0.92), 0 1px 4px rgba(2, 8, 18, 0.4);
+  box-sizing: border-box;
+  height: 10px;
+  margin-top: -4px;
+  width: 10px;
+}
+
+.timeline-range::-moz-range-track {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
+  height: 2px;
+}
+
+.timeline-range::-moz-range-progress {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  box-shadow: none;
+  height: 2px;
+}
+
+.timeline-range::-moz-range-thumb {
+  background: var(--color-heading);
+  border: 2px solid var(--color-brand-cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(2, 8, 18, 0.92), 0 1px 4px rgba(2, 8, 18, 0.4);
+  box-sizing: border-box;
+  height: 10px;
+  width: 10px;
+}
+
+.timeline-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 1px rgba(2, 8, 18, 0.92), 0 0 0 3px rgba(34, 211, 238, 0.64);
+}
+
+.timeline-range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 1px rgba(2, 8, 18, 0.92), 0 0 0 3px rgba(34, 211, 238, 0.64);
+}
+
+.timeline-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 .transport-button,
@@ -580,8 +673,62 @@ watch(
 }
 
 .volume-range {
-  accent-color: var(--color-brand-cyan);
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  cursor: pointer;
+  height: 18px;
+  margin: 0;
+  outline: none;
+  padding: 0;
   width: 96px;
+}
+
+.volume-range::-webkit-slider-runnable-track {
+  background: rgba(237, 246, 255, 0.72);
+  border: 0;
+  border-radius: 999px;
+  height: 4px;
+}
+
+.volume-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--color-heading);
+  border: 2px solid var(--color-brand-cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(2, 8, 18, 0.92), 0 1px 4px rgba(2, 8, 18, 0.4);
+  box-sizing: border-box;
+  height: 12px;
+  margin-top: -4px;
+  width: 12px;
+}
+
+.volume-range::-moz-range-track {
+  background: rgba(237, 246, 255, 0.72);
+  border: 0;
+  border-radius: 999px;
+  height: 4px;
+}
+
+.volume-range::-moz-range-thumb {
+  background: var(--color-heading);
+  border: 2px solid var(--color-brand-cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(2, 8, 18, 0.92), 0 1px 4px rgba(2, 8, 18, 0.4);
+  box-sizing: border-box;
+  height: 12px;
+  width: 12px;
+}
+
+.volume-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 1px rgba(2, 8, 18, 0.92), 0 0 0 3px rgba(34, 211, 238, 0.64);
+}
+
+.volume-range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 1px rgba(2, 8, 18, 0.92), 0 0 0 3px rgba(34, 211, 238, 0.64);
 }
 
 .mode-button {
