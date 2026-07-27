@@ -51,6 +51,7 @@ _LEGACY_ENV_MAP = {
     "YTS_AUTH_ACCESS_TOKEN_TTL_SECONDS": ("auth", "access_token_ttl_seconds"),
     "YTS_AVATAR_STORAGE_DIR": ("storage", "avatar_dir"),
     "YTS_LOCAL_IMPORT_STORAGE_DIR": ("storage", "local_import_dir"),
+    "YTS_PLAYBACK_RENDITION_STORAGE_DIR": ("storage", "playback_rendition_dir"),
     "YTS_LANGGRAPH_CHECKPOINT_BACKEND": ("langgraph", "checkpoint_backend"),
     "YTS_LANGGRAPH_CHECKPOINT_POSTGRES_DSN": ("langgraph", "checkpoint_postgres_dsn"),
     "YTS_LOGGING_LEVEL": ("logging", "level"),
@@ -152,6 +153,7 @@ class AuthSettings(BaseModel):
 class StorageSettings(BaseModel):
     avatar_dir: str = "run/avatars"
     local_import_dir: str = "run/local_imports"
+    playback_rendition_dir: str = "run/playback_renditions"
 
 
 class LangGraphSettings(BaseModel):
@@ -396,6 +398,10 @@ class Settings(BaseSettings):
         return self.storage.local_import_dir
 
     @property
+    def playback_rendition_storage_dir(self) -> str:
+        return self.storage.playback_rendition_dir
+
+    @property
     def langgraph_checkpoint_backend(self) -> str:
         return self.langgraph.checkpoint_backend
 
@@ -583,6 +589,12 @@ def _coerce_legacy_settings(values: dict[str, Any]) -> dict[str, Any]:
     _move(coerced, "auth_access_token_ttl_seconds", "auth", "access_token_ttl_seconds")
     _move(coerced, "avatar_storage_dir", "storage", "avatar_dir")
     _move(coerced, "local_import_storage_dir", "storage", "local_import_dir")
+    _move(
+        coerced,
+        "playback_rendition_storage_dir",
+        "storage",
+        "playback_rendition_dir",
+    )
     _move(coerced, "langgraph_checkpoint_backend", "langgraph", "checkpoint_backend")
     _move(
         coerced,

@@ -653,7 +653,8 @@ def test_music_import_drawer_lists_existing_imports_by_recent_added_time() -> No
     assert "最近导入在前" in template
     assert 'v-for="item in importHistoryItems"' in template
     assert "{{ itemTitle(item) }}" in template
-    assert "{{ itemArtist(item) }} · {{ itemImportTimeLabel(item) }}" in template
+    assert "{{ itemPlaybackLabel(item) }}" in template
+    assert "function itemPlaybackLabel(item)" in script
     assert "暂无已导入歌曲" in template
     assert template.index('class="import-history"') < template.index('class="task-stack"')
 
@@ -681,7 +682,7 @@ def test_music_import_history_rows_match_playlist_and_history_item_style() -> No
 
     assert '<span class="history-icon">' in history_row_block
     assert "{{ itemTitle(item) }}" in history_row_block
-    assert "{{ itemArtist(item) }} · {{ itemImportTimeLabel(item) }}" in history_row_block
+    assert "{{ itemPlaybackLabel(item) }}" in history_row_block
     assert 'class="history-copy"' not in template
 
     for token in [

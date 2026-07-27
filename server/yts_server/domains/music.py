@@ -10,8 +10,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from yts_core.config import get_settings
 
-from ..db.models import LocalImportBlob, LocalImportOwner, MetaSong, MusicPlaylistItem
+from ..db.models import (
+    AudioPlaybackRendition,
+    LocalImportBlob,
+    LocalImportOwner,
+    MetaSong,
+    MusicPlaylistItem,
+)
 from ..errors import AppError
+from . import audio_renditions
 from .audio_metadata import extract_audio_metadata
 
 VALID_SOURCES = {"remote_song", "local_file", "external_url"}
@@ -122,6 +129,7 @@ async def store_song_upload(
             updated_at_ms=now_ms,
         )
         session.add(meta_song)
+    rendition = await audio_renditions.ensure_pending_rendition(session, digest)
     await session.flush()
     return {
         "content_hash": digest,
@@ -130,6 +138,8 @@ async def store_song_upload(
         "mime": mime or "application/octet-stream",
         "deduplicated": deduplicated,
         "meta_song": _meta_song_response(meta_song),
+        "playback_status": rendition.status,
+        "rendition_profile": rendition.profile,
     }
 
 
@@ -144,20 +154,49 @@ async def local_import_file_for_user(
     blob = await session.get(LocalImportBlob, content_hash)
     if blob is None:
         raise AppError.not_found("local_import_missing", "local import blob not found")
-    meta_song = await session.get(MetaSong, content_hash)
-    if meta_song is None:
+    rendition = await session.get(
+        AudioPlaybackRendition, audio_renditions.rendition_id(content_hash)
+    )
+    if rendition is None:
         raise AppError.not_found(
-            "local_import_metadata_missing", "local import metadata not found"
+            "playback_rendition_missing", "playback rendition does not exist"
         )
-    if not meta_song.container_format:
-        raise AppError.not_found(
-            "local_import_container_format_missing",
-            "local import container format not found",
+    if rendition.status != audio_renditions.READY:
+        raise AppError.conflict(
+            "playback_rendition_not_ready",
+            f"playback rendition is {rendition.status}",
         )
-    path = Path(blob.path)
+    if not rendition.output_path or not rendition.output_mime:
+        raise RuntimeError("ready playback rendition is missing artifact metadata")
+    path = Path(rendition.output_path)
     if not path.exists():
-        raise AppError.not_found("local_import_file_missing", "local import file not found")
-    return LocalImportFile(path=path, mime=meta_song.container_format)
+        raise AppError.not_found("playback_rendition_file_missing", "playback file not found")
+    return LocalImportFile(path=path, mime=rendition.output_mime)
+
+
+async def retry_failed_rendition(
+    session: AsyncSession, *, user_uuid: str, content_hash: str
+) -> AudioPlaybackRendition:
+    _validate_hash(content_hash, "hash")
+    await _ensure_local_import_owner(session, user_uuid=user_uuid, content_hash=content_hash)
+    rendition = await session.get(
+        AudioPlaybackRendition, audio_renditions.rendition_id(content_hash)
+    )
+    if rendition is None:
+        raise AppError.not_found(
+            "playback_rendition_missing", "playback rendition does not exist"
+        )
+    if rendition.status != audio_renditions.FAILED:
+        raise AppError.conflict(
+            "playback_rendition_not_failed",
+            f"only failed playback rendition can retry; current state is {rendition.status}",
+        )
+    rendition.status = audio_renditions.PENDING
+    rendition.error_code = None
+    rendition.error_message = None
+    rendition.updated_at_ms = time.time_ns() // 1_000_000
+    await session.flush()
+    return rendition
 
 
 async def _ensure_owner_row(session: AsyncSession, *, user_uuid: str, content_hash: str) -> None:

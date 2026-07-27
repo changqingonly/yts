@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,6 +14,8 @@ from yts_core.orchestration.checkpointing import close_langgraph_checkpointer
 
 from .cors import DiagnosticCORSMiddleware
 from .db.bootstrap import create_all_tables
+from .db.session import get_sessionmaker
+from .domains.audio_renditions import enqueue_missing_renditions, run_rendition_worker
 from .errors import register_error_handlers
 from .logging_config import configure_logging
 from .routes import (
@@ -40,9 +43,20 @@ async def lifespan(app: FastAPI):
         init_phoenix()
     if os.environ.get("YTS_SKIP_STARTUP_DB_BOOTSTRAP") != "1":
         await create_all_tables()
+    await enqueue_missing_renditions(get_sessionmaker())
+    stop_event = asyncio.Event()
+    wake_event = asyncio.Event()
+    wake_event.set()
+    app.state.rendition_wake_event = wake_event
+    worker_task = asyncio.create_task(
+        run_rendition_worker(stop_event=stop_event, wake_event=wake_event)
+    )
     try:
         yield
     finally:
+        stop_event.set()
+        wake_event.set()
+        await worker_task
         close_langgraph_checkpointer()
 
 

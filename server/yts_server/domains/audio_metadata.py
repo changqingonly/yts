@@ -5,11 +5,32 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import mutagen
+from mutagen.flac import FLAC
+from mutagen.mp3 import MP3
+from mutagen.mp4 import MP4
+from mutagen.oggvorbis import OggVorbis
+from mutagen.wave import WAVE
 
 from ..errors import AppError
 
 EXTRACTOR_NAME = "mutagen"
 EXTRACTOR_VERSION = getattr(mutagen, "version_string", "unknown")
+
+
+@dataclass(frozen=True)
+class AudioFormat:
+    file_format: str
+    container_mime: str
+    codec_name: str
+
+
+AUDIO_FORMATS: dict[type, AudioFormat] = {
+    WAVE: AudioFormat("wav", "audio/wav", "pcm_s16le"),
+    MP3: AudioFormat("mp3", "audio/mpeg", "mp3"),
+    FLAC: AudioFormat("flac", "audio/flac", "flac"),
+    OggVorbis: AudioFormat("ogg", "audio/ogg", "vorbis"),
+    MP4: AudioFormat("m4a", "audio/mp4", "aac"),
+}
 
 
 @dataclass(frozen=True)
@@ -42,29 +63,26 @@ def extract_audio_metadata(path: Path, *, mime: str, filename: str) -> AudioMeta
             f"audio duration is missing: {filename}",
             "file",
         )
-    file_format = _format_from_mime_or_name(mime, filename)
+    audio_format = AUDIO_FORMATS.get(type(audio))
+    if audio_format is None:
+        raise AppError.bad_request(
+            "unsupported_audio_format",
+            f"unsupported audio container: {type(audio).__name__}",
+            "file",
+        )
     return AudioMetadata(
-        file_format=file_format,
+        file_format=audio_format.file_format,
         duration_ms=max(1, round(float(length) * 1000)),
         sample_rate_hz=_optional_int(getattr(audio.info, "sample_rate", None)),
         bit_rate_bps=_optional_int(getattr(audio.info, "bitrate", None)),
         channels=_optional_int(getattr(audio.info, "channels", None)),
-        codec_name=_codec_name(audio.info, file_format),
+        codec_name=_codec_name(audio.info, audio_format),
         codec_profile=getattr(audio.info, "codec_profile", None),
-        container_format=audio.mime[0] if getattr(audio, "mime", None) else mime or None,
+        container_format=audio_format.container_mime,
         extracted_at_ms=time.time_ns() // 1_000_000,
         extractor_name=EXTRACTOR_NAME,
         extractor_version=EXTRACTOR_VERSION,
     )
-
-
-def _format_from_mime_or_name(mime: str, filename: str) -> str:
-    suffix = Path(filename).suffix.lower().removeprefix(".")
-    if suffix:
-        return suffix
-    if "/" in mime:
-        return mime.rsplit("/", 1)[1].lower()
-    raise AppError.bad_request("unsupported_audio_file", "audio file format is missing", "file")
 
 
 def _optional_int(value: object) -> int | None:
@@ -73,10 +91,8 @@ def _optional_int(value: object) -> int | None:
     return int(value)
 
 
-def _codec_name(info: object, file_format: str) -> str:
+def _codec_name(info: object, audio_format: AudioFormat) -> str:
     codec = getattr(info, "codec", None)
     if codec:
         return str(codec)
-    if file_format == "wav":
-        return "pcm_s16le"
-    return type(info).__name__
+    return audio_format.codec_name

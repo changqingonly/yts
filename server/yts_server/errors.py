@@ -39,6 +39,10 @@ class AppError(Exception):
         return cls(status_code=404, code=code, message=message)
 
     @classmethod
+    def conflict(cls, code: str, message: str) -> AppError:
+        return cls(status_code=409, code=code, message=message)
+
+    @classmethod
     def quota_exhausted(cls, scene: str) -> AppError:
         return cls(
             status_code=429,

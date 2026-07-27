@@ -82,6 +82,12 @@ export function reorderPlaylistItems({ playlistId: rawPlaylistId, orderedItemIds
   });
 }
 
+export function retrySongRendition({ contentHash: rawContentHash } = {}) {
+  if (!rawContentHash) throw new Error("retrySongRendition requires contentHash");
+  const contentHash = encodeURIComponent(rawContentHash);
+  return requestJson(`/api/music/renditions/${contentHash}/retry`, { method: "POST" });
+}
+
 export async function loadSongObjectUrl({ contentHash: rawContentHash, target } = {}) {
   if (!rawContentHash) throw new Error("loadSongObjectUrl requires contentHash");
   const contentHash = encodeURIComponent(rawContentHash);

@@ -14,6 +14,15 @@ def isolated_lifespan_settings(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Ite
     monkeypatch.setenv("YTS_PROFILE", "local")
     monkeypatch.setenv("YTS_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     monkeypatch.setenv("YTS_INFERENCE_BACKEND", "local")
+
+    async def idle_worker(*, stop_event, wake_event) -> None:
+        await stop_event.wait()
+
+    async def no_missing_renditions(sessionmaker) -> int:
+        return 0
+
+    monkeypatch.setattr(server_main, "run_rendition_worker", idle_worker)
+    monkeypatch.setattr(server_main, "enqueue_missing_renditions", no_missing_renditions)
     reset_cached_db_engine()
     yield
     reset_cached_db_engine()
@@ -50,3 +59,44 @@ def test_lifespan_skips_db_bootstrap_after_servctl_preflight(
         response = client.get("/health")
 
     assert response.status_code == 200
+
+
+def test_lifespan_starts_and_stops_audio_rendition_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def run_worker(*, stop_event, wake_event) -> None:
+        calls.append("started")
+        assert wake_event.is_set()
+        await stop_event.wait()
+        calls.append("stopped")
+
+    monkeypatch.setattr(server_main, "run_rendition_worker", run_worker)
+
+    with TestClient(server_main.create_app()) as client:
+        assert client.get("/health").status_code == 200
+        assert calls == ["started"]
+
+    assert calls == ["started", "stopped"]
+
+
+def test_lifespan_enqueues_historical_audio_before_starting_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def enqueue_missing(sessionmaker) -> int:
+        calls.append("backfilled")
+        return 1
+
+    async def run_worker(*, stop_event, wake_event) -> None:
+        calls.append("worker_started")
+        await stop_event.wait()
+
+    monkeypatch.setattr(server_main, "enqueue_missing_renditions", enqueue_missing)
+    monkeypatch.setattr(server_main, "run_rendition_worker", run_worker)
+
+    with TestClient(server_main.create_app()) as client:
+        assert client.get("/health").status_code == 200
+        assert calls == ["backfilled", "worker_started"]

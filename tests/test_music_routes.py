@@ -4,14 +4,210 @@ import hashlib
 import io
 import os
 import sqlite3
+import time
 import wave
 from collections.abc import Iterator
+from pathlib import Path
 
+import mutagen
 import pytest
 from conftest import reset_cached_db_engine
 from fastapi.testclient import TestClient
+from sqlalchemy import UniqueConstraint
 from test_auth_profile_routes import register_via_test_crypto
+from yts_server.db.models import AudioPlaybackRendition
+from yts_server.domains.audio_renditions import PLAYBACK_PROFILE
 from yts_server.main import create_app
+
+
+def test_audio_playback_rendition_schema_has_durable_queue_constraints() -> None:
+    table = AudioPlaybackRendition.__table__
+    unique_columns = {
+        tuple(column.name for column in constraint.columns)
+        for constraint in table.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+
+    assert ("original_content_hash", "profile") in unique_columns
+    assert table.c.status.index is True
+
+
+def test_upload_enqueues_rendition_and_file_endpoint_requires_ready_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    async def no_pending_rendition(*args, **kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        "yts_server.domains.audio_renditions.process_next_pending_rendition",
+        no_pending_rendition,
+    )
+    audio_bytes = (Path(__file__).parent / "fixtures/audio/sample.ogg").read_bytes()
+    expected_hash = hashlib.sha256(audio_bytes).hexdigest()
+
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(
+            client, "rendition-contract@example.com", "Password123"
+        )["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        uploaded = client.post(
+            "/api/music/upload",
+            headers=headers,
+            files={"file": ("sample.ogg", audio_bytes, "audio/ogg")},
+        )
+
+        assert uploaded.status_code == 200, uploaded.text
+        assert uploaded.json()["content_hash"] == expected_hash
+        assert uploaded.json()["playback_status"] == "pending"
+        assert uploaded.json()["rendition_profile"] == PLAYBACK_PROFILE
+
+        pending = client.get(f"/api/music/file/{expected_hash}", headers=headers)
+        assert pending.status_code == 409, pending.text
+        assert pending.json()["code"] == "playback_rendition_not_ready"
+
+        rendition_bytes = (Path(__file__).parent / "fixtures/audio/sample.m4a").read_bytes()
+        rendition_path = tmp_path / "ready-rendition"
+        rendition_path.write_bytes(rendition_bytes)
+        db_path = os.environ["YTS_DATABASE_URL"].removeprefix("sqlite+aiosqlite:///")
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "UPDATE audio_playback_rendition SET "
+                "status = 'ready', output_hash = ?, output_path = ?, output_mime = 'audio/mp4', "
+                "size_bytes = ?, updated_at_ms = updated_at_ms + 1 "
+                "WHERE original_content_hash = ? AND profile = ?",
+                (
+                    hashlib.sha256(rendition_bytes).hexdigest(),
+                    str(rendition_path),
+                    len(rendition_bytes),
+                    expected_hash,
+                    PLAYBACK_PROFILE,
+                ),
+            )
+
+        ready = client.get(f"/api/music/file/{expected_hash}", headers=headers)
+        assert ready.status_code == 200, ready.text
+        assert ready.headers["content-type"] == "audio/mp4"
+        assert ready.content == rendition_bytes
+
+
+def test_playlist_exposes_failed_rendition_and_retry_returns_pending(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_pending_rendition(*args, **kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        "yts_server.domains.audio_renditions.process_next_pending_rendition",
+        no_pending_rendition,
+    )
+    audio_bytes = (Path(__file__).parent / "fixtures/audio/sample.flac").read_bytes()
+
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(
+            client, "rendition-retry@example.com", "Password123"
+        )["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        content_hash = client.post(
+            "/api/music/upload",
+            headers=headers,
+            files={"file": ("sample.flac", audio_bytes, "audio/flac")},
+        ).json()["content_hash"]
+        playlist_id = client.post(
+            "/api/music/playlists/default", headers=headers, json={"scope": "cloud"}
+        ).json()["id"]
+        client.post(
+            f"/api/music/playlists/{playlist_id}/items",
+            headers=headers,
+            json={
+                "items": [
+                    {
+                        "content_hash": content_hash,
+                        "title_alias": "FLAC sample",
+                        "artist_alias": "",
+                        "device_id": "device-a",
+                    }
+                ]
+            },
+        )
+        db_path = os.environ["YTS_DATABASE_URL"].removeprefix("sqlite+aiosqlite:///")
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "UPDATE audio_playback_rendition SET status = 'failed', "
+                "error_code = 'ffmpeg_failed', error_message = 'decoder rejected input' "
+                "WHERE original_content_hash = ? AND profile = ?",
+                (content_hash, PLAYBACK_PROFILE),
+            )
+
+        listed = client.get(f"/api/music/playlists/{playlist_id}/items", headers=headers)
+        assert listed.status_code == 200, listed.text
+        item = listed.json()["items"][0]
+        assert item["playback_status"] == "failed"
+        assert item["rendition_profile"] == PLAYBACK_PROFILE
+        assert item["playback_error_code"] == "ffmpeg_failed"
+        assert item["playback_error_message"] == "decoder rejected input"
+
+        retried = client.post(
+            f"/api/music/renditions/{content_hash}/retry", headers=headers
+        )
+        assert retried.status_code == 200, retried.text
+        assert retried.json()["playback_status"] == "pending"
+
+
+def test_ogg_upload_worker_generates_canonical_m4a_playback() -> None:
+    audio_bytes = (Path(__file__).parent / "fixtures/audio/sample.ogg").read_bytes()
+
+    with TestClient(create_app()) as client:
+        token = register_via_test_crypto(
+            client, "rendition-worker@example.com", "Password123"
+        )["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        uploaded = client.post(
+            "/api/music/upload",
+            headers=headers,
+            files={"file": ("sample.ogg", audio_bytes, "audio/ogg")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        content_hash = uploaded.json()["content_hash"]
+
+        playlist_id = client.post(
+            "/api/music/playlists/default", headers=headers, json={"scope": "cloud"}
+        ).json()["id"]
+        appended = client.post(
+            f"/api/music/playlists/{playlist_id}/items",
+            headers=headers,
+            json={
+                "items": [
+                    {
+                        "content_hash": content_hash,
+                        "title_alias": "Ogg sample",
+                        "artist_alias": "",
+                        "device_id": "device-a",
+                    }
+                ]
+            },
+        )
+        assert appended.status_code == 200, appended.text
+
+        deadline = time.monotonic() + 5
+        while True:
+            listed = client.get(f"/api/music/playlists/{playlist_id}/items", headers=headers)
+            assert listed.status_code == 200, listed.text
+            item = listed.json()["items"][0]
+            if item["playback_status"] not in {"pending", "processing"}:
+                break
+            assert time.monotonic() < deadline, item
+            time.sleep(0.05)
+
+        assert item["playback_status"] == "ready", item
+        assert item["rendition_profile"] == PLAYBACK_PROFILE
+
+        playback = client.get(f"/api/music/file/{content_hash}", headers=headers)
+        assert playback.status_code == 200, playback.text
+        assert playback.headers["content-type"] == "audio/mp4"
+        parsed = mutagen.File(io.BytesIO(playback.content))
+        assert parsed is not None
+        assert "audio/mp4" in parsed.mime
+        assert parsed.info.channels == 2
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +219,9 @@ def isolated_sqlite_db(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[No
         "test-secret-that-is-long-enough-for-hs256-tests",
     )
     monkeypatch.setenv("YTS_LOCAL_IMPORT_STORAGE_DIR", str(tmp_path / "local-imports"))
+    monkeypatch.setenv(
+        "YTS_PLAYBACK_RENDITION_STORAGE_DIR", str(tmp_path / "playback-renditions")
+    )
 
     reset_cached_db_engine()
     yield
@@ -600,11 +799,11 @@ def test_local_import_upload_allows_owned_local_file_sync() -> None:
             f"/api/music/file/{expected_hash}",
             headers=headers,
         )
-        assert downloaded.status_code == 200
-        assert downloaded.content == audio_bytes
+        assert downloaded.status_code == 409
+        assert downloaded.json()["code"] == "playback_rendition_not_ready"
 
 
-def test_song_file_uses_extracted_container_mime_instead_of_upload_mime() -> None:
+def test_upload_uses_detected_container_metadata_instead_of_upload_mime() -> None:
     audio_bytes = wav_bytes()
     expected_hash = hashlib.sha256(audio_bytes).hexdigest()
 
@@ -626,9 +825,8 @@ def test_song_file_uses_extracted_container_mime_instead_of_upload_mime() -> Non
 
         downloaded = client.get(f"/api/music/file/{expected_hash}", headers=headers)
 
-        assert downloaded.status_code == 200, downloaded.text
-        assert downloaded.headers["content-type"] == "audio/wav"
-        assert downloaded.content == audio_bytes
+        assert downloaded.status_code == 409, downloaded.text
+        assert downloaded.json()["code"] == "playback_rendition_not_ready"
 
 
 def test_song_file_fails_explicitly_when_extracted_metadata_is_missing() -> None:
@@ -652,10 +850,26 @@ def test_song_file_fails_explicitly_when_extracted_metadata_is_missing() -> None
         with sqlite3.connect(db_path) as conn:
             conn.execute("DELETE FROM meta_song WHERE content_hash = ?", (expected_hash,))
 
-        downloaded = client.get(f"/api/music/file/{expected_hash}", headers=headers)
+        playlist_id = client.post(
+            "/api/music/playlists/default", headers=headers, json={"scope": "cloud"}
+        ).json()["id"]
+        appended = client.post(
+            f"/api/music/playlists/{playlist_id}/items",
+            headers=headers,
+            json={
+                "items": [
+                    {
+                        "content_hash": expected_hash,
+                        "title_alias": "missing metadata",
+                        "artist_alias": "",
+                        "device_id": "device-a",
+                    }
+                ]
+            },
+        )
 
-        assert downloaded.status_code == 404, downloaded.text
-        assert downloaded.json()["code"] == "local_import_metadata_missing"
+        assert appended.status_code == 400, appended.text
+        assert appended.json()["code"] == "meta_song_required"
 
 
 def test_legacy_local_import_upload_route_is_removed() -> None:

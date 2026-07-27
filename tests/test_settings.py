@@ -34,6 +34,7 @@ def test_settings_exposes_typed_config_sections() -> None:
         auth_access_token_ttl_seconds=123,
         avatar_storage_dir="run/test-avatars",
         local_import_storage_dir="run/test-imports",
+        playback_rendition_storage_dir="run/test-renditions",
         billing_enabled=True,
         allow_custom_skills=False,
         phoenix_enabled=True,
@@ -78,6 +79,7 @@ def test_settings_exposes_typed_config_sections() -> None:
     assert settings.auth.access_token_ttl_seconds == 123
     assert settings.storage.avatar_dir == "run/test-avatars"
     assert settings.storage.local_import_dir == "run/test-imports"
+    assert settings.storage.playback_rendition_dir == "run/test-renditions"
     assert settings.features.billing_enabled is True
     assert settings.features.allow_custom_skills is False
     assert settings.observability.phoenix_enabled is True
@@ -113,6 +115,7 @@ def test_settings_exposes_typed_config_sections() -> None:
         "http://127.0.0.1:1420",
         "https://studio.example.test",
     ]
+    assert settings.playback_rendition_storage_dir == "run/test-renditions"
 
 
 def test_get_settings_is_cached_until_reloaded(monkeypatch: pytest.MonkeyPatch) -> None:

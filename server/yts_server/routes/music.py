@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -244,6 +244,7 @@ async def reorder_playlist_items(
 
 @router.post("/upload")
 async def upload_song(
+    request: Request,
     user: CurrentUser,
     session: DbSession,
     file: Annotated[UploadFile, File()],
@@ -257,6 +258,7 @@ async def upload_song(
         content=content,
     )
     await session.commit()
+    request.app.state.rendition_wake_event.set()
     return response
 
 
@@ -272,3 +274,24 @@ async def serve_song_file(
         content_hash=content_hash,
     )
     return FileResponse(local_file.path, media_type=local_file.mime)
+
+
+@router.post("/renditions/{content_hash}/retry")
+async def retry_song_rendition(
+    content_hash: str,
+    request: Request,
+    user: CurrentUser,
+    session: DbSession,
+) -> dict:
+    rendition = await music_domain.retry_failed_rendition(
+        session,
+        user_uuid=user.user_uuid,
+        content_hash=content_hash,
+    )
+    await session.commit()
+    request.app.state.rendition_wake_event.set()
+    return {
+        "content_hash": content_hash,
+        "playback_status": rendition.status,
+        "rendition_profile": rendition.profile,
+    }

@@ -7,8 +7,15 @@ from dataclasses import dataclass
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.models import LocalImportOwner, MetaSong, MusicPlaylist, MusicPlaylistItem
+from ..db.models import (
+    AudioPlaybackRendition,
+    LocalImportOwner,
+    MetaSong,
+    MusicPlaylist,
+    MusicPlaylistItem,
+)
 from ..errors import AppError
+from .audio_renditions import PLAYBACK_PROFILE
 
 MAX_PLAYLIST_ITEMS = 2000
 VALID_SCOPES = {"cloud", "local"}
@@ -288,9 +295,12 @@ async def playlist_items_response(
     meta_songs = await _meta_songs_by_hash(
         session, content_hashes=[item.content_hash for item in items if item.content_hash]
     )
+    renditions = await _renditions_by_hash(
+        session, content_hashes=[item.content_hash for item in items if item.content_hash]
+    )
     return {
         "playlist": playlist_response(playlist),
-        "items": [_playlist_item_response(item, meta_songs) for item in items],
+        "items": [_playlist_item_response(item, meta_songs, renditions) for item in items],
     }
 
 
@@ -405,7 +415,25 @@ async def _meta_songs_by_hash(
     return {song.content_hash: song for song in result.scalars().all()}
 
 
-def _playlist_item_response(item: MusicPlaylistItem, meta_songs: dict[str, MetaSong]) -> dict:
+async def _renditions_by_hash(
+    session: AsyncSession, *, content_hashes: list[str]
+) -> dict[str, AudioPlaybackRendition]:
+    if not content_hashes:
+        return {}
+    result = await session.execute(
+        select(AudioPlaybackRendition).where(
+            AudioPlaybackRendition.original_content_hash.in_(set(content_hashes)),
+            AudioPlaybackRendition.profile == PLAYBACK_PROFILE,
+        )
+    )
+    return {rendition.original_content_hash: rendition for rendition in result.scalars().all()}
+
+
+def _playlist_item_response(
+    item: MusicPlaylistItem,
+    meta_songs: dict[str, MetaSong],
+    renditions: dict[str, AudioPlaybackRendition],
+) -> dict:
     if item.content_hash is None:
         raise AppError.bad_request(
             "meta_song_required",
@@ -418,6 +446,12 @@ def _playlist_item_response(item: MusicPlaylistItem, meta_songs: dict[str, MetaS
             "meta_song_required",
             "content_hash must reference an existing meta_song",
             "content_hash",
+        )
+    rendition = renditions.get(item.content_hash)
+    if rendition is None:
+        raise AppError.not_found(
+            "playback_rendition_missing",
+            "playlist item playback rendition does not exist",
         )
     return {
         "id": item.id,
@@ -433,6 +467,10 @@ def _playlist_item_response(item: MusicPlaylistItem, meta_songs: dict[str, MetaS
         "op_clock": item.op_clock,
         "device_id": item.device_id,
         "meta_song": _meta_song_response(meta_song),
+        "playback_status": rendition.status,
+        "rendition_profile": rendition.profile,
+        "playback_error_code": rendition.error_code,
+        "playback_error_message": rendition.error_message,
     }
 
 

@@ -3,13 +3,16 @@
 # 铁律:模型权重绝不打包(Candle 在 Rust 侧)。产物需 codesign + notarize(见 wiki Platform-Split)。
 # 构建:`uv run pyinstaller desktop/sidecar/build_macos.spec`(在仓库根)。
 
+from PyInstaller.utils.hooks import collect_data_files
+
 block_cipher = None
+imageio_ffmpeg_datas = collect_data_files('imageio_ffmpeg')
 
 a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=imageio_ffmpeg_datas,
     hiddenimports=[
         'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto',
         'uvicorn.protocols.websockets.auto', 'uvicorn.lifespan.on', 'aiosqlite',

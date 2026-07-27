@@ -7,6 +7,7 @@ import {
   listPlaylistItems,
   listPlaylists,
   reorderPlaylistItems,
+  retrySongRendition,
   restorePlaylistItem,
   syncPlaylist,
 } from "../services/music";
@@ -158,6 +159,11 @@ export const usePlaylistStore = defineStore("playlist", {
       this.playlistItems = normalizePlaylistItems(data.items, "reorder");
       return this.playlistItems;
     },
+    async retryRendition(contentHash) {
+      if (!contentHash) throw new Error("retryRendition requires contentHash");
+      await retrySongRendition({ contentHash });
+      return this.loadItems();
+    },
     async sync({ uploads = [] } = {}) {
       this.syncing = true;
       this.lastError = "";
@@ -192,8 +198,14 @@ function normalizePlaylistItem(item) {
   if (!item?.id) throw new Error("playlist item response requires id");
   if (!item.content_hash) throw new Error("playlist item requires content_hash");
   if (!item.meta_song) throw new Error("playlist item requires meta_song");
+  if (!VALID_PLAYBACK_STATUSES.has(item.playback_status)) {
+    throw new Error("playlist item requires valid playback_status");
+  }
+  if (!item.rendition_profile) throw new Error("playlist item requires rendition_profile");
   return item;
 }
+
+const VALID_PLAYBACK_STATUSES = new Set(["pending", "processing", "ready", "failed"]);
 
 function normalizePlaylistItems(items, source) {
   if (!Array.isArray(items)) throw new Error(`${source} response requires items`);

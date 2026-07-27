@@ -105,6 +105,23 @@ bash scripts/dev_gateway.sh           # 起 GGML 网关(:8799),自动加载上�
 ```
 
 ## 打包 macOS 桌面应用
+
+### 音频播放副本
+
+上传的音频原文件按 SHA-256 永久保存，服务端异步生成统一的
+`aac_lc_m4a_160k_v1` 播放副本。浏览器和 Tauri WebView 只读取状态为 `ready` 的
+`audio/mp4` 副本，不会回退到原格式。FFmpeg 由 `imageio-ffmpeg` 随 Python 服务和
+macOS sidecar 分发。
+
+部署新版本时先执行数据库迁移，再回填历史音频：
+
+```bash
+uv run --package yts-server alembic -c server/alembic.ini upgrade head
+uv run yts-audio-backfill
+```
+
+播放副本目录由 `YTS_PLAYBACK_RENDITION_STORAGE_DIR` 配置。回填命令可重复执行；若任一
+任务最终为 `failed`，命令输出汇总并以非零状态退出，需排查错误后通过重试接口重新入队。
 上面的 `servctl`/`dev_gateway.sh`/`dev_desktop.sh` 是**开发态**:各进程手动起、依赖本机
 已 `git clone` + `cmake build` 好的 `desktop/vendor/`。**打包态**(给终端用户的 `.app`/`.dmg`)不要求
 用户装编译工具链,由 Tauri 壳自己管理进程 + 首次运行下载模型:

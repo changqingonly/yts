@@ -31,8 +31,10 @@ const loopMode = ref("queue");
 const playHistory = ref([]);
 const trackUrlByHash = ref(new Map());
 const resumeSeekTime = ref(null);
+let renditionRefreshTimer = null;
 
 const PLAYBACK_RESUME_STORAGE_KEY = "yts-music-playback-state";
+const RENDITION_REFRESH_DELAY_MS = 1500;
 
 const loopModes = [
   { key: "queue", label: "循环播放" },
@@ -47,6 +49,9 @@ const tracks = computed(() =>
     artist: item.artist_alias || "未知艺人",
     contentHash: item.content_hash,
     metaSong: item.meta_song,
+    playbackStatus: item.playback_status,
+    playbackErrorCode: item.playback_error_code,
+    playbackErrorMessage: item.playback_error_message,
     url: playableTrackUrl(item),
   })),
 );
@@ -95,6 +100,7 @@ async function refreshPlaylist() {
     await loadPlayableTrackUrls(playlist.activeItems);
     player.setQueue(tracks.value);
     restorePlaybackResumeState();
+    scheduleRenditionRefresh();
   } catch (err) {
     error.value = formatMusicLoadError(err);
   }
@@ -109,6 +115,7 @@ async function loadPlayableTrackUrls(items) {
       if (!item.content_hash) {
         throw new Error("playlist item requires content_hash");
       }
+      if (item.playback_status !== "ready") continue;
       const existingUrl = previousUrls.get(item.content_hash);
       if (existingUrl) {
         nextUrls.set(item.content_hash, existingUrl);
@@ -131,6 +138,21 @@ async function loadPlayableTrackUrls(items) {
     }
   }
   trackUrlByHash.value = nextUrls;
+}
+
+function scheduleRenditionRefresh() {
+  if (renditionRefreshTimer != null) {
+    clearTimeout(renditionRefreshTimer);
+    renditionRefreshTimer = null;
+  }
+  const hasUnfinishedRendition = playlist.activeItems.some(
+    (item) => item.playback_status === "pending" || item.playback_status === "processing",
+  );
+  if (!hasUnfinishedRendition) return;
+  renditionRefreshTimer = setTimeout(async () => {
+    renditionRefreshTimer = null;
+    await refreshPlaylist();
+  }, RENDITION_REFRESH_DELAY_MS);
 }
 
 function revokePlayableTrackUrls(urls = trackUrlByHash.value) {
@@ -234,6 +256,9 @@ async function startStreamPreview() {
 function playTrack(index) {
   error.value = "";
   try {
+    if (tracks.value[index]?.playbackStatus !== "ready") {
+      throw new Error("歌曲播放版本尚未就绪");
+    }
     resumeSeekTime.value = null;
     player.playAt(index);
     recordHistory(tracks.value[index]);
@@ -276,7 +301,28 @@ async function handleRestorePlaylistItem(track) {
 function drawerTrackMeta(track) {
   if (drawerMode.value === "history") return track.playedAt;
   if (drawerMode.value === "deleted") return track.deletedAtLabel;
+  if (track.playbackStatus === "pending" || track.playbackStatus === "processing") {
+    return "处理中";
+  }
+  if (track.playbackStatus === "failed") {
+    return track.playbackErrorMessage || "转码失败";
+  }
   return track.artist;
+}
+
+async function handleRetryRendition(track) {
+  error.value = "";
+  try {
+    if (track?.playbackStatus !== "failed") {
+      throw new Error("只有转码失败的歌曲可以重试");
+    }
+    await playlist.retryRendition(track.contentHash);
+    await loadPlayableTrackUrls(playlist.activeItems);
+    player.setQueue(tracks.value);
+    scheduleRenditionRefresh();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  }
 }
 
 function formatDeletedAt(value) {
@@ -377,6 +423,10 @@ watch(
   () => environment.target,
   async (nextTarget, previousTarget) => {
     if (nextTarget === previousTarget) return;
+    if (renditionRefreshTimer != null) {
+      clearTimeout(renditionRefreshTimer);
+      renditionRefreshTimer = null;
+    }
     await refreshPlaylist();
   },
 );
@@ -399,6 +449,7 @@ onBeforeUnmount(() => {
   writePlaybackResumeState(currentTrack.value, player.currentTime);
   environment.detach();
   player.setQueue([]);
+  if (renditionRefreshTimer != null) clearTimeout(renditionRefreshTimer);
   revokePlayableTrackUrls();
 });
 </script>
@@ -519,12 +570,23 @@ onBeforeUnmount(() => {
             <button
               class="drawer-row-main"
               type="button"
-              :disabled='drawerMode === "deleted"'
+              :disabled='drawerMode === "deleted" || track.playbackStatus !== "ready"'
               @click="playDrawerTrack(track, index)"
             >
               <span class="drawer-row-index">{{ String(index + 1).padStart(2, "0") }}</span>
               <strong>{{ track.title }}</strong>
               <small>{{ drawerTrackMeta(track) }}</small>
+            </button>
+            <button
+              v-if="drawerMode === 'queue' && track.playbackStatus === 'failed'"
+              class="drawer-row-action retry"
+              type="button"
+              title="重试转码"
+              aria-label="重试转码"
+              @click.stop="handleRetryRendition(track)"
+            >
+              <RotateCcw :size="13" />
+              <span>重试</span>
             </button>
             <button
               v-if="drawerMode === 'queue'"
@@ -801,6 +863,10 @@ onBeforeUnmount(() => {
   padding-right: 60px;
 }
 
+.drawer-row:has(.drawer-row-action.retry) {
+  padding-right: 112px;
+}
+
 .drawer-row:hover,
 .drawer-row:focus-within,
 .drawer-row.active {
@@ -883,6 +949,11 @@ onBeforeUnmount(() => {
 
 .drawer-row-action.restore {
   color: #bbf7d0;
+}
+
+.drawer-row-action.retry {
+  color: #fde68a;
+  right: 58px;
 }
 
 .drawer-row-action:hover,

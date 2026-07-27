@@ -9,6 +9,6 @@ uv run --group desktop-build pyinstaller desktop/sidecar/build_macos.spec --noco
 # 重命名为 Tauri externalBin 约定
 OUT="desktop/src-tauri/binaries"
 mkdir -p "${OUT}"
-cp "dist/yts-sidecar" "${OUT}/yts-sidecar-${TRIPLE}" 2>/dev/null || \
-  echo "TODO: 调整 dist 路径到 ${OUT}/yts-sidecar-${TRIPLE}"
+test -x "dist/yts-sidecar"
+cp "dist/yts-sidecar" "${OUT}/yts-sidecar-${TRIPLE}"
 echo "done (TODO: codesign + notarize,见 wiki Platform-Split)"

@@ -14,6 +14,7 @@ const emit = defineEmits(["close", "imported"]);
 const playlist = usePlaylistStore();
 const fileInput = ref(null);
 const tasks = ref([]);
+const historyError = ref("");
 const deviceId = computed(() => readDeviceId());
 
 const targetLabel = computed(() => (props.target === "local" ? "本地" : "云端"));
@@ -34,7 +35,7 @@ const statusLabels = {
   uploading: "上传中",
   uploaded: "已上传",
   syncing: "写入歌单",
-  done: "已完成",
+  done: "已导入，正在生成播放版本",
   failed: "失败",
 };
 
@@ -135,6 +136,29 @@ function itemImportTimeLabel(item) {
   }).format(new Date(importTimestamp(item)));
 }
 
+function itemPlaybackLabel(item) {
+  if (item.playback_status === "pending" || item.playback_status === "processing") {
+    return "正在生成播放版本";
+  }
+  if (item.playback_status === "failed") {
+    return item.playback_error_message || "转码失败";
+  }
+  return `${itemArtist(item)} · ${itemImportTimeLabel(item)}`;
+}
+
+async function retryRendition(item) {
+  historyError.value = "";
+  try {
+    if (item.playback_status !== "failed") {
+      throw new Error("只有转码失败的歌曲可以重试");
+    }
+    await playlist.retryRendition(item.content_hash);
+    emit("imported");
+  } catch (err) {
+    historyError.value = err instanceof Error ? err.message : String(err);
+  }
+}
+
 function stripExtension(filename) {
   const dotIndex = filename.lastIndexOf(".");
   if (dotIndex <= 0) return filename;
@@ -200,10 +224,20 @@ function readDeviceId() {
                 <FileAudio :size="16" />
               </span>
               <strong>{{ itemTitle(item) }}</strong>
-              <small>{{ itemArtist(item) }} · {{ itemImportTimeLabel(item) }}</small>
+              <small :title="item.playback_error_message || undefined">{{ itemPlaybackLabel(item) }}</small>
+              <button
+                v-if='item.playback_status === "failed"'
+                class="history-retry"
+                type="button"
+                title="重试转码"
+                @click="retryRendition(item)"
+              >
+                <RotateCcw :size="13" />
+              </button>
             </article>
           </div>
           <p v-else class="drawer-empty">暂无已导入歌曲。</p>
+          <p v-if="historyError" class="history-error">{{ historyError }}</p>
         </section>
 
         <section class="task-stack" aria-label="导入任务">
@@ -444,7 +478,33 @@ function readDeviceId() {
   grid-template-columns: 24px minmax(0, 1fr) minmax(48px, 78px);
   min-height: 34px;
   padding: 5px 8px;
+  position: relative;
   width: 100%;
+}
+
+.history-row:has(.history-retry) {
+  padding-right: 38px;
+}
+
+.history-retry {
+  align-items: center;
+  background: rgba(9, 25, 43, 0.72);
+  border: 1px solid rgba(253, 230, 138, 0.28);
+  border-radius: 6px;
+  color: #fde68a;
+  cursor: pointer;
+  display: inline-flex;
+  height: 24px;
+  justify-content: center;
+  position: absolute;
+  right: 6px;
+  width: 24px;
+}
+
+.history-error {
+  color: var(--color-danger);
+  font-size: 12px;
+  margin: 0;
 }
 
 .history-icon {

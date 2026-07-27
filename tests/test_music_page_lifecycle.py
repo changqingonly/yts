@@ -49,6 +49,44 @@ def test_music_page_refreshes_after_environment_change_without_manual_refresh_bu
     assert 'aria-label="刷新"' not in music
 
 
+def test_music_page_loads_only_ready_renditions_and_refreshes_processing_state() -> None:
+    music = read_source("pages/MusicPage.vue")
+    playlist_store = read_source("stores/playlist.js")
+    load_urls = music.split("async function loadPlayableTrackUrls(items)", 1)[1].split(
+        "function revokePlayableTrackUrls", 1
+    )[0]
+    unmount_block = music.split("onBeforeUnmount(() => {", 1)[1].split("});", 1)[0]
+
+    assert 'const RENDITION_REFRESH_DELAY_MS = 1500;' in music
+    assert 'if (item.playback_status !== "ready") continue;' in load_urls
+    assert "loadSongObjectUrl({" in load_urls
+    assert "function scheduleRenditionRefresh()" in music
+    assert 'item.playback_status === "pending" || item.playback_status === "processing"' in music
+    assert "setTimeout(async () =>" in music
+    assert "clearTimeout(renditionRefreshTimer);" in unmount_block
+    assert 'const VALID_PLAYBACK_STATUSES = new Set(["pending", "processing", "ready", "failed"]);' in playlist_store
+    assert 'throw new Error("playlist item requires valid playback_status")' in playlist_store
+    assert 'if (!item.rendition_profile) throw new Error("playlist item requires rendition_profile");' in playlist_store
+
+
+def test_music_page_exposes_failed_rendition_diagnosis_and_explicit_retry() -> None:
+    music = read_source("pages/MusicPage.vue")
+    music_service = read_source("services/music.js")
+    playlist_store = read_source("stores/playlist.js")
+    import_drawer = read_source("components/MusicImportDrawer.vue")
+
+    assert "export function retrySongRendition" in music_service
+    assert "async retryRendition(contentHash)" in playlist_store
+    assert "await retrySongRendition({ contentHash });" in playlist_store
+    assert "function handleRetryRendition(track)" in music
+    assert 'track.playbackStatus === "failed"' in music
+    assert "track.playbackErrorMessage" in music
+    assert '@click.stop="handleRetryRendition(track)"' in music
+    assert 'item.playback_status === "failed"' in import_drawer
+    assert "item.playback_error_message" in import_drawer
+    assert "retryRendition(item)" in import_drawer
+
+
 def test_music_page_persists_and_restores_last_playback_position() -> None:
     music = read_source("pages/MusicPage.vue")
     player_store = read_source("stores/player.js")
@@ -238,14 +276,18 @@ def test_music_page_mounts_static_playback_backdrop() -> None:
     assert '@audio-ready=' not in player_block
 
 
-def test_playback_backdrop_has_no_continuous_runtime_work() -> None:
+def test_playback_backdrop_uses_css_only_spinning_disc() -> None:
     backdrop_path = FRONTEND / "components/MusicPlaybackBackdrop.vue"
-    assert backdrop_path.exists(), "static playback backdrop is required"
+    assert backdrop_path.exists(), "playback backdrop is required"
     backdrop = backdrop_path.read_text(encoding="utf-8")
 
     assert "playing: { type: Boolean, default: false }" in backdrop
-    assert 'v-for="index in 3"' in backdrop
     assert "music-playback-backdrop" in backdrop
+    assert 'class="playback-disc"' in backdrop
+    assert ".music-playback-backdrop.active .playback-disc" in backdrop
+    assert "animation: disc-spin 2400ms linear infinite;" in backdrop
+    assert "@keyframes disc-spin" in backdrop
+    assert "@media (prefers-reduced-motion: reduce)" in backdrop
     assert "AudioContext" not in backdrop
     assert "audioElement" not in backdrop
     assert "canvas" not in backdrop.lower()
