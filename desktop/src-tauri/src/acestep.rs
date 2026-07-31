@@ -74,7 +74,10 @@ impl AcestepPaths {
         if !self.ready() {
             return None;
         }
-        Some(format!("{} '{{prompt}}' {{seconds}} {{out}}", self.produce_script().display()))
+        Some(format!(
+            "{} '{{prompt}}' {{seconds}} {{out}}",
+            self.produce_script().display()
+        ))
     }
 }
 
@@ -150,7 +153,15 @@ async fn build_all(app: &AppHandle, paths: &AcestepPaths) -> Result<(), String> 
             emit_progress(app, "acestep-clone", "acestep.cpp", 1, 1, true, None);
         }
 
-        emit_progress(app, "acestep-build", "acestep.cpp (cmake, 数分钟)", 0, 0, false, None);
+        emit_progress(
+            app,
+            "acestep-build",
+            "acestep.cpp (cmake, 数分钟)",
+            0,
+            0,
+            false,
+            None,
+        );
         let status = tokio::process::Command::new("sh")
             .arg("buildcpu.sh")
             .current_dir(&src)
@@ -160,7 +171,15 @@ async fn build_all(app: &AppHandle, paths: &AcestepPaths) -> Result<(), String> 
         if !status.success() {
             return Err(format!("acestep.cpp build failed: {status}"));
         }
-        emit_progress(app, "acestep-build", "acestep.cpp (cmake, 数分钟)", 1, 1, true, None);
+        emit_progress(
+            app,
+            "acestep-build",
+            "acestep.cpp (cmake, 数分钟)",
+            1,
+            1,
+            true,
+            None,
+        );
 
         let build_dir = src.join("build");
         let lm = find_file_recursive(&build_dir, "ace-lm", 3)
@@ -177,8 +196,17 @@ async fn build_all(app: &AppHandle, paths: &AcestepPaths) -> Result<(), String> 
     // 2) 默认权重组(HuggingFace,与仓库 README 推荐的最快组合一致)
     let client = reqwest::Client::new();
     for f in ACESTEP_MODEL_FILES {
-        let url = format!("https://huggingface.co/{ACESTEP_MODEL_REPO}/resolve/main/{f}?download=true");
-        download_file(app, &client, &url, &paths.models_dir().join(f), "acestep-model", f).await?;
+        let url =
+            format!("https://huggingface.co/{ACESTEP_MODEL_REPO}/resolve/main/{f}?download=true");
+        download_file(
+            app,
+            &client,
+            &url,
+            &paths.models_dir().join(f),
+            "acestep-model",
+            f,
+        )
+        .await?;
     }
 
     // 3) 两阶段(ace-lm → ace-synth)CLI 包装脚本,填平 stream.rs 的单命令契约

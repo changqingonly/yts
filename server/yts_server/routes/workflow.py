@@ -46,6 +46,7 @@ class WorkflowStreamRunMessage(BaseModel):
     user_prompt: str
     node_config: dict[str, dict[str, Any]] = Field(default_factory=dict)
     authorization: str | None = None
+    device_id: str | None = None
 
 
 class WorkflowStreamResumeMessage(BaseModel):
@@ -56,6 +57,7 @@ class WorkflowStreamResumeMessage(BaseModel):
     choice: str | None = None
     comment: str = ""
     authorization: str | None = None
+    device_id: str | None = None
 
 
 class WorkflowHistoryItem(BaseModel):
@@ -91,7 +93,9 @@ async def run_workflow_stream(workflow_id: str, websocket: WebSocket) -> None:
         settings = get_settings()
         async with get_sessionmaker()() as session:
             user = await billing_user_if_required(
-                session, message.authorization, websocket.cookies.get("yts-device")
+                session,
+                message.authorization,
+                websocket.cookies.get("yts-device") or message.device_id,
             )
             checkpointer = build_langgraph_checkpointer(settings)
             async with GenerationBillingGuard(
@@ -165,7 +169,9 @@ async def resume_workflow_stream(workflow_id: str, thread_id: str, websocket: We
         )
         async with get_sessionmaker()() as session:
             user = await billing_user_if_required(
-                session, message.authorization, websocket.cookies.get("yts-device")
+                session,
+                message.authorization,
+                websocket.cookies.get("yts-device") or message.device_id,
             )
             await workflow_history_domain.require_workflow_owner(
                 session,
@@ -222,9 +228,10 @@ async def run_workflow(
     session: DbSession,
     authorization: str | None = Header(default=None),
     device_id: str | None = Cookie(default=None, alias="yts-device"),
+    device_id_header: str | None = Header(default=None, alias="X-Yts-Device-Id"),
 ) -> WorkflowRunResult:
     settings = get_settings()
-    user = await billing_user_if_required(session, authorization, device_id)
+    user = await billing_user_if_required(session, authorization, device_id or device_id_header)
     checkpointer = build_langgraph_checkpointer(settings)
     async with GenerationBillingGuard(
         session=session,
@@ -288,10 +295,11 @@ async def resume_workflow(
     session: DbSession,
     authorization: str | None = Header(default=None),
     device_id: str | None = Cookie(default=None, alias="yts-device"),
+    device_id_header: str | None = Header(default=None, alias="X-Yts-Device-Id"),
 ) -> WorkflowRunResult:
     _require_workflow_template(workflow_id)
     settings = get_settings()
-    user = await billing_user_if_required(session, authorization, device_id)
+    user = await billing_user_if_required(session, authorization, device_id or device_id_header)
     await workflow_history_domain.require_workflow_owner(
         session,
         workflow_id=workflow_id,
@@ -351,11 +359,12 @@ async def list_workflow_history(
     session: DbSession,
     authorization: str | None = Header(default=None),
     device_id: str | None = Cookie(default=None, alias="yts-device"),
+    device_id_header: str | None = Header(default=None, alias="X-Yts-Device-Id"),
     limit: int = 20,
     offset: int = 0,
 ) -> list[dict]:
     _require_workflow_template(workflow_id)
-    user = await billing_user_if_required(session, authorization, device_id)
+    user = await billing_user_if_required(session, authorization, device_id or device_id_header)
     logger.info(
         "workflow.history.requested",
         workflow_id=workflow_id,
@@ -386,9 +395,10 @@ async def get_workflow_trace(
     session: DbSession,
     authorization: str | None = Header(default=None),
     device_id: str | None = Cookie(default=None, alias="yts-device"),
+    device_id_header: str | None = Header(default=None, alias="X-Yts-Device-Id"),
 ) -> WorkflowTrace:
     _require_workflow_template(workflow_id)
-    user = await billing_user_if_required(session, authorization, device_id)
+    user = await billing_user_if_required(session, authorization, device_id or device_id_header)
     await workflow_history_domain.require_workflow_owner(
         session,
         workflow_id=workflow_id,
@@ -416,9 +426,10 @@ async def get_workflow_result(
     session: DbSession,
     authorization: str | None = Header(default=None),
     device_id: str | None = Cookie(default=None, alias="yts-device"),
+    device_id_header: str | None = Header(default=None, alias="X-Yts-Device-Id"),
 ) -> WorkflowRunResult:
     _require_workflow_template(workflow_id)
-    user = await billing_user_if_required(session, authorization, device_id)
+    user = await billing_user_if_required(session, authorization, device_id or device_id_header)
     await workflow_history_domain.require_workflow_owner(
         session,
         workflow_id=workflow_id,

@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..domains import music as music_domain
+from ..domains import music_covers
 from ..domains import playlists as playlists_domain
 from .dependencies import CurrentUser, DbSession
 
@@ -59,6 +60,14 @@ class PlaylistItemAppendRequest(BaseModel):
 
 class PlaylistReorderRequest(BaseModel):
     ordered_item_ids: list[str]
+
+
+class CoverEnsureRequest(BaseModel):
+    trigger_source: str
+
+
+class CoverRegenerateRequest(BaseModel):
+    request_id: str
 
 
 @router.post("/playlist/sync")
@@ -295,3 +304,85 @@ async def retry_song_rendition(
         "playback_status": rendition.status,
         "rendition_profile": rendition.profile,
     }
+
+
+@router.post("/covers/{content_hash}/ensure")
+async def ensure_music_cover(
+    content_hash: str,
+    req: CoverEnsureRequest,
+    request: Request,
+    user: CurrentUser,
+    session: DbSession,
+) -> dict:
+    response = await music_covers.ensure_cover(
+        session,
+        user_uuid=user.user_uuid,
+        content_hash=content_hash,
+        trigger_source=req.trigger_source,
+    )
+    await session.commit()
+    if response["status"] == music_covers.QUEUED:
+        request.app.state.cover_wake_event.set()
+    return response
+
+
+@router.get("/covers/{content_hash}")
+async def get_music_cover_status(content_hash: str, user: CurrentUser, session: DbSession) -> dict:
+    response = await music_covers.cover_status(
+        session, user_uuid=user.user_uuid, content_hash=content_hash
+    )
+    await session.commit()
+    return response
+
+
+@router.get("/covers/{content_hash}/file")
+async def serve_music_cover(
+    content_hash: str, user: CurrentUser, session: DbSession
+) -> FileResponse:
+    path = await music_covers.cover_file(
+        session, user_uuid=user.user_uuid, content_hash=content_hash
+    )
+    return FileResponse(path, media_type="image/png")
+
+
+@router.delete("/covers/{content_hash}")
+async def delete_music_cover(content_hash: str, user: CurrentUser, session: DbSession) -> dict:
+    response = await music_covers.delete_cover(
+        session, user_uuid=user.user_uuid, content_hash=content_hash
+    )
+    await session.commit()
+    return response
+
+
+@router.post("/covers/{content_hash}/regenerate")
+async def regenerate_music_cover(
+    content_hash: str,
+    req: CoverRegenerateRequest,
+    request: Request,
+    user: CurrentUser,
+    session: DbSession,
+) -> dict:
+    response = await music_covers.regenerate_cover(
+        session,
+        user_uuid=user.user_uuid,
+        content_hash=content_hash,
+        request_id=req.request_id,
+    )
+    await session.commit()
+    request.app.state.cover_wake_event.set()
+    return response
+
+
+@router.post("/covers/{content_hash}/retry")
+async def retry_music_cover(
+    content_hash: str,
+    request: Request,
+    user: CurrentUser,
+    session: DbSession,
+) -> dict:
+    response = await music_covers.retry_cover(
+        session, user_uuid=user.user_uuid, content_hash=content_hash
+    )
+    await session.commit()
+    request.app.state.cover_wake_event.set()
+    return response

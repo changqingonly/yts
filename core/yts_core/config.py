@@ -52,6 +52,8 @@ _LEGACY_ENV_MAP = {
     "YTS_AVATAR_STORAGE_DIR": ("storage", "avatar_dir"),
     "YTS_LOCAL_IMPORT_STORAGE_DIR": ("storage", "local_import_dir"),
     "YTS_PLAYBACK_RENDITION_STORAGE_DIR": ("storage", "playback_rendition_dir"),
+    "YTS_MUSIC_COVER_STORAGE_DIR": ("storage", "music_cover_dir"),
+    "YTS_MODEL_ARTIFACT_STORAGE_DIR": ("storage", "model_artifact_dir"),
     "YTS_LANGGRAPH_CHECKPOINT_BACKEND": ("langgraph", "checkpoint_backend"),
     "YTS_LANGGRAPH_CHECKPOINT_POSTGRES_DSN": ("langgraph", "checkpoint_postgres_dsn"),
     "YTS_LOGGING_LEVEL": ("logging", "level"),
@@ -154,6 +156,8 @@ class StorageSettings(BaseModel):
     avatar_dir: str = "run/avatars"
     local_import_dir: str = "run/local_imports"
     playback_rendition_dir: str = "run/playback_renditions"
+    music_cover_dir: str = "run/music_covers"
+    model_artifact_dir: str = "artifacts/download"
 
 
 class LangGraphSettings(BaseModel):
@@ -400,6 +404,14 @@ class Settings(BaseSettings):
     @property
     def playback_rendition_storage_dir(self) -> str:
         return self.storage.playback_rendition_dir
+
+    @property
+    def music_cover_storage_dir(self) -> str:
+        return self.storage.music_cover_dir
+
+    @property
+    def model_artifact_storage_dir(self) -> str:
+        return self.storage.model_artifact_dir
 
     @property
     def langgraph_checkpoint_backend(self) -> str:

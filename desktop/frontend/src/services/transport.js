@@ -231,6 +231,7 @@ export function openJsonStream(path, payload, handlers = {}, options = {}) {
       JSON.stringify({
         ...payload,
         authorization: token ? `Bearer ${token}` : "",
+        device_id: isTauriRuntime() ? deviceId : "",
       }),
     );
   };

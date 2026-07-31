@@ -11,7 +11,7 @@
   },
   "app": {
     "windows": [
-      { "title": "乐兔", "width": 1100, "height": 720 }
+      { "title": "乐兔", "width": 1100, "height": 720, "theme": "Dark" }
     ],
     "security": { "csp": null }
   },

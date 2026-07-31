@@ -16,7 +16,7 @@ Replace unauthenticated GitHub release discovery for the macOS stable-diffusion.
 
 The source revision is pinned to commit `e790073e1c311feb1ff423ba910f398df01bb60e`. The release identifier is the full commit SHA.
 
-The archive is named `stable-diffusion.cpp-macos-15-arm64.zip` and contains:
+The archive is published as `e790073.zip` and contains:
 
 ```text
 stable-diffusion.cpp-macos-15-arm64/
@@ -32,16 +32,16 @@ The packaging script rejects the wrong source commit, a missing/non-arm64 execut
 
 ## Server Origin
 
-The cloud service reads artifacts from `YTS_MODEL_ARTIFACT_STORAGE_DIR`, defaulting to `artifacts/local-models`. It exposes files below:
+The cloud service reads artifacts from `YTS_MODEL_ARTIFACT_STORAGE_DIR`, defaulting to `artifacts/download`. It exposes files below:
 
 ```text
-/artifacts/local-models/{artifact_path}
+/download/{artifact_path}
 ```
 
 For this release the address is:
 
 ```text
-/artifacts/local-models/stable-diffusion.cpp/e790073e1c311feb1ff423ba910f398df01bb60e/stable-diffusion.cpp-macos-15-arm64.zip
+/download/sd/mac15-arm64/e790073.zip
 ```
 
 The route uses Starlette file responses, so normal `GET`, `HEAD`, conditional requests, and byte-range requests remain available for CDN origin traffic. Paths are resolved under the configured root; missing artifacts return 404 and traversal attempts cannot escape the root. The service does not generate artifacts at request time.

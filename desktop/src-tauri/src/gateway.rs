@@ -25,7 +25,10 @@ pub async fn start_gateway(app: AppHandle) -> Result<String, String> {
         }
     }
     let paths = LocalPaths::new(&app)?;
-    let mut cmd = app.shell().sidecar("infer-gateway").map_err(|e| e.to_string())?;
+    let mut cmd = app
+        .shell()
+        .sidecar("infer-gateway")
+        .map_err(|e| e.to_string())?;
     if let Some(llama_cmd) = paths.llama_cmd() {
         cmd = cmd
             .env("YTS_LLAMA_CMD", llama_cmd)
@@ -48,13 +51,22 @@ pub async fn start_gateway(app: AppHandle) -> Result<String, String> {
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(line) => {
-                    crate::log_line(&log_app, &format!("[infer-gateway] {}", String::from_utf8_lossy(&line)));
+                    crate::log_line(
+                        &log_app,
+                        &format!("[infer-gateway] {}", String::from_utf8_lossy(&line)),
+                    );
                 }
                 CommandEvent::Stderr(line) => {
-                    crate::log_line(&log_app, &format!("[infer-gateway] {}", String::from_utf8_lossy(&line)));
+                    crate::log_line(
+                        &log_app,
+                        &format!("[infer-gateway] {}", String::from_utf8_lossy(&line)),
+                    );
                 }
                 CommandEvent::Terminated(payload) => {
-                    crate::log_line(&log_app, &format!("[infer-gateway] terminated: {payload:?}"));
+                    crate::log_line(
+                        &log_app,
+                        &format!("[infer-gateway] terminated: {payload:?}"),
+                    );
                 }
                 CommandEvent::Error(err) => {
                     crate::log_line(&log_app, &format!("[infer-gateway] error: {err}"));

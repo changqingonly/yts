@@ -4,6 +4,8 @@
 //! cmake/Xcode 工具链自己编译,改为下载预编译产物,存到 app_data_dir()/vendor/ 下。
 
 use serde::Serialize;
+use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -15,7 +17,8 @@ const LLAMA_CTX: &str = "4096";
 const LLAMA_PORT: &str = "18080";
 const LLAMA_GPU_LAYERS: &str = "99";
 
-const SD_RELEASE_REPO: &str = "leejet/stable-diffusion.cpp";
+const SD_ARTIFACT_PATH: &str = "download/sd/mac15-arm64/e790073.zip";
+const SD_ARTIFACT_SHA256: &str = "ecf9a5d074758b51f16e7792fa1162302eb60695117abf618ba1ffea43b230ba";
 const SD_MODEL_REPO: &str = "Green-Sky/flux.1-schnell-GGUF";
 const SD_DIFFUSION_MODEL: &str = "flux1-schnell-q4_k.gguf";
 const SD_VAE: &str = "ae-f16.gguf";
@@ -81,8 +84,8 @@ impl LocalPaths {
         }
         Some(format!(
             "{} -m {} --host 127.0.0.1 --port {LLAMA_PORT} -c {LLAMA_CTX} -ngl {LLAMA_GPU_LAYERS} --log-disable",
-            self.llama_server().display(),
-            self.llama_model().display(),
+            shell_quote_path(self.llama_server()),
+            shell_quote_path(self.llama_model()),
         ))
     }
 
@@ -96,18 +99,25 @@ impl LocalPaths {
             return None;
         }
         let models = self.sd_models_dir();
-        if !SD_MODEL_FILES.iter().all(|f| exists_nonempty(&models.join(f))) {
+        if !SD_MODEL_FILES
+            .iter()
+            .all(|f| exists_nonempty(&models.join(f)))
+        {
             return None;
         }
         Some(format!(
             "{} --diffusion-model {} --vae {} --clip_l {} --t5xxl {} -p {{prompt}} -o {{out}} -W {{width}} -H {{height}} --steps 4 --cfg-scale 1.0 --sampling-method euler",
-            self.sd_binary().display(),
-            models.join(SD_DIFFUSION_MODEL).display(),
-            models.join(SD_VAE).display(),
-            models.join(SD_CLIP_L).display(),
-            models.join(SD_T5XXL).display(),
+            shell_quote_path(self.sd_binary()),
+            shell_quote_path(models.join(SD_DIFFUSION_MODEL)),
+            shell_quote_path(models.join(SD_VAE)),
+            shell_quote_path(models.join(SD_CLIP_L)),
+            shell_quote_path(models.join(SD_T5XXL)),
         ))
     }
+}
+
+fn shell_quote_path(path: PathBuf) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', "'\"'\"'"))
 }
 
 #[derive(Serialize, Clone)]
@@ -167,10 +177,13 @@ pub(crate) fn emit_progress(
 }
 
 #[tauri::command]
-pub async fn download_local_models(app: AppHandle) -> Result<ModelsStatus, String> {
+pub async fn download_local_models(
+    app: AppHandle,
+    artifact_origin: String,
+) -> Result<ModelsStatus, String> {
     let paths = LocalPaths::new(&app)?;
     let client = reqwest::Client::new();
-    if let Err(e) = download_all(&app, &client, &paths).await {
+    if let Err(e) = download_all(&app, &client, &paths, &artifact_origin).await {
         emit_progress(&app, "error", "", 0, 0, true, Some(e.clone()));
         return Err(e);
     }
@@ -182,6 +195,7 @@ async fn download_all(
     app: &AppHandle,
     client: &reqwest::Client,
     paths: &LocalPaths,
+    artifact_origin: &str,
 ) -> Result<(), String> {
     // 1) llama-server 预编译二进制(macOS arm64)
     if !exists_nonempty(&paths.llama_server()) {
@@ -210,17 +224,22 @@ async fn download_all(
     }
 
     // 2) LLM 权重(HuggingFace,与 build_llamacpp.sh 一致)
-    let llm_url =
-        format!("https://huggingface.co/{LLAMA_MODEL_REPO}/resolve/main/{LLAMA_MODEL_FILE}?download=true");
-    download_file(app, client, &llm_url, &paths.llama_model(), "llama-model", LLAMA_MODEL_FILE)
-        .await?;
+    let llm_url = format!(
+        "https://huggingface.co/{LLAMA_MODEL_REPO}/resolve/main/{LLAMA_MODEL_FILE}?download=true"
+    );
+    download_file(
+        app,
+        client,
+        &llm_url,
+        &paths.llama_model(),
+        "llama-model",
+        LLAMA_MODEL_FILE,
+    )
+    .await?;
 
     // 3) sd 预编译二进制(macOS arm64)
     if !exists_nonempty(&paths.sd_binary()) {
-        let asset_url = latest_release_asset_url(client, SD_RELEASE_REPO, |n| {
-            n.contains("Darwin-macOS") && n.contains("arm64") && n.ends_with(".zip")
-        })
-        .await?;
+        let asset_url = build_sd_artifact_url(artifact_origin)?;
         let archive = paths.sd_bin_dir().join("sd-macos-arm64.zip");
         download_file(
             app,
@@ -231,6 +250,7 @@ async fn download_all(
             "stable-diffusion.cpp (macOS arm64)",
         )
         .await?;
+        verify_sha256(&archive, SD_ARTIFACT_SHA256)?;
         let extract_dir = paths.sd_bin_dir().join("_extract");
         extract_zip(&archive, &extract_dir).await?;
         let found = find_file_recursive(&extract_dir, "sd", 6)
@@ -244,9 +264,59 @@ async fn download_all(
     // 4) SD 权重(HuggingFace,与 build_sdcpp.sh 一致)
     for f in SD_MODEL_FILES {
         let url = format!("https://huggingface.co/{SD_MODEL_REPO}/resolve/main/{f}?download=true");
-        download_file(app, client, &url, &paths.sd_models_dir().join(f), "sd-model", f).await?;
+        download_file(
+            app,
+            client,
+            &url,
+            &paths.sd_models_dir().join(f),
+            "sd-model",
+            f,
+        )
+        .await?;
     }
 
+    Ok(())
+}
+
+fn build_sd_artifact_url(origin: &str) -> Result<String, String> {
+    let base = reqwest::Url::parse(origin)
+        .map_err(|e| format!("invalid model artifact origin {origin:?}: {e}"))?;
+    if !matches!(base.scheme(), "http" | "https")
+        || base.host_str().is_none()
+        || !base.username().is_empty()
+        || base.password().is_some()
+        || base.path() != "/"
+        || base.query().is_some()
+        || base.fragment().is_some()
+    {
+        return Err(format!("invalid model artifact origin: {origin}"));
+    }
+    base.join(SD_ARTIFACT_PATH)
+        .map(|url| url.to_string())
+        .map_err(|e| format!("invalid model artifact path: {e}"))
+}
+
+fn verify_sha256(path: &Path, expected: &str) -> Result<(), String> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| format!("open artifact for sha256 {}: {e}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|e| format!("read artifact for sha256 {}: {e}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    let actual = format!("{:x}", hasher.finalize());
+    if actual != expected {
+        return Err(format!(
+            "sha256 mismatch for {}: expected {expected}, got {actual}",
+            path.display()
+        ));
+    }
     Ok(())
 }
 
@@ -322,7 +392,15 @@ pub(crate) async fn download_file(
     }
     drop(file);
     std::fs::rename(&tmp, dest).map_err(|e| e.to_string())?;
-    emit_progress(app, stage, label, downloaded, total.max(downloaded), true, None);
+    emit_progress(
+        app,
+        stage,
+        label,
+        downloaded,
+        total.max(downloaded),
+        true,
+        None,
+    );
     Ok(())
 }
 
@@ -384,7 +462,9 @@ pub(crate) fn make_executable(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(path).map_err(|e| e.to_string())?.permissions();
+        let mut perms = std::fs::metadata(path)
+            .map_err(|e| e.to_string())?
+            .permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(path, perms).map_err(|e| e.to_string())?;
     }
@@ -393,4 +473,75 @@ pub(crate) fn make_executable(path: &Path) -> Result<(), String> {
         let _ = path;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_sd_artifact_url, shell_quote_path, verify_sha256};
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const EXPECTED_SD_URL: &str = "https://api.yts.test/download/sd/mac15-arm64/e790073.zip";
+
+    #[test]
+    fn shell_quotes_model_paths_with_spaces_and_single_quotes() {
+        assert_eq!(
+            shell_quote_path(PathBuf::from(
+                "/Users/test/Library/Application Support/yts/sd"
+            )),
+            "'/Users/test/Library/Application Support/yts/sd'"
+        );
+        assert_eq!(
+            shell_quote_path(PathBuf::from("/tmp/user's models/model.gguf")),
+            "'/tmp/user'\"'\"'s models/model.gguf'"
+        );
+    }
+
+    #[test]
+    fn builds_immutable_sd_artifact_url_from_cloud_origin() {
+        assert_eq!(
+            build_sd_artifact_url("https://api.yts.test").unwrap(),
+            EXPECTED_SD_URL
+        );
+        assert_eq!(
+            build_sd_artifact_url("http://127.0.0.1:8000/").unwrap(),
+            EXPECTED_SD_URL.replace("https://api.yts.test", "http://127.0.0.1:8000")
+        );
+    }
+
+    #[test]
+    fn rejects_non_origin_or_credentialed_artifact_addresses() {
+        for invalid in [
+            "file:///tmp/yts",
+            "https://user:pass@api.yts.test",
+            "https://api.yts.test/base",
+            "https://api.yts.test?channel=beta",
+            "https://api.yts.test/#fragment",
+        ] {
+            assert!(
+                build_sd_artifact_url(invalid).is_err(),
+                "accepted {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn verifies_matching_sha256_and_rejects_mismatch() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path: PathBuf = std::env::temp_dir().join(format!("yts-model-sha-{nonce}"));
+        std::fs::write(&path, b"verified model artifact").unwrap();
+
+        verify_sha256(
+            &path,
+            "7d5fb89e0bde2d0860867ba417c5d6809f6a38ba911715f5e5e3258c9d856813",
+        )
+        .unwrap();
+        let error = verify_sha256(&path, &"0".repeat(64)).unwrap_err();
+
+        std::fs::remove_file(path).unwrap();
+        assert!(error.contains("sha256 mismatch"));
+    }
 }

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 FRONTEND = Path("desktop/frontend/src")
@@ -202,6 +203,50 @@ def test_desktop_service_exposes_keychain_and_vault_commands() -> None:
         assert token in desktop
 
 
+def test_local_model_download_uses_the_configured_cloud_service_as_artifact_origin() -> None:
+    desktop = read_source("services/desktop.js")
+    settings = read_source("pages/SettingsPage.vue")
+
+    assert "export function downloadLocalModels(artifactOrigin)" in desktop
+    assert 'return invoke("download_local_models", { artifactOrigin });' in desktop
+    assert 'import { apiBase } from "../services/http";' in settings
+    assert 'await downloadLocalModels(apiBase("cloud"))' in settings
+
+
+def test_tauri_shell_registers_macos_menu_bar_icon_and_actions() -> None:
+    cargo = Path("desktop/src-tauri/Cargo.toml").read_text(encoding="utf-8")
+    shell = Path("desktop/src-tauri/src/lib.rs").read_text(encoding="utf-8")
+
+    assert 'tauri = { version = "2", features = ["tray-icon", "image-png"] }' in cargo
+    for token in [
+        "TrayIconBuilder::with_id(TRAY_ID)",
+        'include_bytes!("../icons/tray-template.png")',
+        "tauri::image::Image::from_bytes",
+        ".icon_as_template(true)",
+        'MenuItemBuilder::with_id(OPEN_MENU_ID, "打开乐兔")',
+        'MenuItemBuilder::with_id(QUIT_MENU_ID, "退出")',
+        ".show_menu_on_left_click(false)",
+        "show_main_window(app_handle)",
+        "api.prevent_close()",
+        "window.hide()",
+        "tauri::RunEvent::Reopen",
+        "if !has_visible_windows",
+        'show_main_window(app_handle).expect("failed to show main window from Dock")',
+        "app_handle.exit(0)",
+    ]:
+        assert token in shell
+
+    assert "default_window_icon()" not in shell
+    assert Path("desktop/src-tauri/icons/tray-template.png").is_file()
+
+
+def test_tauri_main_window_uses_dark_native_titlebar() -> None:
+    config = json.loads(Path("desktop/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+    main_window = config["app"]["windows"][0]
+
+    assert main_window["theme"] == "Dark"
+
+
 def test_settings_page_offers_local_password_when_keychain_unavailable() -> None:
     settings = read_source("pages/SettingsPage.vue")
 
@@ -211,6 +256,15 @@ def test_settings_page_offers_local_password_when_keychain_unavailable() -> None
         "auth.enableVaultPersistence(vaultPassphrase.value)",
     ]:
         assert token in settings
+
+
+def test_settings_profile_entry_only_lives_in_account_section() -> None:
+    settings = read_source("pages/SettingsPage.vue")
+    header = settings.split('<header class="settings-header">', 1)[1].split("</header>", 1)[0]
+
+    assert "header-profile-link" not in header
+    assert 'class="account-link" to="/profile/setup"' in settings
+    assert settings.count('to="/profile/setup"') == 1
 
 
 def test_login_page_offers_vault_unlock_when_needed() -> None:
@@ -783,26 +837,26 @@ def test_audio_player_uses_centered_time_progress_and_full_width_scrubber() -> N
     player = read_source("components/YtsAudioPlayer.vue")
     template = player.split("<template>", 1)[1].split("</template>", 1)[0]
     timeline_block = template.split('<div class="timeline-row"', 1)[1].split(
-        "</media-time-range>", 1
+        '<div class="media-controls">', 1
     )[0]
-    controller_block = template.split("<media-controller", 1)[1].split("</media-controller>", 1)[0]
 
     assert "currentTimeLabel" in player
     assert "durationLabel" in player
     assert "timelineProgress" in player
     assert "timelineLabelPlacement" in player
     assert "--timeline-progress" in template
-    assert 'id="yts-audio-controller"' in template
     assert ':class="[' in template
     assert "'time-progress'" in template
     assert "timelineLabelPlacement" in template
     assert "{{ currentTimeLabel }}/{{ durationLabel }}" in timeline_block
     assert "时间进度：" not in template
-    assert 'class="timeline-row"' not in controller_block
-    assert 'class="media-controls"' not in controller_block
-    assert 'mediacontroller="yts-audio-controller"' in timeline_block
-    assert timeline_block.index("'time-progress'") < timeline_block.index("<media-time-range")
-    assert "<media-time-range" in timeline_block
+    assert timeline_block.index("'time-progress'") < timeline_block.index(
+        'class="timeline-range"'
+    )
+    assert 'type="range"' in timeline_block
+    assert ':max="duration || 0"' in timeline_block
+    assert ':value="currentTime"' in timeline_block
+    assert '@input="handleSeekInput"' in timeline_block
     assert "<media-time-display" not in timeline_block
     assert "<media-duration-display" not in timeline_block
     assert "grid-template-rows: auto auto;" in player
@@ -822,11 +876,14 @@ def test_audio_player_uses_centered_time_progress_and_full_width_scrubber() -> N
         "transform: translateY(-100%);"
         in player.split(".time-progress.edge-end {", 1)[1].split("}", 1)[0]
     )
-    assert "--media-control-background: transparent;" in player
-    assert "--media-range-padding-left: 0px;" in player
-    assert "--media-range-padding-right: 0px;" in player
-    assert "--media-range-track-height: 2px;" in player
-    assert "--media-range-track-background: rgba(216, 231, 245, 0.28);" in player
+    timeline_range_rule = player.split(".timeline-range {", 1)[1].split("}", 1)[0]
+    timeline_track_rule = player.split(".timeline-track {", 1)[1].split("}", 1)[0]
+    timeline_progress_rule = player.split(".timeline-track-progress {", 1)[1].split("}", 1)[0]
+    assert "appearance: none;" in timeline_range_rule
+    assert "background: transparent;" in timeline_range_rule
+    assert "padding: 0;" in timeline_range_rule
+    assert "height: 2px;" in timeline_track_rule
+    assert "width: var(--timeline-progress);" in timeline_progress_rule
 
 
 def test_audio_player_removes_wavesurfer_visual_rendering_after_butterchurn() -> None:
@@ -911,23 +968,23 @@ def test_music_player_places_track_identity_inside_open_source_player_shell() ->
     )
 
 
-def test_music_player_uses_open_source_media_components_instead_of_hand_rolled_controls() -> None:
+def test_music_player_uses_event_driven_native_media_controls() -> None:
     package_json = read_frontend_file("package.json")
     music = read_source("pages/MusicPage.vue")
     player = read_source("components/YtsAudioPlayer.vue")
 
-    assert '"media-chrome"' in package_json
+    assert '"media-chrome"' not in package_json
     assert '"wavesurfer.js"' not in package_json
-    assert 'import "media-chrome";' in player
+    assert 'import "media-chrome";' not in player
     assert 'import WaveSurfer from "wavesurfer.js";' not in player
-    for custom_element in [
-        "<media-controller",
-        "<media-play-button",
-        "<media-time-range",
-        "<media-mute-button",
-        "<media-volume-range",
+    for native_control in [
+        '<audio\n      ref="audioRef"',
+        'class="timeline-range"',
+        'class="transport-button primary"',
+        'class="volume-button"',
+        'class="volume-range"',
     ]:
-        assert custom_element in player
+        assert native_control in player
     assert "'time-progress'" in player
     assert "<media-time-display" not in player.split("<template>", 1)[1].split("</template>", 1)[0]
     assert (
@@ -963,17 +1020,16 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
     root_rule = player.split(".yts-audio-player {", 1)[1].split("}", 1)[0]
     controls_rule = player.split(".media-controls {", 1)[1].split("}", 1)[0]
     timeline_rule = player.split(".timeline-row {", 1)[1].split("}", 1)[0]
-    control_button_rule = player.split(".transport-button,\n.mode-button {", 1)[1].split("}", 1)[0]
-    controller_block = player.split("<media-controller", 1)[1].split("</media-controller>", 1)[0]
+    control_button_rule = player.split(".transport-button,\n.volume-button,\n.mode-button {", 1)[
+        1
+    ].split("}", 1)[0]
     assert 'class="timeline-row"' in player
     assert 'class="control-row"' in player
     assert 'class="button-groups"' in player
     timeline_row_block = player.split('<div class="timeline-row"', 1)[1].split(
-        "</media-time-range>", 1
+        '<div class="media-controls">', 1
     )[0]
-    control_row_block = player.split('<div class="control-row"', 1)[1].split(
-        "</media-control-bar>", 1
-    )[0]
+    control_row_block = player.split('<div class="control-row"', 1)[1].split("</section>", 1)[0]
     control_row_rule = player.split(".control-row {", 1)[1].split("}", 1)[0]
     button_groups_rule = player.split(".button-groups {", 1)[1].split("}", 1)[0]
     track_rule = player.split(".track-summary {", 1)[1].split("}", 1)[0]
@@ -988,14 +1044,10 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
         "utility-group",
     ]:
         assert class_name in player
-    assert 'class="timeline-row"' not in controller_block
-    assert 'class="control-row"' not in controller_block
-    assert 'class="media-controls"' not in controller_block
     assert player.index('class="timeline-row"') < player.index('class="control-row"')
     assert timeline_row_block.index("'time-progress'") < timeline_row_block.index(
-        "<media-time-range"
+        'class="timeline-range"'
     )
-    assert '<media-time-range mediacontroller="yts-audio-controller"' in timeline_row_block
     assert "<media-time-display" not in timeline_row_block
     assert "<media-duration-display" not in timeline_row_block
     assert "transport-group" not in timeline_row_block
@@ -1606,11 +1658,7 @@ def test_music_page_prioritizes_minimal_wave_player_without_lyrics() -> None:
         "随机播放",
     ]:
         assert token in music
-    for token in [
-        "media-controller",
-        "media-control-bar",
-        "播放模式",
-    ]:
+    for token in ["native-audio", "media-controls", "播放模式"]:
         assert token in player
     for removed_rendering_surface in ["hero-wave", "waveformRef", "WaveSurfer.create"]:
         assert removed_rendering_surface not in player
@@ -1766,7 +1814,7 @@ def test_music_page_uses_edge_progress_and_vertical_side_actions_without_large_f
     side_actions_rule = music.split(".side-actions {", 1)[1].split("}", 1)[0]
     minimal_player_rule = music.split(".minimal-player {", 1)[1].split("}", 1)[0]
     player = read_source("components/YtsAudioPlayer.vue")
-    media_shell_rule = player.split(".media-shell {", 1)[1].split("}", 1)[0]
+    media_controls_rule = player.split(".media-controls {", 1)[1].split("}", 1)[0]
 
     assert 'class="side-actions"' in music
     assert 'title="播放队列"' in side_actions_block
@@ -1778,8 +1826,7 @@ def test_music_page_uses_edge_progress_and_vertical_side_actions_without_large_f
     assert "right: 14px;" in side_actions_rule
     assert "top: 50%;" in side_actions_rule
     assert "border: 0;" in minimal_player_rule
-    assert "border: 0;" in media_shell_rule
-    assert "box-shadow: none;" in media_shell_rule
+    assert "background: transparent;" in media_controls_rule
 
 
 def test_auth_credentials_are_not_persisted_in_web_storage() -> None:

@@ -18,8 +18,31 @@ pub fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
+fn image_available() -> bool {
+    std::env::var("YTS_IMAGEGEN_CMD")
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
 async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"status": "ok", "backend": "ggml-gateway"}))
+    let available = image_available();
+    Json(serde_json::json!({
+        "status": "ok",
+        "backend": "ggml-gateway",
+        "image": {
+            "available": available,
+            "error_code": if available { serde_json::Value::Null } else { serde_json::Value::String("local_image_model_unavailable".into()) }
+        }
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn image_capability_is_unavailable_without_producer_command() {
+        std::env::remove_var("YTS_IMAGEGEN_CMD");
+        assert!(!super::image_available());
+    }
 }
 
 #[tokio::main]
@@ -29,7 +52,10 @@ async fn main() -> anyhow::Result<()> {
 
     // 文本:按 YTS_LLAMA_CMD spawn 常驻 llama-server 并托管(未配置则期望外部已在 YTS_LLAMA_BASE_URL)。
     let llama = llama::LlamaBackend::start().await;
-    tracing::info!("ggml-gateway up on {addr} (text→llama-server {})", llama.base_url());
+    tracing::info!(
+        "ggml-gateway up on {addr} (text→llama-server {})",
+        llama.base_url()
+    );
 
     let app = Router::new()
         .route("/health", get(health))

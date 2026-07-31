@@ -139,13 +139,49 @@ bash scripts/build_desktop_macos.sh
 子进程;此时 `infer-gateway` 还没有 `YTS_LLAMA_CMD`/`YTS_IMAGEGEN_CMD`(本地二进制/权重未下载),
 只有 `/health` 和音乐合成兜底可用。用户在「设置 → 本地模型」里点击下载后,
 `desktop/src-tauri/src/models.rs` 会:
-- 从 GitHub Releases 拉预编译的 `llama.cpp`(`ggml-org/llama.cpp`,macOS arm64 tar.gz)与
-  `stable-diffusion.cpp`(`leejet/stable-diffusion.cpp`,macOS arm64 zip)二进制;
+- 从 GitHub Releases 拉预编译的 `llama.cpp`(`ggml-org/llama.cpp`,macOS arm64 tar.gz);
+- 从云服务固定版本回源地址拉项目构建的 `stable-diffusion.cpp` macOS 15 arm64 二进制,
+  下载后必须通过内置 SHA-256 校验才会安装;
 - 从 HuggingFace 拉与 `scripts/build_llamacpp.sh` / `build_sdcpp.sh` 相同的默认 GGUF 权重
   (Qwen2.5-7B-Instruct、FLUX.1-schnell 全套);
 
 全部存到 `app_data_dir()/vendor/`(而非开发态的 `desktop/vendor/`),下载完成后前端会调
 `restart_gateway` 让新 env 生效。本轮仅覆盖 macOS(arm64);Windows/Linux 打包留后。
+
+### stable-diffusion.cpp 回源包
+
+回源包固定使用 `stable-diffusion.cpp` commit
+`e790073e1c311feb1ff423ba910f398df01bb60e`,最低支持 macOS 15。构建机执行:
+
+```bash
+bash scripts/package_sdcpp_macos.sh
+```
+
+脚本会以 arm64、deployment target 15.0 和静态依赖重新构建,检查 Mach-O 架构、最低系统
+版本、动态依赖和 `sd --help`,然后生成:
+
+```text
+artifacts/download/sd/mac15-arm64/
+  e790073.zip
+  e790073.zip.sha256
+```
+
+当前归档 SHA-256 为
+`ecf9a5d074758b51f16e7792fa1162302eb60695117abf618ba1ffea43b230ba`。云服务通过
+`YTS_MODEL_ARTIFACT_STORAGE_DIR` 指定回源根目录(默认 `artifacts/download`),公开地址为:
+
+```text
+GET /download/sd/mac15-arm64/e790073.zip
+```
+
+正式接 CDN 前先直接验证服务端回源:
+
+```bash
+curl -fSI http://SERVER/download/sd/mac15-arm64/e790073.zip
+curl -fsS -H 'Range: bytes=0-1023' -o /tmp/sdcpp.range \
+  http://SERVER/download/sd/mac15-arm64/e790073.zip
+test "$(wc -c < /tmp/sdcpp.range)" -eq 1024
+```
 
 音乐生成(acestep.cpp)默认走 `infer-gateway` 内置合成器兜底;它在 GitHub 上没有任何
 release/tag,没有预编译产物可下,是「本地模型」里唯一一个只能**源码构建**的分档

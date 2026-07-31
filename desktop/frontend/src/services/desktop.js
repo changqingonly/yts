@@ -15,9 +15,9 @@ export function checkLocalModels() {
   return invoke("check_local_models");
 }
 
-export function downloadLocalModels() {
+export function downloadLocalModels(artifactOrigin) {
   requireTauri();
-  return invoke("download_local_models");
+  return invoke("download_local_models", { artifactOrigin });
 }
 
 export function startGateway() {

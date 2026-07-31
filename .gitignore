@@ -54,3 +54,5 @@ desktop/src-tauri/binaries/
 *.gguf
 *.safetensors
 models/
+artifacts/download/**/*.zip
+artifacts/download/**/*.zip.sha256

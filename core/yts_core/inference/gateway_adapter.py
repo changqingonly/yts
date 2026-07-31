@@ -51,9 +51,22 @@ class GatewayInference:
                 f"{self._base}/image",
                 json={"prompt": prompt, "width": width, "height": height, "steps": steps},
             )
-            r.raise_for_status()
+            if not r.is_success:
+                raise RuntimeError(f"infer-gateway /image returned {r.status_code}: {r.text}")
             data = r.json()
         return base64.b64decode(data["png_base64"])
+
+    async def image_status(self) -> tuple[bool, str | None]:
+        async with httpx.AsyncClient(timeout=self._settings.gateway_request_timeout_seconds) as c:
+            response = await c.get(f"{self._base}/health")
+            response.raise_for_status()
+            data = response.json()
+        image = data.get("image")
+        if not isinstance(image, dict) or not isinstance(image.get("available"), bool):
+            raise RuntimeError("infer-gateway health response is missing image capability")
+        if image["available"]:
+            return True, None
+        return False, "本地图片模型未安装，请前往设置完成下载"
 
     async def generate_speech(self, text: str) -> bytes:
         raise NotImplementedError("TTS: TODO in infer-gateway")

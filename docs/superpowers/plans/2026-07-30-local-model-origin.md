@@ -12,7 +12,7 @@
 
 - Minimum supported operating system is macOS 15.0.
 - stable-diffusion.cpp source commit is `e790073e1c311feb1ff423ba910f398df01bb60e`.
-- Artifact filename is `stable-diffusion.cpp-macos-15-arm64.zip`.
+- Artifact filename is `e790073.zip`.
 - Download and integrity failures stop installation and are surfaced to the UI.
 - No fallback source or silent degradation is permitted.
 - Model weights remain on their existing Hugging Face download paths.
@@ -30,11 +30,11 @@
 
 **Interfaces:**
 - Consumes: `YTS_MODEL_ARTIFACT_STORAGE_DIR` from the existing settings loader.
-- Produces: public `GET`/`HEAD /artifacts/local-models/{path}` responses.
+- Produces: public `GET`/`HEAD /download/{path}` responses.
 
 - [ ] Write tests that create an artifact root, request a file with GET/HEAD/Range, and assert 404 for missing or traversal paths.
 - [ ] Run `./.venv/bin/pytest tests/test_model_artifact_origin.py -q` and confirm failure because the route is absent.
-- [ ] Add `storage.model_artifact_dir`, its legacy environment mapping/property, and mount `StaticFiles` with `check_dir=True` at `/artifacts/local-models`.
+- [ ] Add `storage.model_artifact_dir`, its legacy environment mapping/property, and mount `StaticFiles` with `check_dir=True` at `/download`.
 - [ ] Add the storage setting to both example environment files.
 - [ ] Re-run the focused test and `tests/test_settings.py tests/test_env_example_sync.py`.
 
@@ -47,7 +47,7 @@
 
 **Interfaces:**
 - Consumes: pinned checkout at `desktop/vendor/stable-diffusion.cpp` and its `build/bin/sd-cli` output.
-- Produces: `artifacts/local-models/stable-diffusion.cpp/<commit>/stable-diffusion.cpp-macos-15-arm64.zip` plus `.sha256`.
+- Produces: `artifacts/download/sd/mac15-arm64/e790073.zip` plus `.sha256`.
 
 - [ ] Write a test fixture containing fake inspection tools and a fake source tree, then assert the archive layout and manifest fields.
 - [ ] Run `./.venv/bin/pytest tests/test_sdcpp_artifact_packaging.py -q` and confirm failure because the script is absent.

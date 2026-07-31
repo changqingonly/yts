@@ -8,6 +8,7 @@ import pytest
 from conftest import reset_cached_db_engine
 from fastapi.testclient import TestClient
 from langgraph.checkpoint.memory import InMemorySaver
+from test_auth_profile_routes import register_via_test_crypto
 from yts_core.inference import TextResult
 from yts_core.orchestration.flows.pro_lyrics import PRO_STAGE_ORDER
 from yts_server.main import create_app
@@ -379,6 +380,83 @@ def test_cloud_workflow_run_stream_returns_auth_error_without_asgi_crash(
         "code": "unauthorized",
         "detail": "missing bearer token",
     }
+
+
+def test_cloud_workflow_run_stream_accepts_desktop_device_message_without_cookies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "cloud-workflow-stream-desktop-auth.db"
+    monkeypatch.setenv("YTS_PROFILE", "cloud")
+    monkeypatch.setenv("YTS_BILLING_ENABLED", "true")
+    monkeypatch.setenv("YTS_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv(
+        "YTS_AUTH_JWT_SECRET", "test-secret-that-is-long-enough-for-hs256-tests"
+    )
+    reset_cached_db_engine()
+
+    checkpointer = InMemorySaver()
+    monkeypatch.setattr(
+        workflow_route, "build_langgraph_checkpointer", lambda settings: checkpointer
+    )
+    monkeypatch.setattr(workflow_route, "make_backend", lambda: FakeRouteBackend())
+
+    with TestClient(create_app()) as client:
+        client.headers["X-Yts-Client"] = "desktop"
+        registered = register_via_test_crypto(
+            client, "workflow-stream-desktop@example.com", "Password123"
+        )
+        client.cookies.clear()
+
+        with client.websocket_connect(
+            "/api/workflows/pro_creation_hitl_v1/threads/stream"
+        ) as websocket:
+            websocket.send_json(
+                {
+                    "type": "run",
+                    "thread_id": "cloud-desktop-stream",
+                    "user_prompt": "下雨的午后",
+                    "node_config": {},
+                    "authorization": f"Bearer {registered['access_token']}",
+                    "device_id": registered["device_id"],
+                }
+            )
+            messages = _receive_until_terminal(websocket)
+
+    assert messages[0] == {"type": "started", "mode": "run"}
+    assert messages[-1]["type"] == "result"
+
+
+def test_cloud_workflow_history_accepts_desktop_device_header_without_cookies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "cloud-workflow-desktop-auth.db"
+    monkeypatch.setenv("YTS_PROFILE", "cloud")
+    monkeypatch.setenv("YTS_BILLING_ENABLED", "true")
+    monkeypatch.setenv("YTS_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    monkeypatch.setenv(
+        "YTS_AUTH_JWT_SECRET", "test-secret-that-is-long-enough-for-hs256-tests"
+    )
+    reset_cached_db_engine()
+
+    with TestClient(create_app()) as client:
+        client.headers["X-Yts-Client"] = "desktop"
+        registered = register_via_test_crypto(
+            client, "workflow-desktop@example.com", "Password123"
+        )
+        client.cookies.clear()
+
+        response = client.get(
+            "/api/workflows/pro_creation_hitl_v1/threads/history",
+            headers={
+                "Authorization": f"Bearer {registered['access_token']}",
+                "X-Yts-Device-Id": registered["device_id"],
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == []
 
 
 def test_workflow_resume_stream_pushes_node_trace_chunks(monkeypatch) -> None:

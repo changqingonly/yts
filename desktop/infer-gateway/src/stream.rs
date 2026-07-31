@@ -95,7 +95,11 @@ async fn handle_socket(mut socket: WebSocket) {
         }
     };
     // 立体声:复制为 LRLR 交错(真实立体声 producer 可直接产交错)。
-    let pcm = if channels == 2 { mono_to_stereo(&mono) } else { mono };
+    let pcm = if channels == 2 {
+        mono_to_stereo(&mono)
+    } else {
+        mono
+    };
     let per_chan = pcm.len() / channels as usize;
 
     let header = serde_json::to_string(&ServerMsg::Header {
@@ -131,7 +135,11 @@ async fn handle_socket(mut socket: WebSocket) {
     }
 
     // samples = 每声道采样数(与契约一致)
-    let end = serde_json::to_string(&ServerMsg::End { frames, samples: per_chan }).unwrap();
+    let end = serde_json::to_string(&ServerMsg::End {
+        frames,
+        samples: per_chan,
+    })
+    .unwrap();
     let _ = socket.send(Message::Text(end)).await;
     let _ = socket.close().await;
 }
@@ -158,7 +166,11 @@ async fn produce_pcm(prompt: &str, seconds: f32) -> Result<Vec<f32>, String> {
 ///   命令中 {prompt} {seconds} {out} 占位被替换;{out} 是 server 指定的临时 WAV 路径;
 ///   producer 须把 48kHz WAV 写到 {out},退出码 0。server 读 WAV → mono f32 PCM。
 /// 例:YTS_AUDIOGEN_CMD="acestep-cli --prompt {prompt} --seconds {seconds} --out {out}"
-async fn spawn_external_producer(cmd_tmpl: &str, prompt: &str, seconds: f32) -> Result<Vec<f32>, String> {
+async fn spawn_external_producer(
+    cmd_tmpl: &str,
+    prompt: &str,
+    seconds: f32,
+) -> Result<Vec<f32>, String> {
     let out_path = std::env::temp_dir().join(format!("yts-audiogen-{}.wav", std::process::id()));
     let out_str = out_path.to_string_lossy().to_string();
     let filled = cmd_tmpl
@@ -175,7 +187,10 @@ async fn spawn_external_producer(cmd_tmpl: &str, prompt: &str, seconds: f32) -> 
         .spawn()
         .map_err(|e| format!("spawn audiogen failed: {e}"))?;
 
-    let status = child.wait().await.map_err(|e| format!("audiogen wait failed: {e}"))?;
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("audiogen wait failed: {e}"))?;
     if !status.success() {
         let mut err = String::new();
         if let Some(mut s) = child.stderr.take() {
@@ -197,14 +212,14 @@ fn read_wav_mono_f32(path: &str) -> Result<Vec<f32>, String> {
     let mut reader = hound::WavReader::open(path).map_err(|e| format!("open wav: {e}"))?;
     let spec = reader.spec();
     if spec.sample_rate != SAMPLE_RATE {
-        tracing::warn!("audiogen WAV sample_rate={} != {SAMPLE_RATE}", spec.sample_rate);
+        tracing::warn!(
+            "audiogen WAV sample_rate={} != {SAMPLE_RATE}",
+            spec.sample_rate
+        );
     }
     let ch = spec.channels.max(1) as usize;
     let samples: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Float => reader
-            .samples::<f32>()
-            .filter_map(Result::ok)
-            .collect(),
+        hound::SampleFormat::Float => reader.samples::<f32>().filter_map(Result::ok).collect(),
         hound::SampleFormat::Int => {
             let max = (1i64 << (spec.bits_per_sample - 1)) as f32;
             reader
@@ -218,7 +233,10 @@ fn read_wav_mono_f32(path: &str) -> Result<Vec<f32>, String> {
         return Ok(samples);
     }
     // 下混为 mono
-    Ok(samples.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect())
+    Ok(samples
+        .chunks(ch)
+        .map(|f| f.iter().sum::<f32>() / ch as f32)
+        .collect())
 }
 
 /// 内置确定性合成器(无依赖验证用)。随 prompt 变基频的复合正弦 + 缓慢包络。
@@ -241,12 +259,17 @@ async fn wait_start(socket: &mut WebSocket) -> Option<(String, f32, Accept)> {
     while let Some(Ok(msg)) = socket.next().await {
         if let Message::Text(t) = msg {
             match serde_json::from_str::<ClientMsg>(&t) {
-                Ok(ClientMsg::Start { prompt, seconds, accept }) => {
-                    return Some((prompt, seconds, accept))
-                }
+                Ok(ClientMsg::Start {
+                    prompt,
+                    seconds,
+                    accept,
+                }) => return Some((prompt, seconds, accept)),
                 Ok(ClientMsg::Stop) => return None,
                 Err(e) => {
-                    let err = serde_json::to_string(&ServerMsg::Error { message: e.to_string() }).unwrap();
+                    let err = serde_json::to_string(&ServerMsg::Error {
+                        message: e.to_string(),
+                    })
+                    .unwrap();
                     let _ = socket.send(Message::Text(err)).await;
                     return None;
                 }
@@ -257,7 +280,9 @@ async fn wait_start(socket: &mut WebSocket) -> Option<(String, f32, Accept)> {
 }
 
 fn prompt_seed(prompt: &str) -> u64 {
-    prompt.bytes().fold(1469598103934665603u64, |h, b| (h ^ b as u64).wrapping_mul(1099511628211))
+    prompt.bytes().fold(1469598103934665603u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(1099511628211)
+    })
 }
 
 fn pcm_to_bytes(pcm: &[f32]) -> Vec<u8> {

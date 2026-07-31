@@ -41,10 +41,16 @@ pub async fn start_sidecar(app: AppHandle) -> Result<String, String> {
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(line) => {
-                    crate::log_line(&log_app, &format!("[yts-sidecar] {}", String::from_utf8_lossy(&line)));
+                    crate::log_line(
+                        &log_app,
+                        &format!("[yts-sidecar] {}", String::from_utf8_lossy(&line)),
+                    );
                 }
                 CommandEvent::Stderr(line) => {
-                    crate::log_line(&log_app, &format!("[yts-sidecar] {}", String::from_utf8_lossy(&line)));
+                    crate::log_line(
+                        &log_app,
+                        &format!("[yts-sidecar] {}", String::from_utf8_lossy(&line)),
+                    );
                 }
                 CommandEvent::Terminated(payload) => {
                     crate::log_line(&log_app, &format!("[yts-sidecar] terminated: {payload:?}"));

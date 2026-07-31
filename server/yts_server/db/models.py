@@ -307,3 +307,50 @@ class AudioPlaybackRendition(Base):
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at_ms: Mapped[int] = mapped_column(BigInteger)
     updated_at_ms: Mapped[int] = mapped_column(BigInteger)
+
+
+class MusicCoverPolicy(Base):
+    __tablename__ = "music_cover_policy"
+    __table_args__ = (UniqueConstraint("user_uuid", "content_hash"),)
+
+    id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    user_uuid: Mapped[str] = mapped_column(String(64), index=True)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    generation_epoch: Mapped[int] = mapped_column(Integer, default=1)
+    auto_cover_state: Mapped[str] = mapped_column(String(32), default="enabled")
+    created_at_ms: Mapped[int] = mapped_column(BigInteger)
+    updated_at_ms: Mapped[int] = mapped_column(BigInteger)
+
+
+class MusicCoverJob(Base):
+    __tablename__ = "music_cover_job"
+    __table_args__ = (UniqueConstraint("user_uuid", "content_hash", "generation_epoch"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_uuid: Mapped[str] = mapped_column(String(64), index=True)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    generation_epoch: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    priority: Mapped[int] = mapped_column(Integer)
+    trigger_source: Mapped[str] = mapped_column(String(32))
+    prompt: Mapped[str] = mapped_column(Text)
+    output_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at_ms: Mapped[int] = mapped_column(BigInteger)
+    started_at_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    finished_at_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    updated_at_ms: Mapped[int] = mapped_column(BigInteger)
+
+
+class MusicCoverOperation(Base):
+    __tablename__ = "music_cover_operation"
+
+    request_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_uuid: Mapped[str] = mapped_column(String(64), index=True)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    action: Mapped[str] = mapped_column(String(32))
+    job_id: Mapped[str] = mapped_column(String(64))
+    created_at_ms: Mapped[int] = mapped_column(BigInteger)

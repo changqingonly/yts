@@ -28,7 +28,11 @@ impl LlamaBackend {
         let child = match std::env::var("YTS_LLAMA_CMD") {
             Ok(cmd) if !cmd.trim().is_empty() => {
                 tracing::info!("spawning llama-server: {cmd}");
-                match tokio::process::Command::new("sh").arg("-c").arg(&cmd).spawn() {
+                match tokio::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&cmd)
+                    .spawn()
+                {
                     Ok(c) => Some(c),
                     Err(e) => {
                         tracing::error!("spawn llama-server failed: {e}");
@@ -37,7 +41,9 @@ impl LlamaBackend {
                 }
             }
             _ => {
-                tracing::info!("YTS_LLAMA_CMD unset — expecting external llama-server at {base_url}");
+                tracing::info!(
+                    "YTS_LLAMA_CMD unset — expecting external llama-server at {base_url}"
+                );
                 None
             }
         };
@@ -59,7 +65,12 @@ impl LlamaBackend {
     /// 轮询 llama-server /health 直到就绪(最多 ~60s)。
     async fn wait_ready(&self) {
         for _ in 0..120 {
-            if let Ok(r) = self.http.get(format!("{}/health", self.base_url)).send().await {
+            if let Ok(r) = self
+                .http
+                .get(format!("{}/health", self.base_url))
+                .send()
+                .await
+            {
                 if r.status().is_success() {
                     tracing::info!("llama-server ready at {}", self.base_url);
                     return;
@@ -111,17 +122,30 @@ pub async fn gen_text(
         .json(&body)
         .send()
         .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("llama-server unreachable: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("llama-server unreachable: {e}"),
+            )
+        })?;
     if !resp.status().is_success() {
         let code = resp.status();
         let txt = resp.text().await.unwrap_or_default();
-        return Err((StatusCode::BAD_GATEWAY, format!("llama-server {code}: {txt}")));
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            format!("llama-server {code}: {txt}"),
+        ));
     }
-    let data: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("bad llama-server json: {e}")))?;
-    let text = data["choices"][0]["message"]["content"].as_str().unwrap_or("").to_string();
+    let data: serde_json::Value = resp.json().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("bad llama-server json: {e}"),
+        )
+    })?;
+    let text = data["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     let model = data["model"].as_str().unwrap_or("local").to_string();
     Ok(Json(TextResp { text, model }))
 }

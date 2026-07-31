@@ -9,13 +9,14 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from yts_core.config import get_settings
+from yts_core.config import Profile, get_settings
 from yts_core.orchestration.checkpointing import close_langgraph_checkpointer
 
 from .cors import DiagnosticCORSMiddleware
 from .db.bootstrap import create_all_tables
 from .db.session import get_sessionmaker
 from .domains.audio_renditions import enqueue_missing_renditions, run_rendition_worker
+from .domains.music_covers import run_cover_worker
 from .errors import register_error_handlers
 from .logging_config import configure_logging
 from .routes import (
@@ -51,12 +52,22 @@ async def lifespan(app: FastAPI):
     worker_task = asyncio.create_task(
         run_rendition_worker(stop_event=stop_event, wake_event=wake_event)
     )
+    cover_wake_event = asyncio.Event()
+    app.state.cover_wake_event = cover_wake_event
+    cover_worker_task = None
+    if settings.profile == Profile.LOCAL:
+        cover_worker_task = asyncio.create_task(
+            run_cover_worker(stop_event=stop_event, wake_event=cover_wake_event)
+        )
     try:
         yield
     finally:
         stop_event.set()
         wake_event.set()
+        cover_wake_event.set()
         await worker_task
+        if cover_worker_task is not None:
+            await cover_worker_task
         close_langgraph_checkpointer()
 
 
@@ -71,6 +82,12 @@ def create_app() -> FastAPI:
         StaticFiles(directory=avatar_storage_dir),
         name="uploaded-avatars",
     )
+    if settings.profile == Profile.CLOUD:
+        app.mount(
+            "/download",
+            StaticFiles(directory=Path(settings.model_artifact_storage_dir), check_dir=True),
+            name="downloads",
+        )
     app.add_middleware(
         DiagnosticCORSMiddleware,
         allow_origins=settings.server_allowed_origins,

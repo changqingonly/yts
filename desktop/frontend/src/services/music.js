@@ -105,3 +105,44 @@ export async function uploadSong({ file, mime, filename } = {}) {
   if (filename) form.append("filename", filename);
   return uploadForm("/api/music/upload", form);
 }
+
+export function ensureMusicCover({ contentHash: rawContentHash, triggerSource = "system" } = {}) {
+  if (!rawContentHash) throw new Error("ensureMusicCover requires contentHash");
+  const contentHash = encodeURIComponent(rawContentHash);
+  return requestJson(`/api/music/covers/${contentHash}/ensure`, {
+    method: "POST",
+    body: JSON.stringify({ trigger_source: triggerSource }),
+  });
+}
+
+export function getMusicCoverStatus({ contentHash: rawContentHash } = {}) {
+  if (!rawContentHash) throw new Error("getMusicCoverStatus requires contentHash");
+  return requestJson(`/api/music/covers/${encodeURIComponent(rawContentHash)}`);
+}
+
+export function deleteMusicCover({ contentHash: rawContentHash } = {}) {
+  if (!rawContentHash) throw new Error("deleteMusicCover requires contentHash");
+  return requestJson(`/api/music/covers/${encodeURIComponent(rawContentHash)}`, { method: "DELETE" });
+}
+
+export function regenerateMusicCover({ contentHash: rawContentHash, requestId } = {}) {
+  if (!rawContentHash) throw new Error("regenerateMusicCover requires contentHash");
+  if (!requestId) throw new Error("regenerateMusicCover requires requestId");
+  return requestJson(`/api/music/covers/${encodeURIComponent(rawContentHash)}/regenerate`, {
+    method: "POST",
+    body: JSON.stringify({ request_id: requestId }),
+  });
+}
+
+export function retryMusicCover({ contentHash: rawContentHash } = {}) {
+  if (!rawContentHash) throw new Error("retryMusicCover requires contentHash");
+  return requestJson(`/api/music/covers/${encodeURIComponent(rawContentHash)}/retry`, {
+    method: "POST",
+  });
+}
+
+export async function loadMusicCoverObjectUrl({ contentHash: rawContentHash, target } = {}) {
+  if (!rawContentHash) throw new Error("loadMusicCoverObjectUrl requires contentHash");
+  const blob = await requestBlob(`/api/music/covers/${encodeURIComponent(rawContentHash)}/file`, { target });
+  return URL.createObjectURL(blob);
+}

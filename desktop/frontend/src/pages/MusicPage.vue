@@ -11,12 +11,21 @@ import {
   X,
 } from "@lucide/vue";
 import MusicPlaybackBackdrop from "../components/MusicPlaybackBackdrop.vue";
+import MusicCoverStage from "../components/MusicCoverStage.vue";
 import MusicImportDrawer from "../components/MusicImportDrawer.vue";
 import YtsAudioPlayer from "../components/YtsAudioPlayer.vue";
 import { usePlayerStore } from "../stores/player";
 import { usePlaylistStore } from "../stores/playlist";
 import { useEnvironmentStore } from "../stores/environment";
 import { loadSongObjectUrl } from "../services/music";
+import {
+  deleteMusicCover,
+  ensureMusicCover,
+  getMusicCoverStatus,
+  loadMusicCoverObjectUrl,
+  regenerateMusicCover,
+  retryMusicCover,
+} from "../services/music";
 import { apiBase, selectedApiTarget } from "../services/http";
 
 const player = usePlayerStore();
@@ -32,9 +41,14 @@ const playHistory = ref([]);
 const trackUrlByHash = ref(new Map());
 const resumeSeekTime = ref(null);
 let renditionRefreshTimer = null;
+let coverRefreshTimer = null;
+let coverLoadVersion = 0;
+const coverState = ref({ status: "absent", error_message: "" });
+const coverObjectUrl = ref("");
 
 const PLAYBACK_RESUME_STORAGE_KEY = "yts-music-playback-state";
 const RENDITION_REFRESH_DELAY_MS = 1500;
+const COVER_REFRESH_DELAY_MS = 1500;
 
 const loopModes = [
   { key: "queue", label: "循环播放" },
@@ -106,6 +120,17 @@ async function refreshPlaylist() {
   }
 }
 
+async function refreshPlaylistWhenTargetReady(target = environment.target) {
+  error.value = "";
+  const healthStatus = await environment.checkHealth(target);
+  if (target !== environment.target) return;
+  if (healthStatus !== "online") {
+    error.value = `播放列表加载失败：当前环境 ${target} (${apiBase(target)}) ${environment.targetHealthDetail(target)}`;
+    return;
+  }
+  await refreshPlaylist();
+}
+
 async function loadPlayableTrackUrls(items) {
   const previousUrls = trackUrlByHash.value;
   const nextUrls = new Map();
@@ -158,6 +183,89 @@ function scheduleRenditionRefresh() {
 function revokePlayableTrackUrls(urls = trackUrlByHash.value) {
   for (const objectUrl of urls instanceof Map ? urls.values() : urls) {
     URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function replaceCoverObjectUrl(nextUrl = "") {
+  if (coverObjectUrl.value) URL.revokeObjectURL(coverObjectUrl.value);
+  coverObjectUrl.value = nextUrl;
+}
+
+async function syncCurrentCover(track = currentTrack.value, { ensure = true } = {}) {
+  const requestVersion = ++coverLoadVersion;
+  if (coverRefreshTimer != null) {
+    clearTimeout(coverRefreshTimer);
+    coverRefreshTimer = null;
+  }
+  replaceCoverObjectUrl();
+  coverState.value = { status: "absent", error_message: "" };
+  if (!track?.contentHash) return;
+  if (environment.target !== "local") return;
+  try {
+    const response = ensure
+      ? await ensureMusicCover({ contentHash: track.contentHash, triggerSource: "system" })
+      : await getMusicCoverStatus({ contentHash: track.contentHash });
+    const responseContentHash = response.content_hash;
+    if (requestVersion !== coverLoadVersion || responseContentHash !== track.contentHash) return;
+    coverState.value = response;
+    if (response.status === "ready") {
+      const nextUrl = await loadMusicCoverObjectUrl({
+        contentHash: track.contentHash,
+        target: environment.target,
+      });
+      if (requestVersion !== coverLoadVersion || currentTrack.value?.contentHash !== track.contentHash) {
+        URL.revokeObjectURL(nextUrl);
+        return;
+      }
+      replaceCoverObjectUrl(nextUrl);
+      return;
+    }
+    scheduleCoverRefresh(track, requestVersion);
+  } catch (err) {
+    if (requestVersion !== coverLoadVersion) return;
+    coverState.value = {
+      status: "failed",
+      error_message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+function scheduleCoverRefresh(track, requestVersion = coverLoadVersion) {
+  if (!["queued", "generating"].includes(coverState.value.status)) return;
+  coverRefreshTimer = setTimeout(async () => {
+    coverRefreshTimer = null;
+    if (requestVersion !== coverLoadVersion) return;
+    await syncCurrentCover(track, { ensure: false });
+  }, COVER_REFRESH_DELAY_MS);
+}
+
+async function handleDeleteCover() {
+  const track = currentTrack.value;
+  if (!track?.contentHash) throw new Error("删除生成封面需要 contentHash");
+  coverState.value = await deleteMusicCover({ contentHash: track.contentHash });
+  coverLoadVersion += 1;
+  replaceCoverObjectUrl();
+}
+
+async function handleRegenerateCover() {
+  const track = currentTrack.value;
+  if (!track?.contentHash) throw new Error("重新生成封面需要 contentHash");
+  const requestId = crypto.randomUUID();
+  coverState.value = await regenerateMusicCover({
+    contentHash: track.contentHash,
+    requestId,
+  });
+  await syncCurrentCover(track, { ensure: false });
+}
+
+async function handleRetryCover() {
+  const track = currentTrack.value;
+  if (!track?.contentHash) throw new Error("重试封面生成需要 contentHash");
+  try {
+    coverState.value = await retryMusicCover({ contentHash: track.contentHash });
+    await syncCurrentCover(track, { ensure: false });
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
   }
 }
 
@@ -427,7 +535,15 @@ watch(
       clearTimeout(renditionRefreshTimer);
       renditionRefreshTimer = null;
     }
-    await refreshPlaylist();
+    await refreshPlaylistWhenTargetReady(nextTarget);
+  },
+);
+
+watch(
+  () => currentTrack.value?.contentHash,
+  async (contentHash, previousContentHash) => {
+    if (contentHash === previousContentHash) return;
+    await syncCurrentCover();
   },
 );
 
@@ -442,7 +558,7 @@ watch(
 
 onMounted(async () => {
   environment.attach();
-  await refreshPlaylist();
+  await refreshPlaylistWhenTargetReady();
 });
 
 onBeforeUnmount(() => {
@@ -450,6 +566,9 @@ onBeforeUnmount(() => {
   environment.detach();
   player.setQueue([]);
   if (renditionRefreshTimer != null) clearTimeout(renditionRefreshTimer);
+  if (coverRefreshTimer != null) clearTimeout(coverRefreshTimer);
+  coverLoadVersion += 1;
+  replaceCoverObjectUrl();
   revokePlayableTrackUrls();
 });
 </script>
@@ -488,6 +607,15 @@ onBeforeUnmount(() => {
 
     <article class="player-stage minimal-player">
       <div class="stage-glow"></div>
+      <MusicCoverStage
+        v-if="environment.target === 'local' && currentTrack"
+        :cover-url="coverObjectUrl"
+        :playing="player.isPlaying"
+        :status="coverState.status"
+        @delete="handleDeleteCover"
+        @regenerate="handleRegenerateCover"
+        @retry="handleRetryCover"
+      />
       <YtsAudioPlayer
         class="player-surface"
         :loop-label="activeLoopMode.label"

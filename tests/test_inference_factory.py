@@ -107,3 +107,29 @@ async def test_gateway_inference_uses_configured_timeout_and_text_max_tokens(mon
     assert observed["timeout"] == 33
     assert observed["url"] == "http://127.0.0.1:9999/text"
     assert observed["json"]["max_tokens"] == 777
+
+
+@pytest.mark.asyncio
+async def test_gateway_image_error_includes_producer_response(monkeypatch) -> None:
+    class FakeClient:
+        def __init__(self, *, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url, *, json):
+            return httpx.Response(
+                500,
+                text="imagegen exited exit status: 127: model path is invalid",
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    backend = GatewayInference(Settings(gateway_base_url="http://127.0.0.1:9999"))
+
+    with pytest.raises(RuntimeError, match="imagegen exited exit status: 127: model path is invalid"):
+        await backend.generate_image("cover")

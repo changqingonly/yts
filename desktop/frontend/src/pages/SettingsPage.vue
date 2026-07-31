@@ -13,6 +13,7 @@ import {
 } from "@lucide/vue";
 import { fetchCreditBalance, fetchCreditLedger, fetchDailyUsage } from "../services/credits";
 import { isTauriRuntime } from "../services/environment";
+import { apiBase } from "../services/http";
 import {
   buildAcestep,
   checkAcestep,
@@ -78,7 +79,7 @@ async function startModelDownload() {
   localModelsError.value = "";
   downloadProgress.value = null;
   try {
-    localModels.value = await downloadLocalModels();
+    localModels.value = await downloadLocalModels(apiBase("cloud"));
     await restartGateway();
   } catch (err) {
     localModelsError.value = err instanceof Error ? err.message : String(err);
@@ -237,10 +238,6 @@ watch(
         <p class="settings-eyebrow">工作台偏好</p>
         <h1>设置</h1>
       </div>
-      <RouterLink class="header-profile-link" to="/profile/setup">
-        <UserRound :size="16" />
-        <span>个人资料</span>
-      </RouterLink>
     </header>
 
     <p v-if="navigationError || error" class="error-message" role="alert">
@@ -528,7 +525,6 @@ h1 {
   margin-bottom: 0;
 }
 
-.header-profile-link,
 .logout-button {
   align-items: center;
   border-radius: 7px;
@@ -541,17 +537,6 @@ h1 {
   min-height: 38px;
   padding: 0 12px;
   text-decoration: none;
-}
-
-.header-profile-link {
-  background: transparent;
-  border: 1px solid var(--color-border);
-  color: var(--color-muted-strong);
-}
-
-.header-profile-link:hover {
-  border-color: var(--color-muted);
-  color: var(--color-heading);
 }
 
 .settings-shell {
@@ -966,7 +951,6 @@ select {
 }
 
 .settings-nav-item:focus-visible,
-.header-profile-link:focus-visible,
 .account-link:focus-visible,
 .logout-button:focus-visible,
 .download-button:focus-visible,
@@ -1014,15 +998,6 @@ select:focus-visible {
 @media (max-width: 460px) {
   .settings-header {
     align-items: flex-start;
-  }
-
-  .header-profile-link span {
-    display: none;
-  }
-
-  .header-profile-link {
-    padding: 0;
-    width: 38px;
   }
 
   .setting-row,

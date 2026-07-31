@@ -17,7 +17,7 @@ a = Analysis(
         'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto',
         'uvicorn.protocols.websockets.auto', 'uvicorn.lifespan.on', 'aiosqlite',
     ],
-    hookspath=[],
+    hookspath=['desktop/sidecar/hooks'],
     runtime_hooks=[],
     excludes=[],
     cipher=block_cipher,

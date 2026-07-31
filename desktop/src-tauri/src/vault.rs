@@ -39,7 +39,13 @@ pub enum VaultError {
     Corrupt(String),
 }
 
-fn derive_key(passphrase: &str, salt: &[u8], m: u32, t: u32, p: u32) -> Result<[u8; KEY_LEN], String> {
+fn derive_key(
+    passphrase: &str,
+    salt: &[u8],
+    m: u32,
+    t: u32,
+    p: u32,
+) -> Result<[u8; KEY_LEN], String> {
     let params = Params::new(m, t, p, Some(KEY_LEN)).map_err(|e| e.to_string())?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut key = [0u8; KEY_LEN];
@@ -84,8 +90,14 @@ pub fn open(vault: &VaultFile, passphrase: &str) -> Result<Vec<u8>, VaultError> 
     let ciphertext = B64
         .decode(&vault.ciphertext_b64)
         .map_err(|e| VaultError::Corrupt(e.to_string()))?;
-    let key = derive_key(passphrase, &salt, vault.m_cost_kib, vault.t_cost, vault.p_cost)
-        .map_err(VaultError::Corrupt)?;
+    let key = derive_key(
+        passphrase,
+        &salt,
+        vault.m_cost_kib,
+        vault.t_cost,
+        vault.p_cost,
+    )
+    .map_err(VaultError::Corrupt)?;
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
     let nonce = Nonce::from_slice(&nonce_bytes);
     cipher
@@ -99,7 +111,11 @@ mod tests {
 
     #[test]
     fn seal_then_open_roundtrips() {
-        let vault = seal("correct horse", b"{\"device_id\":\"d\",\"refresh_token\":\"t\"}").unwrap();
+        let vault = seal(
+            "correct horse",
+            b"{\"device_id\":\"d\",\"refresh_token\":\"t\"}",
+        )
+        .unwrap();
         let plaintext = open(&vault, "correct horse").unwrap();
         assert_eq!(plaintext, b"{\"device_id\":\"d\",\"refresh_token\":\"t\"}");
     }
@@ -107,7 +123,10 @@ mod tests {
     #[test]
     fn wrong_passphrase_is_distinct_error() {
         let vault = seal("correct horse", b"payload").unwrap();
-        assert_eq!(open(&vault, "wrong horse"), Err(VaultError::WrongPassphrase));
+        assert_eq!(
+            open(&vault, "wrong horse"),
+            Err(VaultError::WrongPassphrase)
+        );
     }
 
     #[test]
@@ -123,7 +142,10 @@ mod tests {
     fn corrupt_ciphertext_is_rejected() {
         let mut vault = seal("p", b"payload").unwrap();
         vault.ciphertext_b64 = B64.encode(b"not valid ciphertext at all");
-        assert!(matches!(open(&vault, "p"), Err(VaultError::WrongPassphrase)));
+        assert!(matches!(
+            open(&vault, "p"),
+            Err(VaultError::WrongPassphrase)
+        ));
     }
 }
 
@@ -149,8 +171,11 @@ pub async fn vault_store(
     device_id: String,
     refresh_token: String,
 ) -> Result<(), String> {
-    let plaintext =
-        serde_json::to_vec(&StoredCredentials { device_id, refresh_token }).map_err(|e| e.to_string())?;
+    let plaintext = serde_json::to_vec(&StoredCredentials {
+        device_id,
+        refresh_token,
+    })
+    .map_err(|e| e.to_string())?;
     let path = vault_path(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let vault = seal(&passphrase, &plaintext)?;

@@ -690,7 +690,7 @@ watch(
   background: rgba(237, 246, 255, 0.72);
   border: 0;
   border-radius: 999px;
-  height: 4px;
+  height: 2px;
 }
 
 .volume-range::-webkit-slider-thumb {
@@ -702,7 +702,7 @@ watch(
   box-shadow: 0 0 0 1px rgba(2, 8, 18, 0.92), 0 1px 4px rgba(2, 8, 18, 0.4);
   box-sizing: border-box;
   height: 12px;
-  margin-top: -4px;
+  margin-top: -5px;
   width: 12px;
 }
 
@@ -710,7 +710,7 @@ watch(
   background: rgba(237, 246, 255, 0.72);
   border: 0;
   border-radius: 999px;
-  height: 4px;
+  height: 2px;
 }
 
 .volume-range::-moz-range-thumb {

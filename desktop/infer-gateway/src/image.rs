@@ -10,12 +10,36 @@
 //! 与前端/契约:候选真模型见 scripts/build_sdcpp.sh;切模型只改 YTS_IMAGEGEN_CMD,端点/前端零改动。
 
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 use axum::http::StatusCode;
 use axum::Json;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
+use tokio::sync::Semaphore;
+
+static IMAGE_PERMIT: OnceLock<Semaphore> = OnceLock::new();
+static OUTPUT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+mod tests {
+    use super::{shell_quote, temporary_output_path};
+
+    #[test]
+    fn each_image_request_uses_a_distinct_temporary_output() {
+        assert_ne!(temporary_output_path(), temporary_output_path());
+    }
+
+    #[test]
+    fn shell_quote_keeps_song_metadata_inside_one_argument() {
+        assert_eq!(
+            shell_quote("night's end; touch /tmp/pwned"),
+            "'night'\"'\"'s end; touch /tmp/pwned'"
+        );
+    }
+}
 
 #[derive(Deserialize)]
 pub struct ImageReq {
@@ -43,11 +67,26 @@ pub struct ImageResp {
 }
 
 pub async fn gen_image(Json(req): Json<ImageReq>) -> Result<Json<ImageResp>, (StatusCode, String)> {
+    let _permit = IMAGE_PERMIT
+        .get_or_init(|| Semaphore::new(1))
+        .acquire()
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "image worker is closed".into(),
+            )
+        })?;
     let (png, model) = produce_png(&req)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
-    Ok(Json(ImageResp { png_base64: b64, model, width: req.width, height: req.height }))
+    Ok(Json(ImageResp {
+        png_base64: b64,
+        model,
+        width: req.width,
+        height: req.height,
+    }))
 }
 
 /// 产出 PNG 字节 + 模型名。有 YTS_IMAGEGEN_CMD 走外部,否则内置占位。
@@ -60,11 +99,11 @@ async fn produce_png(req: &ImageReq) -> Result<(Vec<u8>, String), String> {
 
 /// spawn stable-diffusion.cpp 等。约定占位 {prompt} {out} {width} {height} {steps}。
 async fn spawn_external(cmd_tmpl: &str, req: &ImageReq) -> Result<(Vec<u8>, String), String> {
-    let out_path = std::env::temp_dir().join(format!("yts-imagegen-{}.png", std::process::id()));
+    let out_path = temporary_output_path();
     let out_str = out_path.to_string_lossy().to_string();
     let filled = cmd_tmpl
-        .replace("{prompt}", &req.prompt)
-        .replace("{out}", &out_str)
+        .replace("{prompt}", &shell_quote(&req.prompt))
+        .replace("{out}", &shell_quote(&out_str))
         .replace("{width}", &req.width.to_string())
         .replace("{height}", &req.height.to_string())
         .replace("{steps}", &req.steps.to_string());
@@ -76,18 +115,37 @@ async fn spawn_external(cmd_tmpl: &str, req: &ImageReq) -> Result<(Vec<u8>, Stri
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("spawn imagegen failed: {e}"))?;
-    let status = child.wait().await.map_err(|e| format!("imagegen wait failed: {e}"))?;
+    let status = child.wait().await.map_err(|e| {
+        let _ = std::fs::remove_file(&out_path);
+        format!("imagegen wait failed: {e}")
+    })?;
     if !status.success() {
         let mut err = String::new();
         if let Some(mut s) = child.stderr.take() {
             let _ = s.read_to_string(&mut err).await;
         }
+        let _ = std::fs::remove_file(&out_path);
         return Err(format!("imagegen exited {status}: {}", err.trim()));
     }
-    let png = std::fs::read(&out_path).map_err(|e| format!("read png: {e}"))?;
+    let png = std::fs::read(&out_path).map_err(|e| {
+        let _ = std::fs::remove_file(&out_path);
+        format!("read png: {e}")
+    })?;
     let _ = std::fs::remove_file(&out_path);
     if png.is_empty() {
         return Err("imagegen produced empty png".into());
     }
     Ok((png, "sd.cpp".into()))
+}
+
+fn temporary_output_path() -> std::path::PathBuf {
+    let sequence = OUTPUT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "yts-imagegen-{}-{sequence}.png",
+        std::process::id()
+    ))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }

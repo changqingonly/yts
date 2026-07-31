@@ -38,15 +38,43 @@ def test_music_page_clears_player_queue_before_revoking_blob_urls_on_unmount() -
 def test_music_page_refreshes_after_environment_change_without_manual_refresh_button() -> None:
     music = read_source("pages/MusicPage.vue")
     target_watch_block = music.split("watch(\n  () => environment.target", 1)[1].split(
-        "\nonMounted(", 1
+        "\n\nwatch(", 1
     )[0]
 
     assert "async (nextTarget, previousTarget) =>" in target_watch_block
     assert "if (nextTarget === previousTarget) return;" in target_watch_block
-    assert "await refreshPlaylist();" in target_watch_block
+    assert "await refreshPlaylistWhenTargetReady(nextTarget);" in target_watch_block
     assert "RefreshCw" not in music
     assert 'title="刷新"' not in music
     assert 'aria-label="刷新"' not in music
+
+
+def test_music_page_waits_for_target_health_before_loading_playlist() -> None:
+    music = read_source("pages/MusicPage.vue")
+
+    assert "async function refreshPlaylistWhenTargetReady(target = environment.target)" in music
+    readiness_block = music.split(
+        "async function refreshPlaylistWhenTargetReady(target = environment.target)", 1
+    )[1].split("async function loadPlayableTrackUrls", 1)[0]
+    assert "error.value = \"\";" in readiness_block
+    assert "const healthStatus = await environment.checkHealth(target);" in readiness_block
+    assert "if (target !== environment.target) return;" in readiness_block
+    assert 'if (healthStatus !== "online") {' in readiness_block
+    assert "environment.targetHealthDetail(target)" in readiness_block
+    assert "await refreshPlaylist();" in readiness_block
+    assert readiness_block.index("await environment.checkHealth(target)") < readiness_block.index(
+        "await refreshPlaylist();"
+    )
+
+    target_watch_block = music.split("watch(\n  () => environment.target", 1)[1].split(
+        "\n\nwatch(", 1
+    )[0]
+    assert "await refreshPlaylistWhenTargetReady(nextTarget);" in target_watch_block
+    assert "await refreshPlaylist();" not in target_watch_block
+
+    mounted_block = music.split("onMounted(async () => {", 1)[1].split("});", 1)[0]
+    assert "await refreshPlaylistWhenTargetReady();" in mounted_block
+    assert "await refreshPlaylist();" not in mounted_block
 
 
 def test_music_page_loads_only_ready_renditions_and_refreshes_processing_state() -> None:
@@ -299,6 +327,46 @@ def test_playback_backdrop_uses_css_only_spinning_disc() -> None:
     assert not (FRONTEND / "components/MusicSpectrumBackdrop.vue").exists()
 
 
+def test_music_page_generates_missing_cover_only_for_local_target() -> None:
+    music = read_source("pages/MusicPage.vue")
+    service = read_source("services/music.js")
+
+    assert "ensureMusicCover" in service
+    assert "deleteMusicCover" in service
+    assert "regenerateMusicCover" in service
+    assert 'if (environment.target !== "local")' in music
+    assert "coverLoadVersion" in music
+    assert "responseContentHash !== track.contentHash" in music
+    assert "scheduleCoverRefresh" in music
+
+
+def test_music_page_exposes_delete_and_regenerate_generated_cover_controls() -> None:
+    music = read_source("pages/MusicPage.vue")
+    stage_path = FRONTEND / "components/MusicCoverStage.vue"
+
+    assert stage_path.exists()
+    stage = stage_path.read_text(encoding="utf-8")
+    assert '<MusicCoverStage' in music
+    assert "cover-panel" not in music
+    assert "{{ coverState.error_message" not in music.split("<template>", 1)[1]
+    assert "['cover-vinyl', { spinning: playing }]" in stage
+    assert "正在后台生成封面" in stage
+    assert "封面生成失败" in stage
+    assert 'title="删除生成封面"' in stage
+    assert 'title="重新生成封面"' in stage
+    assert 'title="查看失败原因"' not in stage
+    assert 'class="error-detail"' not in stage
+    assert "detailsOpen" not in stage
+    assert "@media (prefers-reduced-motion: reduce)" in stage
+    status_rule = stage.split(".cover-status {", 1)[1].split("}", 1)[0]
+    assert "border:" not in status_rule
+    assert "color: #8da5b4;" in status_rule
+    assert "本地图片模型未安装" in stage
+    assert "handleDeleteCover" in music
+    assert "handleRegenerateCover" in music
+    assert "handleRetryCover" in music
+
+
 def test_audio_player_uses_event_driven_native_controls_without_media_chrome() -> None:
     player = read_source("components/YtsAudioPlayer.vue")
 
@@ -393,7 +461,7 @@ def test_audio_player_volume_range_has_cross_background_contrast() -> None:
         ".volume-range::-moz-range-track",
     ]:
         rule = player.split(f"{selector} {{", 1)[1].split("}", 1)[0]
-        assert "height: 4px;" in rule
+        assert "height: 2px;" in rule
         assert "background: rgba(237, 246, 255, 0.72);" in rule
 
     for selector in [
@@ -403,3 +471,8 @@ def test_audio_player_volume_range_has_cross_background_contrast() -> None:
         rule = player.split(f"{selector} {{", 1)[1].split("}", 1)[0]
         assert "height: 12px;" in rule
         assert "width: 12px;" in rule
+
+    webkit_thumb_rule = player.split(
+        ".volume-range::-webkit-slider-thumb {", 1
+    )[1].split("}", 1)[0]
+    assert "margin-top: -5px;" in webkit_thumb_rule
