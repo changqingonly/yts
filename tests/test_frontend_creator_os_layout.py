@@ -947,7 +947,7 @@ def test_audio_player_formats_media_errors_without_object_string() -> None:
     assert "err?.target?.error || err" not in player
 
 
-def test_music_player_places_track_identity_inside_open_source_player_shell() -> None:
+def test_music_player_keeps_track_identity_in_cover_stage_only() -> None:
     music = read_source("pages/MusicPage.vue")
     player = read_source("components/YtsAudioPlayer.vue")
     assert 'class="control-row"' in player
@@ -957,15 +957,14 @@ def test_music_player_places_track_identity_inside_open_source_player_shell() ->
 
     assert 'class="player-meta"' not in music
     assert 'class="transport-bar"' not in music
-    assert 'class="track-summary"' in player
     assert ':track="currentTrack"' in music
-    assert "trackTitle" in player
-    assert "trackArtist" in player
+    assert 'class="cover-caption"' in read_source("components/MusicCoverStage.vue")
+    assert "track-summary" not in player
+    assert "trackTitle" not in player
+    assert "trackArtist" not in player
     assert player.index('class="timeline-row"') < player.index('class="control-row"')
-    assert 'class="track-summary"' in control_row_block
-    assert control_row_block.index('class="track-summary"') < control_row_block.index(
-        'class="button-groups"'
-    )
+    assert 'class="track-summary"' not in control_row_block
+    assert 'class="button-groups"' in control_row_block
 
 
 def test_music_player_uses_event_driven_native_media_controls() -> None:
@@ -1014,7 +1013,7 @@ def test_music_player_uses_event_driven_native_media_controls() -> None:
         assert hand_rolled_token not in music
 
 
-def test_music_player_control_layout_uses_timeline_row_then_track_left_and_controls_right() -> None:
+def test_music_player_control_layout_uses_timeline_row_then_centered_controls() -> None:
     music = read_source("pages/MusicPage.vue")
     player = read_source("components/YtsAudioPlayer.vue")
     root_rule = player.split(".yts-audio-player {", 1)[1].split("}", 1)[0]
@@ -1032,13 +1031,10 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
     control_row_block = player.split('<div class="control-row"', 1)[1].split("</section>", 1)[0]
     control_row_rule = player.split(".control-row {", 1)[1].split("}", 1)[0]
     button_groups_rule = player.split(".button-groups {", 1)[1].split("}", 1)[0]
-    track_rule = player.split(".track-summary {", 1)[1].split("}", 1)[0]
-    artist_rule = player.split(".track-summary small {", 1)[1].split("}", 1)[0]
 
     for class_name in [
         "timeline-row",
         "control-row",
-        "track-summary",
         "button-groups",
         "transport-group",
         "utility-group",
@@ -1052,11 +1048,8 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
     assert "<media-duration-display" not in timeline_row_block
     assert "transport-group" not in timeline_row_block
     assert "utility-group" not in timeline_row_block
-    assert 'class="track-summary"' in control_row_block
     assert 'class="button-groups"' in control_row_block
-    assert control_row_block.index('class="track-summary"') < control_row_block.index(
-        'class="button-groups"'
-    )
+    assert 'class="track-summary"' not in control_row_block
     assert 'class="transport-group"' in control_row_block
     assert 'class="utility-group"' in control_row_block
     assert "<ListMusic" not in player
@@ -1065,6 +1058,8 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
     assert "grid-template-rows: auto auto;" in root_rule
     assert "height: 100%;" not in root_rule
     assert "min-width: 0;" in root_rule
+    assert "grid-template-columns: max-content;" in control_row_rule
+    assert "justify-content: center;" in control_row_rule
     assert "display: block;" in controls_rule
     assert "max-width: none;" in controls_rule
     assert "margin-inline: auto;" in controls_rule
@@ -1081,13 +1076,9 @@ def test_music_player_control_layout_uses_timeline_row_then_track_left_and_contr
     )
     assert "margin-right: 0;" in timeline_rule
     assert "width: calc(100vw - var(--shell-sidebar-width));" in timeline_rule
-    assert "grid-template-columns: minmax(180px, 1fr) max-content;" in control_row_rule
     assert "justify-content: end;" in button_groups_rule
     assert "border: 0;" in control_button_rule
     assert "border: 1px" not in control_button_rule
-    assert "justify-items: start;" in track_rule
-    assert "line-height: 1.2;" in track_rule
-    assert "line-height: 1.2;" in artist_rule
 
 
 def test_creation_page_uses_dark_theme_instead_of_broad_light_surfaces() -> None:
@@ -1673,11 +1664,14 @@ def test_music_page_prioritizes_cover_and_lyrics_player_layout() -> None:
     ]:
         assert removed_surface not in music
     stage = read_source("components/MusicCoverStage.vue")
-    assert "歌曲信息" in stage
+    assert "歌曲信息" not in stage
     assert "歌词" in stage
     assert "暂无歌词" in stage
     assert 'class="cover-artwork"' in stage
     assert 'class="lyrics-region"' in stage
+    assert "track-summary" not in player
+    assert "trackTitle" not in player
+    assert "trackArtist" not in player
 
 
 def test_music_page_player_surface_has_no_panel_frame_or_wavesurfer_rendering() -> None:

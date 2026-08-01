@@ -69,12 +69,7 @@ const artworkThemeStyle = computed(() =>
       </div>
     </div>
 
-    <aside class="track-context" aria-label="歌曲信息与歌词">
-      <header>
-        <span>歌曲信息</span>
-        <h2>{{ trackTitle }}</h2>
-        <p>艺人：{{ trackArtist }}</p>
-      </header>
+    <aside class="track-context" aria-label="歌词">
       <section class="lyrics-region" aria-label="歌词">
         <span>歌词</span>
         <div class="lyrics-empty">
@@ -171,16 +166,14 @@ const artworkThemeStyle = computed(() =>
   width: min(42vh, 100%);
 }
 
-.cover-caption h2,
-.track-context h2 {
+.cover-caption h2 {
   color: var(--color-heading);
   font-size: 24px;
   letter-spacing: 0;
   margin: 0;
 }
 
-.cover-caption p,
-.track-context p {
+.cover-caption p {
   color: var(--color-muted-strong);
   font-size: 14px;
   margin: 6px 0 0;
@@ -222,12 +215,11 @@ const artworkThemeStyle = computed(() =>
 .track-context {
   align-self: stretch;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   min-height: 320px;
   padding: 14px 0;
 }
 
-.track-context header > span,
 .lyrics-region > span {
   color: rgba(216, 231, 245, 0.58);
   display: block;
@@ -239,7 +231,6 @@ const artworkThemeStyle = computed(() =>
 .lyrics-region {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  margin-top: 34px;
   min-height: 0;
 }
 

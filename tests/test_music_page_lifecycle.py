@@ -353,6 +353,7 @@ def test_music_page_exposes_delete_and_regenerate_generated_cover_controls() -> 
     assert "aspect-ratio: 1 / 1;" in stage
     assert "object-fit: cover;" in stage
     assert 'class="track-context"' in stage
+    assert "歌曲信息" not in stage
     assert 'class="lyrics-region"' in stage
     assert "暂无歌词" in stage
     assert "cover-vinyl" not in stage

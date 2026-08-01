@@ -42,8 +42,6 @@ const MEDIA_ERROR_MESSAGES = {
 };
 
 const sourceUrl = computed(() => props.track?.url || "");
-const trackTitle = computed(() => props.track?.title || "暂无歌曲");
-const trackArtist = computed(() => props.track?.artist || "从播放列表选择一首歌");
 const currentTimeLabel = computed(() => formatTimelineTime(currentTime.value));
 const durationLabel = computed(() => formatTimelineTime(duration.value));
 const timelineProgressRatio = computed(() => {
@@ -333,10 +331,6 @@ watch(
 
     <div class="media-controls">
         <div class="control-row">
-          <div class="track-summary">
-            <strong>{{ trackTitle }}</strong>
-            <small>{{ trackArtist }}</small>
-          </div>
           <div class="button-groups">
             <div class="transport-group" aria-label="播放控制">
               <button
@@ -485,39 +479,9 @@ watch(
   align-items: center;
   display: grid;
   gap: 18px;
-  grid-template-columns: minmax(180px, 1fr) max-content;
+  grid-template-columns: max-content;
+  justify-content: center;
   min-width: 0;
-}
-
-.track-summary {
-  display: grid;
-  gap: 3px;
-  justify-items: start;
-  line-height: 1.2;
-  min-width: 0;
-  text-align: left;
-}
-
-.track-summary strong {
-  color: var(--color-heading);
-  font-size: 18px;
-  letter-spacing: 0;
-  line-height: 1.08;
-  max-width: min(360px, 32vw);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.track-summary small {
-  color: var(--color-muted-strong);
-  font-size: 13px;
-  font-weight: 760;
-  line-height: 1.2;
-  max-width: min(360px, 32vw);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .button-groups {
@@ -767,11 +731,6 @@ button:disabled {
 
   .control-row {
     grid-template-columns: 1fr;
-  }
-
-  .track-summary strong,
-  .track-summary small {
-    max-width: 100%;
   }
 
   .button-groups {
