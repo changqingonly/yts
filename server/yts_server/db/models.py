@@ -336,6 +336,7 @@ class MusicCoverJob(Base):
     prompt: Mapped[str] = mapped_column(Text)
     output_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    theme_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)

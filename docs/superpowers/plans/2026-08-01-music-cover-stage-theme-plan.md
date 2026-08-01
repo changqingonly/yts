@@ -6,7 +6,7 @@
 
 **Architecture:** 主题色属于封面产物元数据，由 `music_covers` 生成 worker 在 PNG 校验后计算并写入 `MusicCoverJob`；API 状态响应携带主题色，前端仅消费该值。播放器主舞台拆为左侧方形封面、右侧歌曲信息/歌词空状态和底部原有播放控制，播放事件契约保持不变。
 
-**Tech Stack:** Python 3、FastAPI、SQLAlchemy async、SQLite migrations/bootstrap、Pillow、Vue 3、CSS、pytest。
+**Tech Stack:** Python 3、FastAPI、SQLAlchemy async、SQLite migrations/bootstrap、imageio-ffmpeg、Vue 3、CSS、pytest。
 
 ## Global Constraints
 
@@ -23,7 +23,6 @@
 **Files:**
 - Modify: `server/yts_server/db/models.py` (MusicCoverJob columns)
 - Modify: `server/yts_server/domains/music_covers.py` (`process_next_cover_job`, `_job_response`)
-- Modify: `server/pyproject.toml` (add the pinned/compatible Pillow runtime dependency)
 - Modify: database initialization/migration file identified by existing model bootstrap pattern
 - Test: `tests/test_music_cover_routes.py`
 
@@ -33,7 +32,7 @@
 
 - [ ] **Step 1: Write failing tests** for a generated PNG storing a deterministic theme color, API ready response returning it, and extraction failure leaving the job failed.
 - [ ] **Step 2: Run** `pytest tests/test_music_cover_routes.py -q` and verify the new assertions fail because the column/helper/response field do not exist.
-- [ ] **Step 3: Add Pillow to the server runtime dependency list**, then implement the minimal extractor in a focused backend module (for example `server/yts_server/domains/cover_color.py`): decode PNG with Pillow, sample at a fixed stride, ignore alpha-zero and near-black/near-white pixels, quantize RGB buckets, choose the highest weighted bucket, return `#RRGGBB`.
+- [ ] **Step 3: Implement the minimal extractor** in `server/yts_server/domains/cover_color.py`: decode PNG to RGBA with the already packaged `imageio-ffmpeg` binary, ignore alpha-zero and near-black/near-white pixels, quantize RGB buckets, choose the highest weighted bucket, return `#RRGGBB`.
 - [ ] **Step 4: Add the nullable theme column** using the repository’s existing SQLite schema initialization/migration convention; do not rewrite unrelated tables.
 - [ ] **Step 5: Update `process_next_cover_job`** so PNG signature validation is followed by theme extraction before the artifact is marked ready; persist the color with `output_path` and `output_hash`. Any extractor or write error must flow to `_mark_failed`.
 - [ ] **Step 6: Include `theme_color` in `_job_response`** only from persisted job metadata; do not recalculate on status/file reads.

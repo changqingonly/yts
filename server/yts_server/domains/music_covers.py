@@ -20,6 +20,7 @@ from ..db.models import (
     MusicPlaylistItem,
 )
 from ..errors import AppError
+from .cover_color import extract_theme_color
 
 QUEUED = "queued"
 GENERATING = "generating"
@@ -154,6 +155,7 @@ async def delete_cover(session: AsyncSession, *, user_uuid: str, content_hash: s
             Path(job.output_path).unlink(missing_ok=True)
             job.output_path = None
             job.output_hash = None
+            job.theme_color = None
     await session.flush()
     return _suppressed_response(content_hash, policy.generation_epoch)
 
@@ -173,6 +175,9 @@ async def retry_cover(session: AsyncSession, *, user_uuid: str, content_hash: st
     job.trigger_source = "user"
     job.error_code = None
     job.error_message = None
+    job.output_path = None
+    job.output_hash = None
+    job.theme_color = None
     job.started_at_ms = None
     job.finished_at_ms = None
     job.updated_at_ms = _now_ms()
@@ -234,6 +239,7 @@ async def process_next_cover_job(sessionmaker: async_sessionmaker) -> bool:
         png = await GatewayInference().generate_image(prompt, width=768, height=768, steps=4)
         if not png.startswith(PNG_SIGNATURE):
             raise ValueError("image generator returned invalid PNG data")
+        theme_color = extract_theme_color(png)
         output_dir = Path(get_settings().music_cover_storage_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha256(png).hexdigest()
@@ -241,7 +247,7 @@ async def process_next_cover_job(sessionmaker: async_sessionmaker) -> bool:
         temporary_path = output_dir / f".{job_id}.tmp"
         temporary_path.write_bytes(png)
         temporary_path.replace(final_path)
-        accepted = await _mark_ready(sessionmaker, job_id, final_path, digest)
+        accepted = await _mark_ready(sessionmaker, job_id, final_path, digest, theme_color)
         if not accepted:
             final_path.unlink(missing_ok=True)
     except Exception as error:
@@ -279,7 +285,9 @@ async def _claim_job(sessionmaker: async_sessionmaker, job_id: str) -> bool:
         return result.rowcount == 1
 
 
-async def _mark_ready(sessionmaker, job_id: str, path: Path, digest: str) -> bool:
+async def _mark_ready(
+    sessionmaker, job_id: str, path: Path, digest: str, theme_color: str
+) -> bool:
     async with sessionmaker() as session:
         result = await session.execute(
             update(MusicCoverJob)
@@ -288,6 +296,7 @@ async def _mark_ready(sessionmaker, job_id: str, path: Path, digest: str) -> boo
                 status=READY,
                 output_path=str(path),
                 output_hash=digest,
+                theme_color=theme_color,
                 finished_at_ms=_now_ms(),
                 updated_at_ms=_now_ms(),
             )
@@ -376,10 +385,14 @@ async def _cover_prompt(session, user_uuid: str, content_hash: str) -> str:
     title = item.title_alias if item and item.title_alias else "Untitled track"
     artist = item.artist_alias if item and item.artist_alias else "Unknown artist"
     return (
-        "Create a square album cover. "
+        "Create premium 1:1 square album artwork, designed as a complete edge-to-edge cover. "
         f"Title concept: {title}. Artist concept: {artist}. "
-        "One strong central subject, clean composition, high contrast, readable at thumbnail size, "
-        "no text, no watermark, no logo, no border."
+        "Translate those concepts into mood and imagery only. Use one unmistakable visual subject "
+        "occupying 70-80% of the canvas, with intentional foreground, midground, and background "
+        "separation. Create a distinctive silhouette, expressive lighting, tactile detail, and a "
+        "cohesive color story that remains recognizable at thumbnail size. Fill the entire canvas. "
+        "No text, no letters, no typography, no vinyl record, no circular record label, no turntable, "
+        "no UI elements, no mockup, no frame, no border, no watermark, no logo, no blank margins."
     )
 
 
@@ -392,6 +405,7 @@ def _job_response(job: MusicCoverJob) -> dict:
         "priority": job.priority,
         "error_code": job.error_code,
         "error_message": job.error_message,
+        "theme_color": job.theme_color,
         "cover_url": f"/api/music/covers/{job.content_hash}/file" if job.status == READY else None,
     }
 

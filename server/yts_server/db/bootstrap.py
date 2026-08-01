@@ -60,6 +60,12 @@ def _upgrade_music_schema(connection) -> None:
                 "AND music_playlist_item.deleted_at_ms IS NULL)"
             )
         )
+    if "music_cover_job" in table_names:
+        _add_missing_columns(
+            connection,
+            "music_cover_job",
+            {"theme_color": "VARCHAR(7)"},
+        )
 
 
 def _validate_auth_schema(connection) -> None:

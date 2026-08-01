@@ -349,7 +349,14 @@ def test_music_page_exposes_delete_and_regenerate_generated_cover_controls() -> 
     assert '<MusicCoverStage' in music
     assert "cover-panel" not in music
     assert "{{ coverState.error_message" not in music.split("<template>", 1)[1]
-    assert "['cover-vinyl', { spinning: playing }]" in stage
+    assert 'class="cover-artwork"' in stage
+    assert "aspect-ratio: 1 / 1;" in stage
+    assert "object-fit: cover;" in stage
+    assert 'class="track-context"' in stage
+    assert 'class="lyrics-region"' in stage
+    assert "暂无歌词" in stage
+    assert "cover-vinyl" not in stage
+    assert "vinyl-label" not in stage
     assert "正在后台生成封面" in stage
     assert "封面生成失败" in stage
     assert 'title="删除生成封面"' in stage
@@ -365,6 +372,22 @@ def test_music_page_exposes_delete_and_regenerate_generated_cover_controls() -> 
     assert "handleDeleteCover" in music
     assert "handleRegenerateCover" in music
     assert "handleRetryCover" in music
+
+
+def test_music_page_applies_persisted_cover_theme_without_canvas_sampling() -> None:
+    music = read_source("pages/MusicPage.vue")
+
+    assert "coverState.value.theme_color" in music
+    assert "--cover-theme" in music
+    assert ":theme-color=" in music
+    assert "props.themeColor ? { \"--artwork-accent\": props.themeColor } : {}" in read_source(
+        "components/MusicCoverStage.vue"
+    )
+    assert "Canvas" not in music
+    assert "getImageData" not in music
+    assert "createElement(\"canvas\")" not in music
+    assert "ready cover is missing theme_color" in music
+    assert "error.value = err instanceof Error ? err.message : String(err);" in music
 
 
 def test_audio_player_uses_event_driven_native_controls_without_media_chrome() -> None:

@@ -48,6 +48,10 @@ def test_cover_job_schema_enforces_one_job_per_user_song_epoch() -> None:
     assert ("user_uuid", "content_hash", "generation_epoch") in unique_columns
 
 
+def test_cover_job_schema_persists_theme_color() -> None:
+    assert "theme_color" in MusicCoverJob.__table__.columns
+
+
 def test_ensure_reports_unavailable_without_enqueuing_when_local_image_model_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -103,6 +107,39 @@ def test_system_and_user_ensure_reuse_the_same_local_cover_job(
         assert system.json()["job_id"] == user.json()["job_id"]
         assert system.json()["generation_epoch"] == 1
         assert user.json()["priority"] == 100
+
+
+def test_cover_prompt_prioritizes_square_artwork_without_vinyl_or_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_cover_work(*args, **kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr("yts_server.domains.music_covers.process_next_cover_job", no_cover_work)
+    with TestClient(create_app()) as client:
+        headers, content_hash = _upload_song(client)
+        response = client.post(
+            f"/api/music/covers/{content_hash}/ensure",
+            headers=headers,
+            json={"trigger_source": "system"},
+        )
+        assert response.status_code == 200, response.text
+        db_path = os.environ["YTS_DATABASE_URL"].removeprefix("sqlite+aiosqlite:///")
+        with sqlite3.connect(db_path) as connection:
+            prompt = connection.execute(
+                "SELECT prompt FROM music_cover_job WHERE id = ?", (response.json()["job_id"],)
+            ).fetchone()[0]
+
+    for required in [
+        "1:1 square album artwork",
+        "70-80% of the canvas",
+        "foreground, midground, and background",
+        "no vinyl record",
+        "no turntable",
+        "no UI elements",
+        "no text",
+    ]:
+        assert required.lower() in prompt.lower()
 
 
 def test_delete_suppresses_ensure_until_idempotent_regenerate(
@@ -193,10 +230,44 @@ def test_cancelled_job_rejects_late_ready_result(
                 "UPDATE music_cover_job SET status = 'cancelled' WHERE id = ?", (job_id,)
             )
         accepted = asyncio.run(
-            _mark_ready(get_sessionmaker(), job_id, tmp_path / "late.png", "deadbeef")
+            _mark_ready(
+                get_sessionmaker(), job_id, tmp_path / "late.png", "deadbeef", "#2494D0"
+            )
         )
 
         assert accepted is False
+
+
+def test_ready_cover_status_returns_persisted_theme_color(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def no_cover_work(*args, **kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr("yts_server.domains.music_covers.process_next_cover_job", no_cover_work)
+    with TestClient(create_app()) as client:
+        headers, content_hash = _upload_song(client)
+        job_id = client.post(
+            f"/api/music/covers/{content_hash}/ensure",
+            headers=headers,
+            json={"trigger_source": "system"},
+        ).json()["job_id"]
+        db_path = os.environ["YTS_DATABASE_URL"].removeprefix("sqlite+aiosqlite:///")
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                "UPDATE music_cover_job SET status = 'generating' WHERE id = ?", (job_id,)
+            )
+        accepted = asyncio.run(
+            _mark_ready(
+                get_sessionmaker(), job_id, tmp_path / "ready.png", "deadbeef", "#2494D0"
+            )
+        )
+
+        response = client.get(f"/api/music/covers/{content_hash}", headers=headers)
+
+        assert accepted is True
+        assert response.status_code == 200, response.text
+        assert response.json()["theme_color"] == "#2494D0"
 
 
 def _upload_song(client: TestClient) -> tuple[dict[str, str], str]:

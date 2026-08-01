@@ -1642,7 +1642,7 @@ def test_music_page_is_the_default_player_surface() -> None:
     assert "usePlaylistStore" in music
 
 
-def test_music_page_prioritizes_minimal_wave_player_without_lyrics() -> None:
+def test_music_page_prioritizes_cover_and_lyrics_player_layout() -> None:
     music = read_source("pages/MusicPage.vue")
     player = read_source("components/YtsAudioPlayer.vue")
 
@@ -1672,8 +1672,12 @@ def test_music_page_prioritizes_minimal_wave_player_without_lyrics() -> None:
         "查看播放历史",
     ]:
         assert removed_surface not in music
-    assert "歌词" not in music
-    assert "lyric" not in music.lower()
+    stage = read_source("components/MusicCoverStage.vue")
+    assert "歌曲信息" in stage
+    assert "歌词" in stage
+    assert "暂无歌词" in stage
+    assert 'class="cover-artwork"' in stage
+    assert 'class="lyrics-region"' in stage
 
 
 def test_music_page_player_surface_has_no_panel_frame_or_wavesurfer_rendering() -> None:

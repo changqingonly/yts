@@ -45,6 +45,10 @@ let coverRefreshTimer = null;
 let coverLoadVersion = 0;
 const coverState = ref({ status: "absent", error_message: "" });
 const coverObjectUrl = ref("");
+const coverThemeStyle = computed(() => {
+  const themeColor = coverState.value.theme_color;
+  return themeColor ? { "--cover-theme": themeColor } : {};
+});
 
 const PLAYBACK_RESUME_STORAGE_KEY = "yts-music-playback-state";
 const RENDITION_REFRESH_DELAY_MS = 1500;
@@ -209,6 +213,12 @@ async function syncCurrentCover(track = currentTrack.value, { ensure = true } = 
     if (requestVersion !== coverLoadVersion || responseContentHash !== track.contentHash) return;
     coverState.value = response;
     if (response.status === "ready") {
+      if (typeof coverState.value.theme_color !== "string") {
+        throw new Error("ready cover is missing theme_color");
+      }
+      if (!/^#[0-9A-F]{6}$/.test(coverState.value.theme_color)) {
+        throw new Error("ready cover has invalid theme_color");
+      }
       const nextUrl = await loadMusicCoverObjectUrl({
         contentHash: track.contentHash,
         target: environment.target,
@@ -223,6 +233,7 @@ async function syncCurrentCover(track = currentTrack.value, { ensure = true } = 
     scheduleCoverRefresh(track, requestVersion);
   } catch (err) {
     if (requestVersion !== coverLoadVersion) return;
+    error.value = err instanceof Error ? err.message : String(err);
     coverState.value = {
       status: "failed",
       error_message: err instanceof Error ? err.message : String(err),
@@ -574,7 +585,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="music-studio">
+  <section class="music-studio" :style="coverThemeStyle">
     <div class="side-actions" aria-label="播放器工具">
       <button
         type="button"
@@ -610,6 +621,8 @@ onBeforeUnmount(() => {
       <MusicCoverStage
         v-if="environment.target === 'local' && currentTrack"
         :cover-url="coverObjectUrl"
+        :theme-color="coverState.theme_color || ''"
+        :track="currentTrack"
         :playing="player.isPlaying"
         :status="coverState.status"
         @delete="handleDeleteCover"
@@ -751,9 +764,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .music-studio {
+  --cover-theme: #14758a;
+
   background:
-    radial-gradient(circle at 50% 42%, rgba(34, 211, 238, 0.14), transparent 32%),
-    linear-gradient(150deg, #071426, #040b15 72%);
+    radial-gradient(circle at 38% 38%, color-mix(in srgb, var(--cover-theme) 38%, transparent), transparent 42%),
+    linear-gradient(145deg, color-mix(in srgb, var(--cover-theme) 24%, #071426), #040b15 76%);
   color: var(--color-text);
   height: 100%;
   overflow: hidden;
@@ -817,11 +832,11 @@ onBeforeUnmount(() => {
 
   align-content: end;
   display: grid;
-  gap: 24px;
+  gap: clamp(18px, 2.4vh, 28px);
   grid-template-rows: auto;
   inset: 20px 86px 22px 28px;
   overflow: visible;
-  padding: 34px var(--stage-x-pad);
+  padding: 28px var(--stage-x-pad);
   position: absolute;
   z-index: 1;
 }
@@ -838,7 +853,7 @@ onBeforeUnmount(() => {
 }
 
 .stage-glow {
-  background: radial-gradient(circle at 50% 44%, rgba(34, 211, 238, 0.12), transparent 44%);
+  background: radial-gradient(circle at 42% 42%, color-mix(in srgb, var(--cover-theme) 18%, transparent), transparent 48%);
   inset: 0;
   pointer-events: none;
   position: absolute;

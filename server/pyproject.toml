@@ -29,6 +29,7 @@ eval = [
 
 [project.scripts]
 yts-audio-backfill = "yts_server.audio_backfill:main"
+yts-music-cover-backfill = "yts_server.music_cover_backfill:main"
 
 [build-system]
 requires = ["hatchling"]

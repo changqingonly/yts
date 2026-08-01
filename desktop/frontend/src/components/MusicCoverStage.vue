@@ -1,9 +1,11 @@
 <script setup>
-import { CircleAlert, RefreshCw, Trash2 } from "@lucide/vue";
+import { CircleAlert, Disc3, RefreshCw, Trash2 } from "@lucide/vue";
 import { computed } from "vue";
 
 const props = defineProps({
   coverUrl: { type: String, default: "" },
+  themeColor: { type: String, default: "" },
+  track: { type: Object, default: null },
   playing: { type: Boolean, default: false },
   status: { type: String, default: "absent" },
 });
@@ -12,129 +14,125 @@ const emit = defineEmits(["delete", "regenerate", "retry"]);
 const generating = computed(() => props.status === "queued" || props.status === "generating");
 const failed = computed(() => props.status === "failed");
 const suppressed = computed(() => props.status === "suppressed");
+const trackTitle = computed(() => props.track?.title || "未命名歌曲");
+const trackArtist = computed(() => props.track?.artist || "未知艺人");
+const artworkThemeStyle = computed(() =>
+  props.themeColor ? { "--artwork-accent": props.themeColor } : {},
+);
 </script>
 
 <template>
-  <section class="cover-stage" aria-label="歌曲封面">
-    <div :class="['cover-vinyl', { spinning: playing }]">
-      <span class="vinyl-grooves" aria-hidden="true"></span>
-      <img v-if="coverUrl" class="vinyl-label cover-image" :src="coverUrl" alt="当前歌曲封面" />
-      <span v-else class="vinyl-label default-label" aria-hidden="true">
-        <span class="label-mark"></span>
-      </span>
-      <span class="spindle" aria-hidden="true"></span>
+  <section class="cover-stage" aria-label="歌曲封面与歌词">
+    <div class="artwork-column">
+      <div class="cover-artwork" :style="artworkThemeStyle">
+        <img v-if="coverUrl" :src="coverUrl" alt="当前歌曲封面" />
+        <div v-else class="cover-placeholder" aria-hidden="true">
+          <Disc3 :size="54" :class="{ spinning: playing }" />
+        </div>
+        <div class="cover-tools" aria-label="封面操作">
+          <button type="button" title="重新生成封面" aria-label="重新生成封面" @click="emit('regenerate')">
+            <RefreshCw :size="16" />
+          </button>
+          <button
+            v-if="coverUrl"
+            type="button"
+            title="删除生成封面"
+            aria-label="删除生成封面"
+            @click="emit('delete')"
+          >
+            <Trash2 :size="16" />
+          </button>
+        </div>
+      </div>
+
+      <div class="cover-caption">
+        <div>
+          <h2>{{ trackTitle }}</h2>
+          <p>{{ trackArtist }}</p>
+        </div>
+        <div class="cover-status" aria-live="polite">
+          <span v-if="generating" class="status-copy">
+            <span class="status-pulse"></span>正在后台生成封面
+          </span>
+          <template v-else-if="failed">
+            <span class="status-copy"><CircleAlert :size="14" />封面生成失败</span>
+            <button class="text-action" type="button" @click="emit('retry')">重试</button>
+          </template>
+          <template v-else-if="suppressed">
+            <span class="status-copy">未设置封面</span>
+            <button class="text-action" type="button" @click="emit('regenerate')">生成封面</button>
+          </template>
+          <span v-else-if="status === 'unavailable'" class="status-copy">
+            <CircleAlert :size="14" />本地图片模型未安装
+          </span>
+        </div>
+      </div>
     </div>
 
-    <div class="cover-tools" aria-label="封面操作">
-      <button type="button" title="重新生成封面" aria-label="重新生成封面" @click="emit('regenerate')">
-        <RefreshCw :size="16" />
-      </button>
-      <button
-        v-if="coverUrl"
-        type="button"
-        title="删除生成封面"
-        aria-label="删除生成封面"
-        @click="emit('delete')"
-      >
-        <Trash2 :size="16" />
-      </button>
-    </div>
-
-    <div class="cover-status" aria-live="polite">
-      <span v-if="generating" class="status-copy">
-        <span class="status-pulse"></span>
-        正在后台生成封面
-      </span>
-      <template v-else-if="failed">
-        <span class="status-copy"><CircleAlert :size="14" />封面生成失败</span>
-        <button class="text-action" type="button" @click="emit('retry')">重试</button>
-      </template>
-      <template v-else-if="suppressed">
-        <span class="status-copy">未设置封面</span>
-        <button class="text-action" type="button" @click="emit('regenerate')">生成封面</button>
-      </template>
-      <template v-else-if="status === 'unavailable'">
-        <span class="status-copy"><CircleAlert :size="14" />本地图片模型未安装</span>
-      </template>
-    </div>
-
+    <aside class="track-context" aria-label="歌曲信息与歌词">
+      <header>
+        <span>歌曲信息</span>
+        <h2>{{ trackTitle }}</h2>
+        <p>艺人：{{ trackArtist }}</p>
+      </header>
+      <section class="lyrics-region" aria-label="歌词">
+        <span>歌词</span>
+        <div class="lyrics-empty">
+          <p>暂无歌词</p>
+        </div>
+      </section>
+    </aside>
   </section>
 </template>
 
 <style scoped>
 .cover-stage {
-  align-self: center;
+  align-items: center;
   display: grid;
-  grid-template-rows: auto 28px;
-  justify-items: center;
-  min-height: 310px;
+  gap: clamp(40px, 6vw, 96px);
+  grid-template-columns: minmax(300px, 0.9fr) minmax(320px, 1.1fr);
+  min-height: 0;
   position: relative;
+  width: min(1120px, 100%);
   z-index: 1;
 }
 
-.cover-vinyl {
-  aspect-ratio: 1;
-  background: #0b1118;
-  border: 1px solid rgba(169, 202, 220, 0.2);
-  border-radius: 50%;
-  box-shadow: 0 24px 64px rgba(0, 5, 12, 0.48), 0 0 44px rgba(34, 211, 238, 0.1);
-  max-width: 260px;
+.artwork-column {
+  display: grid;
+  gap: 18px;
+  justify-items: center;
+  min-width: 0;
+}
+
+.cover-artwork {
+  --artwork-accent: #14758a;
+
+  aspect-ratio: 1 / 1;
+  background: color-mix(in srgb, var(--artwork-accent) 18%, #07111d);
+  box-shadow: 0 30px 78px rgba(0, 4, 12, 0.5), 0 0 52px color-mix(in srgb, var(--artwork-accent) 24%, transparent);
+  max-width: 430px;
   overflow: hidden;
   position: relative;
-  width: min(31vh, 260px);
+  width: min(42vh, 100%);
 }
 
-.cover-vinyl.spinning {
-  animation: cover-disc-spin 14s linear infinite;
-}
-
-.vinyl-grooves {
-  background: repeating-radial-gradient(
-    circle,
-    transparent 0 5px,
-    rgba(166, 199, 216, 0.12) 6px,
-    transparent 7px 10px
-  );
-  inset: 4%;
-  position: absolute;
-}
-
-.vinyl-label {
-  border: 1px solid rgba(224, 243, 250, 0.28);
-  border-radius: 50%;
-  inset: 27%;
-  position: absolute;
-}
-
-.cover-image {
-  height: 46%;
+.cover-artwork img {
+  display: block;
+  height: 100%;
   object-fit: cover;
-  width: 46%;
+  width: 100%;
 }
 
-.default-label {
+.cover-placeholder {
   align-items: center;
-  background: #126070;
+  color: rgba(220, 239, 246, 0.68);
   display: flex;
+  height: 100%;
   justify-content: center;
 }
 
-.label-mark {
-  border: 2px solid rgba(229, 250, 252, 0.88);
-  border-radius: 50%;
-  height: 28%;
-  width: 28%;
-}
-
-.spindle {
-  background: #e5f6f8;
-  border-radius: 50%;
-  height: 6px;
-  left: 50%;
-  position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 6px;
+.cover-placeholder .spinning {
+  animation: cover-disc-spin 14s linear infinite;
 }
 
 .cover-tools {
@@ -142,27 +140,50 @@ const suppressed = computed(() => props.status === "suppressed");
   gap: 6px;
   opacity: 0;
   position: absolute;
-  right: calc(50% - min(15.5vh, 130px));
-  top: 8px;
+  right: 12px;
+  top: 12px;
   transition: opacity 140ms ease;
 }
 
-.cover-stage:hover .cover-tools,
-.cover-stage:focus-within .cover-tools {
+.cover-artwork:hover .cover-tools,
+.cover-artwork:focus-within .cover-tools {
   opacity: 1;
 }
 
 .cover-tools button {
   align-items: center;
   background: rgba(5, 15, 25, 0.84);
-  border: 1px solid rgba(158, 201, 220, 0.24);
+  border: 1px solid rgba(224, 243, 250, 0.24);
   border-radius: 6px;
   color: #d8e8ef;
   cursor: pointer;
   display: inline-flex;
-  height: 30px;
+  height: 32px;
   justify-content: center;
-  width: 30px;
+  width: 32px;
+}
+
+.cover-caption {
+  align-items: start;
+  display: flex;
+  justify-content: space-between;
+  max-width: 430px;
+  width: min(42vh, 100%);
+}
+
+.cover-caption h2,
+.track-context h2 {
+  color: var(--color-heading);
+  font-size: 24px;
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.cover-caption p,
+.track-context p {
+  color: var(--color-muted-strong);
+  font-size: 14px;
+  margin: 6px 0 0;
 }
 
 .cover-status {
@@ -171,9 +192,8 @@ const suppressed = computed(() => props.status === "suppressed");
   display: flex;
   font-size: 12px;
   gap: 8px;
-  height: 28px;
-  justify-content: center;
-  margin-top: 10px;
+  min-height: 28px;
+  justify-content: end;
 }
 
 .status-copy {
@@ -199,32 +219,67 @@ const suppressed = computed(() => props.status === "suppressed");
   padding: 2px 0;
 }
 
-@keyframes cover-disc-spin {
-  to { transform: rotate(360deg); }
+.track-context {
+  align-self: stretch;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 320px;
+  padding: 14px 0;
 }
 
-@keyframes status-breathe {
-  50% { opacity: 0.32; }
+.track-context header > span,
+.lyrics-region > span {
+  color: rgba(216, 231, 245, 0.58);
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 10px;
 }
+
+.lyrics-region {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  margin-top: 34px;
+  min-height: 0;
+}
+
+.lyrics-empty {
+  align-items: center;
+  border-left: 2px solid color-mix(in srgb, var(--artwork-accent) 56%, transparent);
+  display: flex;
+  min-height: 180px;
+  padding-left: 24px;
+}
+
+.lyrics-empty p {
+  color: rgba(216, 231, 245, 0.48);
+  font-size: 22px;
+  font-weight: 750;
+  margin: 0;
+}
+
+@keyframes cover-disc-spin { to { transform: rotate(360deg); } }
+@keyframes status-breathe { 50% { opacity: 0.32; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .cover-vinyl.spinning,
-  .status-pulse {
-    animation: none;
-  }
+  .cover-placeholder .spinning,
+  .status-pulse { animation: none; }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 820px) {
   .cover-stage {
-    min-height: 220px;
+    gap: 28px;
+    grid-template-columns: 1fr;
+    overflow-y: auto;
   }
 
-  .cover-vinyl {
-    width: min(24vh, 176px);
+  .cover-artwork,
+  .cover-caption {
+    width: min(360px, 100%);
   }
 
-  .cover-tools {
-    right: calc(50% - min(12vh, 88px));
+  .track-context {
+    min-height: 240px;
   }
 }
 </style>
