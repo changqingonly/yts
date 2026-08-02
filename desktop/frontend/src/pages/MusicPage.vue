@@ -746,6 +746,7 @@ onBeforeUnmount(() => {
       <div class="stage-glow"></div>
       <MusicCoverStage
         v-if="environment.target === 'local' && currentTrack"
+        class="cover-surface"
         :cover-url="coverObjectUrl"
         :theme-color="coverState.theme_color || ''"
         :track="currentTrack"
@@ -956,10 +957,10 @@ onBeforeUnmount(() => {
   --stage-left-inset: 28px;
   --stage-x-pad: clamp(24px, 4vw, 56px);
 
-  align-content: end;
+  align-content: stretch;
   display: grid;
   gap: clamp(18px, 2.4vh, 28px);
-  grid-template-rows: auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   inset: 20px 86px 22px 28px;
   overflow: visible;
   padding: 28px var(--stage-x-pad);
@@ -985,7 +986,14 @@ onBeforeUnmount(() => {
   position: absolute;
 }
 
+.cover-surface {
+  align-self: stretch;
+  grid-row: 1;
+  min-height: 0;
+}
+
 .player-surface {
+  grid-row: 2;
   min-height: 0;
 }
 

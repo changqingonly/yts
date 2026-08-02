@@ -86,6 +86,7 @@ const artworkThemeStyle = computed(() =>
   display: grid;
   gap: clamp(40px, 6vw, 96px);
   grid-template-columns: minmax(300px, 0.9fr) minmax(320px, 1.1fr);
+  height: 100%;
   min-height: 0;
   position: relative;
   width: min(1120px, 100%);
@@ -93,6 +94,7 @@ const artworkThemeStyle = computed(() =>
 }
 
 .artwork-column {
+  align-self: center;
   display: grid;
   gap: 18px;
   justify-items: center;

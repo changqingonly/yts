@@ -932,18 +932,33 @@ def test_audio_player_removes_wavesurfer_visual_rendering_after_butterchurn() ->
 
 
 def test_audio_player_does_not_reserve_removed_waveform_stage_height() -> None:
-    music = read_source("pages/MusicPage.vue")
     player = read_source("components/YtsAudioPlayer.vue")
     template = player.split("<template>", 1)[1].split("</template>", 1)[0]
     root_rule = player.split(".yts-audio-player {", 1)[1].split("}", 1)[0]
-    stage_rule = music.split(".player-stage {", 1)[1].split("}", 1)[0]
 
     assert 'class="player-spacer"' not in template
     assert "height: 100%;" not in root_rule
     assert "grid-template-rows: auto auto;" in root_rule
     assert "minmax(220px, 1fr)" not in root_rule
-    assert "align-content: end;" in stage_rule
-    assert "grid-template-rows: auto;" in stage_rule
+
+
+def test_music_cover_and_identity_center_in_flexible_space_above_controls() -> None:
+    music = read_source("pages/MusicPage.vue")
+    cover = read_source("components/MusicCoverStage.vue")
+    stage_rule = music.split(".player-stage {", 1)[1].split("}", 1)[0]
+    cover_surface_rule = music.split(".cover-surface {", 1)[1].split("}", 1)[0]
+    player_surface_rule = music.split(".player-surface {", 1)[1].split("}", 1)[0]
+    cover_stage_rule = cover.split(".cover-stage {", 1)[1].split("}", 1)[0]
+    artwork_column_rule = cover.split(".artwork-column {", 1)[1].split("}", 1)[0]
+
+    assert 'class="cover-surface"' in music
+    assert "align-content: stretch;" in stage_rule
+    assert "grid-template-rows: minmax(0, 1fr) auto;" in stage_rule
+    assert "grid-row: 1;" in cover_surface_rule
+    assert "align-self: stretch;" in cover_surface_rule
+    assert "grid-row: 2;" in player_surface_rule
+    assert "height: 100%;" in cover_stage_rule
+    assert "align-self: center;" in artwork_column_rule
 
 
 def test_audio_player_formats_media_errors_without_object_string() -> None:
@@ -1090,8 +1105,8 @@ def test_music_player_control_layout_uses_timeline_row_then_centered_controls() 
     stage_rule = music.split(".player-stage {", 1)[1].split("}", 1)[0]
     assert "--shell-sidebar-width: 69px;" in stage_rule
     assert "--stage-left-inset: 28px;" in stage_rule
-    assert "align-content: end;" in stage_rule
-    assert "grid-template-rows: auto;" in stage_rule
+    assert "align-content: stretch;" in stage_rule
+    assert "grid-template-rows: minmax(0, 1fr) auto;" in stage_rule
     assert "overflow: visible;" in stage_rule
     assert (
         "margin-left: calc(0px - var(--stage-x-pad, 0px) - var(--stage-left-inset));"
