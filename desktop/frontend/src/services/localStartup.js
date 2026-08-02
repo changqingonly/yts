@@ -1,73 +1,104 @@
-import { startSidecar } from "./desktop";
-import { healthCheck } from "./transport";
-
-const startupByTarget = new Map();
+const apiReadinessByTarget = new Map();
+const playbackByTarget = new Map();
 
 export function resetLocalPlaybackStartup() {
-  for (const [target, entry] of startupByTarget) {
-    if (entry.status !== "starting") {
-      startupByTarget.delete(target);
-    }
+  clearSettledEntries(apiReadinessByTarget);
+  clearSettledEntries(playbackByTarget);
+}
+
+export function startLocalApiReadiness({
+  target = "local",
+  timeoutMs = 5000,
+  startSidecar,
+  healthCheck,
+} = {}) {
+  const entry = getLocalApiReadinessEntry({ target, startSidecar, healthCheck });
+  if (!entry.promise) {
+    entry.promise = raceReadinessTimeout(entry, timeoutMs);
   }
+  return entry.promise;
 }
 
 export function startLocalPlayback({
   target = "local",
   timeoutMs = 5000,
   prepare,
-  startSidecar: startSidecarCallback = startSidecar,
-  healthCheck: healthCheckCallback = healthCheck,
+  startSidecar,
+  healthCheck,
 } = {}) {
-  if (typeof prepare !== "function") {
-    throw new Error("startLocalPlayback requires prepare callback");
-  }
-  if (startupByTarget.has(target)) {
-    return startupByTarget.get(target).promise;
+  const prepareCallback = requireCallback("prepare", prepare);
+  const apiEntry = getLocalApiReadinessEntry({ target, startSidecar, healthCheck });
+  if (playbackByTarget.has(target)) {
+    return playbackByTarget.get(target).promise;
   }
 
-  const entry = { status: "starting", promise: null };
-  entry.promise = startLocalPlaybackReadiness({
-    target,
-    timeoutMs,
-    prepare,
-    startSidecarCallback,
-    healthCheckCallback,
-  }).then(
-    (result) => {
-      entry.status = "ready";
-      return result;
-    },
-    (error) => {
-      entry.status = error.stage === "timeout" ? "timeout" : "failed";
-      throw error;
-    },
-  );
-  startupByTarget.set(target, entry);
+  const entry = createEntry();
+  entry.readinessPromise = (async () => {
+    await apiEntry.readinessPromise;
+    await runStage("prepare", () => prepareCallback({ target }));
+    return { status: "ready", target };
+  })();
+  trackEntrySettlement(entry);
+  entry.promise = raceReadinessTimeout(entry, timeoutMs);
+  playbackByTarget.set(target, entry);
   return entry.promise;
 }
 
-async function startLocalPlaybackReadiness({
-  target,
-  timeoutMs,
-  prepare,
-  startSidecarCallback,
-  healthCheckCallback,
-}) {
-  const readinessPromise = (async () => {
+function getLocalApiReadinessEntry({ target, startSidecar, healthCheck }) {
+  if (apiReadinessByTarget.has(target)) {
+    return apiReadinessByTarget.get(target);
+  }
+
+  const startSidecarCallback = requireCallback("startSidecar", startSidecar);
+  const healthCheckCallback = requireCallback("healthCheck", healthCheck);
+  const entry = createEntry();
+  entry.readinessPromise = (async () => {
     await runStage("sidecar", () => startSidecarCallback());
     await runStage("health", () => healthCheckCallback(target));
-    await runStage("prepare", () => prepare({ target }));
-    return { status: "ready", target };
+    return { status: "online", target };
   })();
+  trackEntrySettlement(entry);
+  apiReadinessByTarget.set(target, entry);
+  return entry;
+}
+
+function createEntry() {
+  return { status: "starting", readinessPromise: null, promise: null };
+}
+
+function trackEntrySettlement(entry) {
+  entry.readinessPromise.then(
+    () => {
+      entry.status = "ready";
+    },
+    () => {
+      entry.status = "failed";
+    },
+  );
+}
+
+function raceReadinessTimeout(entry, timeoutMs) {
   let timeoutId;
   const timeoutPromise = new Promise((_, reject) => {
     timeoutId = setTimeout(() => reject(createStartupTimeoutError(timeoutMs)), timeoutMs);
   });
-  try {
-    return await Promise.race([readinessPromise, timeoutPromise]);
-  } finally {
+  return Promise.race([entry.readinessPromise, timeoutPromise]).finally(() => {
     clearTimeout(timeoutId);
+  });
+}
+
+function clearSettledEntries(entries) {
+  for (const [target, entry] of entries) {
+    if (entry.status === "starting") continue;
+    entries.delete(target);
   }
+}
+
+function requireCallback(name, callback) {
+  if (typeof callback !== "function") {
+    throw new Error(`local startup requires ${name} callback`);
+  }
+  return callback;
 }
 
 async function runStage(stage, callback) {

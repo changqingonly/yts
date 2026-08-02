@@ -8,7 +8,8 @@ import {
   selectedApiTarget,
   setSelectedApiTarget,
 } from "../services/environment";
-import { startLocalPlayback } from "../services/localStartup";
+import { startSidecar } from "../services/desktop";
+import { startLocalApiReadiness } from "../services/localStartup";
 
 const pendingHealthChecks = new Map();
 export const useEnvironmentStore = defineStore("environment", {
@@ -44,8 +45,8 @@ export const useEnvironmentStore = defineStore("environment", {
       }
       return "未检查";
     },
-    /** 本地健康状态复用播放协调器的 sidecar/health Promise；推理 gateway 只允许由显式
-     * 生成操作启动，不能进入音乐播放和普通页面加载的关键路径。 */
+    /** 本地健康状态只复用 sidecar/health 就绪。完整播放就绪还必须由调用者提供最小歌单和
+     * 当前歌曲 URL 的准备回调；推理 gateway 仍只允许由显式生成操作启动。 */
     async checkHealth(target = this.target) {
       const requestTarget = assertApiTarget(target);
       if (pendingHealthChecks.has(requestTarget)) {
@@ -57,7 +58,7 @@ export const useEnvironmentStore = defineStore("environment", {
       const healthPromise = (async () => {
         try {
           if (shouldRetry) {
-            await startLocalPlayback({ target: requestTarget, prepare: async () => {} });
+            await startLocalApiReadiness({ target: requestTarget, startSidecar, healthCheck });
           } else {
             await healthCheck(requestTarget);
           }

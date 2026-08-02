@@ -74,12 +74,13 @@ def test_environment_health_reuses_local_playback_startup_coordinator() -> None:
     env_store = read_source("stores/environment.js")
 
     for token in [
-        'import { startLocalPlayback } from "../services/localStartup";',
+        'import { startLocalApiReadiness } from "../services/localStartup";',
+        'import { startSidecar } from "../services/desktop";',
         'const shouldRetry = requestTarget === "local" && isTauriRuntime();',
-        'await startLocalPlayback({ target: requestTarget, prepare: async () => {} });',
+        'await startLocalApiReadiness({ target: requestTarget, startSidecar, healthCheck });',
     ]:
         assert token in env_store
-    assert "startSidecar" not in env_store
+    assert "prepare: async () => {}" not in env_store
     assert "startGateway" not in env_store
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 
 FRONTEND = Path("desktop/frontend/src")
@@ -13,30 +14,38 @@ def read_source(relative_path: str) -> str:
 def test_local_startup_shares_one_promise_for_each_target() -> None:
     source = read_source("services/localStartup.js")
 
-    assert "const startupByTarget = new Map();" in source
-    assert "if (startupByTarget.has(target))" in source
-    assert "return startupByTarget.get(target).promise;" in source
-    assert "startupByTarget.set(target, entry);" in source
+    assert "const apiReadinessByTarget = new Map();" in source
+    assert "const playbackByTarget = new Map();" in source
+    assert "return playbackByTarget.get(target).promise;" in source
+    assert "playbackByTarget.set(target, entry);" in source
 
 
 def test_local_startup_runs_sidecar_health_then_explicit_preparation_callback() -> None:
     source = read_source("services/localStartup.js")
 
     assert "prepare," in source
-    assert "startSidecar: startSidecarCallback = startSidecar" in source
-    assert "healthCheck: healthCheckCallback = healthCheck" in source
+    assert "export function startLocalApiReadiness" in source
+    assert "startSidecar," in source
+    assert "healthCheck," in source
     assert "await runStage(\"sidecar\", () => startSidecarCallback());" in source
     assert "await runStage(\"health\", () => healthCheckCallback(target));" in source
-    assert "await runStage(\"prepare\", () => prepare({ target }));" in source
-    assert source.index('runStage("sidecar"') < source.index('runStage("health"')
-    assert source.index('runStage("health"') < source.index('runStage("prepare"')
+    assert "await runStage(\"prepare\", () => prepareCallback({ target }));" in source
+    api_block = source.split("function getLocalApiReadinessEntry", 1)[1].split(
+        "function createEntry", 1
+    )[0]
+    playback_block = source.split("export function startLocalPlayback", 1)[1].split(
+        "function getLocalApiReadinessEntry", 1
+    )[0]
+    assert api_block.index('runStage("sidecar"') < api_block.index('runStage("health"')
+    assert "await apiEntry.readinessPromise;" in playback_block
+    assert "await runStage(\"prepare\"" in playback_block
 
 
 def test_local_startup_has_bounded_timeout_and_preserves_failure_stage() -> None:
     source = read_source("services/localStartup.js")
 
     assert "timeoutMs = 5000" in source
-    assert "Promise.race([readinessPromise, timeoutPromise])" in source
+    assert "Promise.race([entry.readinessPromise, timeoutPromise])" in source
     assert "clearTimeout(timeoutId);" in source
     assert "error.stage = stage;" in source
     assert "createStartupTimeoutError" in source
@@ -49,8 +58,9 @@ def test_local_startup_reset_keeps_in_flight_work_and_clears_settled_entries() -
         "export function startLocalPlayback", 1
     )[0]
 
-    assert "if (entry.status !== \"starting\")" in reset_block
-    assert "startupByTarget.delete(target);" in reset_block
+    assert "clearSettledEntries(apiReadinessByTarget);" in reset_block
+    assert "clearSettledEntries(playbackByTarget);" in reset_block
+    assert "if (entry.status === \"starting\") continue;" in source
 
 
 def test_local_startup_never_starts_the_inference_gateway() -> None:
@@ -62,7 +72,19 @@ def test_local_startup_never_starts_the_inference_gateway() -> None:
 def test_environment_health_reuses_local_startup_coordinator() -> None:
     source = read_source("stores/environment.js")
 
-    assert 'import { startLocalPlayback } from "../services/localStartup";' in source
-    assert 'await startLocalPlayback({ target: requestTarget, prepare: async () => {} });' in source
-    assert 'import { startSidecar } from "../services/desktop";' not in source
-    assert "void startSidecar()" not in source
+    assert 'import { startLocalApiReadiness } from "../services/localStartup";' in source
+    assert 'await startLocalApiReadiness({ target: requestTarget, startSidecar, healthCheck });' in source
+    assert 'import { startSidecar } from "../services/desktop";' in source
+    assert "prepare: async () => {}" not in source
+
+
+def test_local_startup_runtime_contracts() -> None:
+    result = subprocess.run(
+        ["node", "--test", "desktop/frontend/tests/localStartup.runtime.test.mjs"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "pass 4" in result.stdout
