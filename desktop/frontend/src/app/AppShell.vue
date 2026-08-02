@@ -5,6 +5,7 @@ import { Boxes, Cloud, HardDrive, Music2, Settings2, Sparkles, SquarePen } from 
 import { useAuthStore } from "../stores/auth";
 import { useEnvironmentStore } from "../stores/environment";
 import { isTauriRuntime } from "../services/environment";
+import LocalStartupWelcome from "../components/LocalStartupWelcome.vue";
 
 const MusicPage = defineAsyncComponent(() => import("../pages/MusicPage.vue"));
 
@@ -13,6 +14,9 @@ const router = useRouter();
 const auth = useAuthStore();
 const environment = useEnvironmentStore();
 const musicMounted = ref(false);
+const musicPageRef = ref(null);
+const localStartup = ref({ status: "starting", stage: "sidecar", errorMessage: "" });
+const localStartupDismissed = ref(false);
 
 const primaryNavItems = [
   { key: "music", label: "音乐", to: "/music", icon: Music2 },
@@ -23,6 +27,13 @@ const settingsNavItem = { key: "settings", label: "设置", to: "/settings", ico
 const targetIcons = { local: HardDrive, cloud: Cloud };
 
 const activeNav = computed(() => route.meta.activeNav || "music");
+const showLocalStartupWelcome = computed(() =>
+  isTauriRuntime()
+  && environment.target === "local"
+  && activeNav.value === "music"
+  && localStartup.value.status !== "ready"
+  && !localStartupDismissed.value,
+);
 
 watch(
   activeNav,
@@ -40,6 +51,21 @@ function handleAuthExpired() {
 function switchEnvironmentTarget(item) {
   environment.setTarget(item.value);
   void environment.checkHealth(item.value);
+  localStartupDismissed.value = false;
+  localStartup.value = { status: "starting", stage: "sidecar", errorMessage: "" };
+}
+
+function handleLocalStartupState(state) {
+  localStartup.value = state;
+}
+
+function retryLocalStartup() {
+  localStartupDismissed.value = false;
+  return musicPageRef.value?.retryLocalStartup();
+}
+
+function dismissLocalStartupWelcome() {
+  localStartupDismissed.value = true;
 }
 
 onMounted(() => {
@@ -129,7 +155,17 @@ onUnmounted(() => {
       </p>
       <MusicPage
         v-if="musicMounted"
+        ref="musicPageRef"
         v-show="activeNav === 'music'"
+        @startup-state="handleLocalStartupState"
+      />
+      <LocalStartupWelcome
+        v-if="showLocalStartupWelcome"
+        :status="localStartup.status"
+        :stage="localStartup.stage"
+        :error-message="localStartup.errorMessage"
+        @retry="retryLocalStartup"
+        @continue="dismissLocalStartupWelcome"
       />
       <RouterView v-slot="{ Component }">
         <component :is="Component" v-if="activeNav !== 'music'" />

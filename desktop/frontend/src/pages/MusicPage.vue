@@ -17,6 +17,9 @@ import YtsAudioPlayer from "../components/YtsAudioPlayer.vue";
 import { usePlayerStore } from "../stores/player";
 import { usePlaylistStore } from "../stores/playlist";
 import { useEnvironmentStore } from "../stores/environment";
+import { startSidecar } from "../services/desktop";
+import { isTauriRuntime } from "../services/environment";
+import { resetLocalPlaybackStartup, startLocalPlayback } from "../services/localStartup";
 import { loadSongObjectUrl } from "../services/music";
 import {
   deleteMusicCover,
@@ -27,7 +30,9 @@ import {
 } from "../services/music";
 import { apiBase, selectedApiTarget } from "../services/http";
 import { ensureInferenceReady } from "../services/inference";
+import { healthCheck } from "../services/transport";
 
+const emit = defineEmits(["startup-state"]);
 const player = usePlayerStore();
 const playlist = usePlaylistStore();
 const environment = useEnvironmentStore();
@@ -128,6 +133,7 @@ async function refreshPlaylist() {
     scheduleRenditionRefresh();
   } catch (err) {
     error.value = formatMusicLoadError(err);
+    throw err;
   }
 }
 
@@ -139,6 +145,34 @@ async function loadPlaylistBackgroundMetadata(target) {
     error.value = err instanceof Error ? err.message : String(err);
   }
 }
+
+async function beginLocalStartup({ reset = false } = {}) {
+  if (reset) resetLocalPlaybackStartup();
+  emit("startup-state", { status: "starting", stage: "sidecar", errorMessage: "" });
+  try {
+    await startLocalPlayback({
+      target: "local",
+      timeoutMs: 5000,
+      startSidecar,
+      healthCheck,
+      prepare: async () => {
+        await refreshPlaylist();
+      },
+    });
+    emit("startup-state", { status: "ready" });
+  } catch (error) {
+    const status = error.stage === "timeout" ? "timeout" : "failed";
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    error.value = errorMessage;
+    emit("startup-state", { status, stage: error.stage || "startup", errorMessage });
+  }
+}
+
+function retryLocalStartup() {
+  return beginLocalStartup({ reset: true });
+}
+
+defineExpose({ retryLocalStartup });
 
 async function refreshPlaylistWhenTargetReady(target = environment.target) {
   error.value = "";
@@ -644,7 +678,11 @@ watch(
 
 onMounted(async () => {
   environment.attach();
-  await refreshPlaylistWhenTargetReady();
+  if (environment.target === "local" && isTauriRuntime()) {
+    await beginLocalStartup();
+  } else {
+    await refreshPlaylistWhenTargetReady();
+  }
 });
 
 onBeforeUnmount(() => {
