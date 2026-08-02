@@ -92,15 +92,43 @@ test("timeout and reset retain in-flight ownership until readiness settles", asy
   const timedOut = startLocalPlayback(options);
   await assert.rejects(timedOut, (error) => error.stage === "timeout");
   resetLocalPlaybackStartup();
-  assert.strictEqual(startLocalPlayback(options), timedOut);
+  const continuedWait = startLocalPlayback({ ...options, timeoutMs: 50 });
+  assert.notStrictEqual(continuedWait, timedOut);
   assert.equal(sidecarCalls, 1);
 
   releaseSidecar();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await continuedWait;
   resetLocalPlaybackStartup();
 
   const retried = startLocalPlayback(options);
   assert.notStrictEqual(retried, timedOut);
   await retried;
   assert.equal(sidecarCalls, 2);
+});
+
+test("retry after timeout waits on the same underlying readiness", async () => {
+  resetLocalPlaybackStartup();
+  let releasePrepare;
+  let prepareCalls = 0;
+  const prepareGate = new Promise((resolve) => {
+    releasePrepare = resolve;
+  });
+  const options = {
+    target: "retry-timeout",
+    timeoutMs: 5,
+    startSidecar: async () => {},
+    healthCheck: async () => {},
+    prepare: async () => {
+      prepareCalls += 1;
+      await prepareGate;
+    },
+  };
+
+  await assert.rejects(startLocalPlayback(options), (error) => error.stage === "timeout");
+  resetLocalPlaybackStartup();
+  const retry = startLocalPlayback({ ...options, timeoutMs: 50 });
+  releasePrepare();
+
+  assert.deepEqual(await retry, { status: "ready", target: "retry-timeout" });
+  assert.equal(prepareCalls, 1);
 });

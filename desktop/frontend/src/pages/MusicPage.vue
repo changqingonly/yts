@@ -655,7 +655,11 @@ watch(
       clearTimeout(renditionRefreshTimer);
       renditionRefreshTimer = null;
     }
-    await refreshPlaylistWhenTargetReady(nextTarget);
+    if (nextTarget === "local" && isTauriRuntime()) {
+      await beginLocalStartup({ reset: true });
+    } else {
+      await refreshPlaylistWhenTargetReady(nextTarget);
+    }
   },
 );
 

@@ -16,7 +16,8 @@ def test_local_startup_shares_one_promise_for_each_target() -> None:
 
     assert "const apiReadinessByTarget = new Map();" in source
     assert "const playbackByTarget = new Map();" in source
-    assert "return playbackByTarget.get(target).promise;" in source
+    assert "const existingEntry = playbackByTarget.get(target);" in source
+    assert "return existingEntry.promise;" in source
     assert "playbackByTarget.set(target, entry);" in source
 
 
@@ -87,4 +88,4 @@ def test_local_startup_runtime_contracts() -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "pass 4" in result.stdout
+    assert "pass 5" in result.stdout

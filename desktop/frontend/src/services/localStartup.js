@@ -14,7 +14,7 @@ export function startLocalApiReadiness({
 } = {}) {
   const entry = getLocalApiReadinessEntry({ target, startSidecar, healthCheck });
   if (!entry.promise) {
-    entry.promise = raceReadinessTimeout(entry, timeoutMs);
+    attachBoundedWait(entry, timeoutMs);
   }
   return entry.promise;
 }
@@ -29,7 +29,9 @@ export function startLocalPlayback({
   const prepareCallback = requireCallback("prepare", prepare);
   const apiEntry = getLocalApiReadinessEntry({ target, startSidecar, healthCheck });
   if (playbackByTarget.has(target)) {
-    return playbackByTarget.get(target).promise;
+    const existingEntry = playbackByTarget.get(target);
+    if (!existingEntry.promise) attachBoundedWait(existingEntry, timeoutMs);
+    return existingEntry.promise;
   }
 
   const entry = createEntry();
@@ -39,9 +41,26 @@ export function startLocalPlayback({
     return { status: "ready", target };
   })();
   trackEntrySettlement(entry);
-  entry.promise = raceReadinessTimeout(entry, timeoutMs);
+  attachBoundedWait(entry, timeoutMs);
   playbackByTarget.set(target, entry);
   return entry.promise;
+}
+
+function attachBoundedWait(entry, timeoutMs) {
+  const boundedPromise = raceReadinessTimeout(entry, timeoutMs);
+  entry.promise = boundedPromise;
+  boundedPromise.then(
+    () => {},
+    (error) => {
+      if (
+        error?.stage === "timeout"
+        && entry.status === "starting"
+        && entry.promise === boundedPromise
+      ) {
+        entry.promise = null;
+      }
+    },
+  );
 }
 
 function getLocalApiReadinessEntry({ target, startSidecar, healthCheck }) {

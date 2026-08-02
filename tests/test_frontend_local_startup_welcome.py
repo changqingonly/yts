@@ -50,3 +50,13 @@ def test_music_page_ready_requires_minimal_playlist_and_current_url() -> None:
     assert 'error.stage === "timeout" ? "timeout" : "failed"' in startup_block
     assert "errorMessage:" in startup_block
     assert "defineExpose({ retryLocalStartup });" in source
+
+
+def test_switching_to_local_restarts_the_welcome_state_machine() -> None:
+    source = read_source("pages/MusicPage.vue")
+    target_watch = source.split("() => environment.target,", 1)[1].split(
+        "watch(\n  () => currentTrack.value", 1
+    )[0]
+
+    assert 'nextTarget === "local" && isTauriRuntime()' in target_watch
+    assert "await beginLocalStartup({ reset: true });" in target_watch
