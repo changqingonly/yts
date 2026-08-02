@@ -70,6 +70,37 @@ def test_music_page_waits_for_target_health_before_loading_playlist() -> None:
         "await refreshPlaylist();"
     )
 
+
+def test_playlist_splits_playback_critical_and_background_hydration() -> None:
+    playlist_store = read_source("stores/playlist.js")
+    minimal_block = playlist_store.split("async hydrateMinimal(", 1)[1].split(
+        "async loadBackgroundMetadata(", 1
+    )[0]
+    background_block = playlist_store.split("async loadBackgroundMetadata(", 1)[1].split(
+        "async hydrate(", 1
+    )[0]
+
+    assert "await this.loadPlaylists({ scope });" in minimal_block
+    assert "await this.ensureDefault({ scope });" in minimal_block
+    assert "await this.loadItems();" in minimal_block
+    assert "loadDeletedItems" not in minimal_block
+    assert "await this.loadDeletedItems({ playlistId });" in background_block
+    assert "throw err;" in background_block
+
+
+def test_music_startup_loads_background_metadata_after_current_track_url() -> None:
+    music = read_source("pages/MusicPage.vue")
+    refresh_block = music.split("async function refreshPlaylist()", 1)[1].split(
+        "async function refreshPlaylistWhenTargetReady", 1
+    )[0]
+
+    assert "await playlist.hydrateMinimal({ scope: requestTarget });" in refresh_block
+    assert "await loadCurrentTrackUrl({ target: requestTarget, requestVersion });" in refresh_block
+    assert "void loadPlaylistBackgroundMetadata(requestTarget);" in refresh_block
+    assert refresh_block.index("await loadCurrentTrackUrl") < refresh_block.index(
+        "void loadPlaylistBackgroundMetadata"
+    )
+
     target_watch_block = music.split("watch(\n  () => environment.target", 1)[1].split(
         "\n\nwatch(", 1
     )[0]

@@ -61,20 +61,31 @@ export const usePlaylistStore = defineStore("playlist", {
       this.deletedItems = normalizeDeletedPlaylistItems(data.items, "loadDeletedItems");
       return this.deletedItems;
     },
-    async hydrate({ scope = "cloud" } = {}) {
+    async hydrateMinimal({ scope = "cloud" } = {}) {
       this.syncing = true;
       this.lastError = "";
       try {
         await this.loadPlaylists({ scope });
         await this.ensureDefault({ scope });
         await this.loadItems();
-        await this.loadDeletedItems();
       } catch (err) {
         this.lastError = err instanceof Error ? err.message : String(err);
         throw err;
       } finally {
         this.syncing = false;
       }
+    },
+    async loadBackgroundMetadata({ playlistId = this.currentPlaylistId } = {}) {
+      try {
+        await this.loadDeletedItems({ playlistId });
+      } catch (err) {
+        this.lastError = err instanceof Error ? err.message : String(err);
+        throw err;
+      }
+    },
+    async hydrate({ scope = "cloud" } = {}) {
+      await this.hydrateMinimal({ scope });
+      await this.loadBackgroundMetadata({ playlistId: this.currentPlaylistId });
     },
     async appendItems(items) {
       if (!this.currentPlaylistId) throw new Error("appendItems requires currentPlaylistId");

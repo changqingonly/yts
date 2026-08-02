@@ -118,15 +118,25 @@ async function refreshPlaylist() {
   const requestTarget = environment.target;
   const requestVersion = ++playlistLoadVersion;
   try {
-    await playlist.hydrate({ scope: requestTarget });
+    await playlist.hydrateMinimal({ scope: requestTarget });
     if (requestTarget !== environment.target || requestVersion !== playlistLoadVersion) return;
     retainPlayableTrackUrls(playlist.activeItems);
     player.setQueue(tracks.value);
     restorePlaybackResumeState();
     await loadCurrentTrackUrl({ target: requestTarget, requestVersion });
+    void loadPlaylistBackgroundMetadata(requestTarget);
     scheduleRenditionRefresh();
   } catch (err) {
     error.value = formatMusicLoadError(err);
+  }
+}
+
+async function loadPlaylistBackgroundMetadata(target) {
+  try {
+    await playlist.loadBackgroundMetadata({ playlistId: playlist.currentPlaylistId });
+  } catch (err) {
+    if (target !== environment.target) return;
+    error.value = err instanceof Error ? err.message : String(err);
   }
 }
 
