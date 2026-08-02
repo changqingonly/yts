@@ -8,16 +8,9 @@ import {
   selectedApiTarget,
   setSelectedApiTarget,
 } from "../services/environment";
-import { startSidecar } from "../services/desktop";
+import { startLocalPlayback } from "../services/localStartup";
 
 const pendingHealthChecks = new Map();
-const LOCAL_HEALTH_RETRY_INTERVAL_MS = 800;
-const LOCAL_HEALTH_RETRY_TIMEOUT_MS = 30000;
-
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export const useEnvironmentStore = defineStore("environment", {
   state: () => ({
     target: selectedApiTarget(),
@@ -51,8 +44,8 @@ export const useEnvironmentStore = defineStore("environment", {
       }
       return "未检查";
     },
-    /** 健康检查只负责承载 API/曲库的 sidecar。推理 gateway 启动会加载大模型，必须留在
-     * 显式生成操作的边界，不能进入音乐播放和普通页面加载的关键路径。 */
+    /** 本地健康状态复用播放协调器的 sidecar/health Promise；推理 gateway 只允许由显式
+     * 生成操作启动，不能进入音乐播放和普通页面加载的关键路径。 */
     async checkHealth(target = this.target) {
       const requestTarget = assertApiTarget(target);
       if (pendingHealthChecks.has(requestTarget)) {
@@ -62,25 +55,18 @@ export const useEnvironmentStore = defineStore("environment", {
       this.healthError[requestTarget] = "";
       const shouldRetry = requestTarget === "local" && isTauriRuntime();
       const healthPromise = (async () => {
-        if (shouldRetry) {
-          void startSidecar().catch(() => {});
-        }
-        const deadline = Date.now() + (shouldRetry ? LOCAL_HEALTH_RETRY_TIMEOUT_MS : 0);
         try {
-          for (;;) {
-            try {
-              await healthCheck(requestTarget);
-              this.health[requestTarget] = "online";
-              return "online";
-            } catch (error) {
-              if (Date.now() >= deadline) {
-                this.health[requestTarget] = "offline";
-                this.healthError[requestTarget] = error instanceof Error ? error.message : String(error);
-                return "offline";
-              }
-              await wait(LOCAL_HEALTH_RETRY_INTERVAL_MS);
-            }
+          if (shouldRetry) {
+            await startLocalPlayback({ target: requestTarget, prepare: async () => {} });
+          } else {
+            await healthCheck(requestTarget);
           }
+          this.health[requestTarget] = "online";
+          return "online";
+        } catch (error) {
+          this.health[requestTarget] = "offline";
+          this.healthError[requestTarget] = error instanceof Error ? error.message : String(error);
+          return "offline";
         } finally {
           pendingHealthChecks.delete(requestTarget);
         }

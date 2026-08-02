@@ -70,17 +70,16 @@ def test_main_mounts_immediately_without_a_desktop_backend_health_gate() -> None
         assert token not in main
 
 
-def test_environment_health_starts_only_local_api_sidecar_with_bounded_retry() -> None:
+def test_environment_health_reuses_local_playback_startup_coordinator() -> None:
     env_store = read_source("stores/environment.js")
 
     for token in [
-        'import { startSidecar } from "../services/desktop";',
+        'import { startLocalPlayback } from "../services/localStartup";',
         'const shouldRetry = requestTarget === "local" && isTauriRuntime();',
-        "void startSidecar().catch(() => {});",
-        "LOCAL_HEALTH_RETRY_TIMEOUT_MS",
-        "LOCAL_HEALTH_RETRY_INTERVAL_MS",
+        'await startLocalPlayback({ target: requestTarget, prepare: async () => {} });',
     ]:
         assert token in env_store
+    assert "startSidecar" not in env_store
     assert "startGateway" not in env_store
 
 
