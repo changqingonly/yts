@@ -1,6 +1,6 @@
 //! 文本后端:代理常驻 `llama-server`(llama.cpp,OpenAI 兼容 /v1/chat/completions)。
 //!
-//! 网关按 `YTS_LLAMA_CMD` spawn 并托管 llama-server 生命周期(子进程随网关退出被回收);
+//! 网关在首个文本请求到达时按 `YTS_LLAMA_CMD` spawn，并在 gateway 退出时回收子进程;
 //! 未配置时假定外部已在 `YTS_LLAMA_BASE_URL`(默认 http://127.0.0.1:8080)运行。
 //! `/text` 接口对上层不变(gateway_adapter.py 无需改动),底层已换成 llama.cpp。
 
@@ -18,27 +18,18 @@ use crate::env_or;
 #[derive(Clone)]
 pub struct LlamaBackend {
     base_url: String,
-    _child: Arc<Mutex<Option<Child>>>, // 持有子进程,Drop 时回收
+    command: Option<String>,
+    child: Arc<Mutex<Option<Child>>>,
     http: reqwest::Client,
 }
 
 impl LlamaBackend {
     pub async fn start() -> Self {
         let base_url = env_or("YTS_LLAMA_BASE_URL", "http://127.0.0.1:8080");
-        let child = match std::env::var("YTS_LLAMA_CMD") {
+        let command = match std::env::var("YTS_LLAMA_CMD") {
             Ok(cmd) if !cmd.trim().is_empty() => {
-                tracing::info!("spawning llama-server: {cmd}");
-                match tokio::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(&cmd)
-                    .spawn()
-                {
-                    Ok(c) => Some(c),
-                    Err(e) => {
-                        tracing::error!("spawn llama-server failed: {e}");
-                        None
-                    }
-                }
+                tracing::info!("llama-server configured for lazy startup");
+                Some(cmd)
             }
             _ => {
                 tracing::info!(
@@ -47,38 +38,67 @@ impl LlamaBackend {
                 None
             }
         };
-        let me = Self {
+        Self {
             base_url,
-            _child: Arc::new(Mutex::new(child)),
+            command,
+            child: Arc::new(Mutex::new(None)),
             http: reqwest::Client::new(),
-        };
-        if me._child.lock().await.is_some() {
-            me.wait_ready().await;
         }
-        me
     }
 
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
 
-    /// 轮询 llama-server /health 直到就绪(最多 ~60s)。
-    async fn wait_ready(&self) {
+    async fn ensure_started(&self) -> Result<(), String> {
+        let Some(command) = self.command.as_deref() else {
+            return Ok(());
+        };
+        let mut child = self.child.lock().await;
+        if child.is_some() {
+            return Ok(());
+        }
+        tracing::info!("spawning llama-server: {command}");
+        let mut process = tokio::process::Command::new("sh");
+        process.arg("-c").arg(command).kill_on_drop(true);
+        *child = Some(
+            process
+                .spawn()
+                .map_err(|error| format!("spawn llama-server failed: {error}"))?,
+        );
+        Ok(())
+    }
+
+    /// 文本请求到达时才启动并等待 llama-server；音乐/图片端点不加载文本模型。
+    async fn wait_ready(&self) -> Result<(), String> {
+        self.ensure_started().await?;
         for _ in 0..120 {
             if let Ok(r) = self
                 .http
                 .get(format!("{}/health", self.base_url))
+                .timeout(std::time::Duration::from_millis(500))
                 .send()
                 .await
             {
                 if r.status().is_success() {
                     tracing::info!("llama-server ready at {}", self.base_url);
-                    return;
+                    return Ok(());
                 }
             }
+            let mut child = self.child.lock().await;
+            if let Some(process) = child.as_mut() {
+                if let Some(status) = process.try_wait().map_err(|error| error.to_string())? {
+                    child.take();
+                    return Err(format!("llama-server exited before readiness: {status}"));
+                }
+            }
+            drop(child);
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
-        tracing::warn!("llama-server not ready after wait; proceeding anyway");
+        Err(format!(
+            "llama-server not ready after 60s at {}",
+            self.base_url
+        ))
     }
 }
 
@@ -105,6 +125,10 @@ pub async fn gen_text(
     State(llama): State<LlamaBackend>,
     Json(req): Json<TextReq>,
 ) -> Result<Json<TextResp>, (StatusCode, String)> {
+    llama
+        .wait_ready()
+        .await
+        .map_err(|error| (StatusCode::SERVICE_UNAVAILABLE, error))?;
     let mut body = serde_json::json!({
         "model": env_or("YTS_LLAMA_MODEL", "local"),
         "messages": [{"role": "user", "content": req.prompt}],

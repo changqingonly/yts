@@ -28,11 +28,15 @@ def css_declarations(style: str, selector: str) -> dict[str, str]:
 def test_music_page_clears_player_queue_before_revoking_blob_urls_on_unmount() -> None:
     source = read_source("pages/MusicPage.vue")
     unmount_block = source.split("onBeforeUnmount(() => {", 1)[1].split("});", 1)[0]
+    clear_urls_block = source.split("function clearPlayableTrackUrls() {", 1)[1].split(
+        "}", 1
+    )[0]
 
     assert "player.setQueue([]);" in unmount_block
     assert unmount_block.index("player.setQueue([]);") < unmount_block.index(
-        "revokePlayableTrackUrls();"
+        "clearPlayableTrackUrls();"
     )
+    assert "revokePlayableTrackUrls();" in clear_urls_block
 
 
 def test_music_page_refreshes_after_environment_change_without_manual_refresh_button() -> None:
@@ -80,14 +84,14 @@ def test_music_page_waits_for_target_health_before_loading_playlist() -> None:
 def test_music_page_loads_only_ready_renditions_and_refreshes_processing_state() -> None:
     music = read_source("pages/MusicPage.vue")
     playlist_store = read_source("stores/playlist.js")
-    load_urls = music.split("async function loadPlayableTrackUrls(items)", 1)[1].split(
-        "function revokePlayableTrackUrls", 1
+    load_url = music.split("async function loadPlayableTrackUrl(", 1)[1].split(
+        "function retainPlayableTrackUrls", 1
     )[0]
     unmount_block = music.split("onBeforeUnmount(() => {", 1)[1].split("});", 1)[0]
 
     assert 'const RENDITION_REFRESH_DELAY_MS = 1500;' in music
-    assert 'if (item.playback_status !== "ready") continue;' in load_urls
-    assert "loadSongObjectUrl({" in load_urls
+    assert 'if (item.playback_status !== "ready") return "";' in load_url
+    assert "loadSongObjectUrl({ contentHash, target })" in load_url
     assert "function scheduleRenditionRefresh()" in music
     assert 'item.playback_status === "pending" || item.playback_status === "processing"' in music
     assert "setTimeout(async () =>" in music
@@ -120,7 +124,7 @@ def test_music_page_persists_and_restores_last_playback_position() -> None:
     player_store = read_source("stores/player.js")
     player = read_source("components/YtsAudioPlayer.vue")
     refresh_block = music.split("async function refreshPlaylist()", 1)[1].split(
-        "async function loadPlayableTrackUrls", 1
+        "async function refreshPlaylistWhenTargetReady", 1
     )[0]
     time_update_block = music.split("function handleTimeUpdate(currentTime)", 1)[1].split(
         "function handleDurationChange", 1
@@ -139,8 +143,12 @@ def test_music_page_persists_and_restores_last_playback_position() -> None:
     assert "currentTime: normalizedTime" in music
     assert "player.setQueue(tracks.value);" in refresh_block
     assert "restorePlaybackResumeState();" in refresh_block
+    assert "await loadCurrentTrackUrl({ target: requestTarget, requestVersion });" in refresh_block
     assert refresh_block.index("player.setQueue(tracks.value);") < refresh_block.index(
         "restorePlaybackResumeState();"
+    )
+    assert refresh_block.index("restorePlaybackResumeState();") < refresh_block.index(
+        "await loadCurrentTrackUrl({ target: requestTarget, requestVersion });"
     )
     assert "player.selectAt(resumeIndex, { currentTime: resumeState.currentTime, isPlaying: false });" in music
     assert "resumeSeekTime.value = resumeState.currentTime;" in music
@@ -327,7 +335,7 @@ def test_playback_backdrop_uses_css_only_spinning_disc() -> None:
     assert not (FRONTEND / "components/MusicSpectrumBackdrop.vue").exists()
 
 
-def test_music_page_generates_missing_cover_only_for_local_target() -> None:
+def test_music_page_reads_existing_cover_without_starting_inference_during_playback() -> None:
     music = read_source("pages/MusicPage.vue")
     service = read_source("services/music.js")
 
@@ -335,6 +343,9 @@ def test_music_page_generates_missing_cover_only_for_local_target() -> None:
     assert "deleteMusicCover" in service
     assert "regenerateMusicCover" in service
     assert 'if (environment.target !== "local")' in music
+    assert "const response = await getMusicCoverStatus" in music
+    assert "ensureMusicCover" not in music
+    assert "await ensureInferenceReady(environment.target);" in music
     assert "coverLoadVersion" in music
     assert "responseContentHash !== track.contentHash" in music
     assert "scheduleCoverRefresh" in music

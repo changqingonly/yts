@@ -211,11 +211,17 @@ def test_frontend_workflow_blocks_network_calls_when_selected_target_is_offline(
     assert run_thread_body.index("await ensureWorkflowTargetOnline();") < run_thread_body.index(
         "await streamWorkflow(`/api/workflows/${workflowId}/threads/stream`"
     )
+    assert "const target = await ensureWorkflowTargetOnline();" in run_thread_body
+    assert "await ensureInferenceReady(target);" in run_thread_body
+    assert run_thread_body.index("await ensureInferenceReady(target);") < run_thread_body.index(
+        "await streamWorkflow(`/api/workflows/${workflowId}/threads/stream`"
+    )
     assert resume_thread_body.index(
-        "await ensureWorkflowTargetOnline();"
+        "const target = await ensureWorkflowTargetOnline();"
     ) < resume_thread_body.index(
         "await streamWorkflow(`/api/workflows/${workflowId}/threads/${threadId.value}/stream`"
     )
+    assert "await ensureInferenceReady(target);" in resume_thread_body
     assert refresh_trace_body.index(
         "await ensureWorkflowTargetOnline();"
     ) < refresh_trace_body.index(

@@ -1,5 +1,5 @@
 //! yts 本地推理网关(GGML 家族)。文本/图片/音乐统一由本网关对接 GGML 原生二进制:
-//!   - 文本:代理常驻 `llama-server`(llama.cpp,OpenAI 兼容)——网关按 YTS_LLAMA_CMD spawn 并托管其生命周期。
+//!   - 文本:代理常驻 `llama-server`(llama.cpp,OpenAI 兼容)——首个文本请求按 YTS_LLAMA_CMD 惰性启动。
 //!   - 图片:spawn `stable-diffusion.cpp`(见 image.rs,YTS_IMAGEGEN_CMD)。
 //!   - 音乐:spawn `acestep.cpp` / 内置合成器(见 stream.rs,YTS_AUDIOGEN_CMD)。
 //!
@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let addr = env_or("YTS_GATEWAY_ADDR", "127.0.0.1:8799");
 
-    // 文本:按 YTS_LLAMA_CMD spawn 常驻 llama-server 并托管(未配置则期望外部已在 YTS_LLAMA_BASE_URL)。
+    // 只装配文本后端；llama-server 在首个 /text 请求到达时才启动。
     let llama = llama::LlamaBackend::start().await;
     tracing::info!(
         "ggml-gateway up on {addr} (text→llama-server {})",

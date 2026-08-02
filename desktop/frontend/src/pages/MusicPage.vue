@@ -20,13 +20,13 @@ import { useEnvironmentStore } from "../stores/environment";
 import { loadSongObjectUrl } from "../services/music";
 import {
   deleteMusicCover,
-  ensureMusicCover,
   getMusicCoverStatus,
   loadMusicCoverObjectUrl,
   regenerateMusicCover,
   retryMusicCover,
 } from "../services/music";
 import { apiBase, selectedApiTarget } from "../services/http";
+import { ensureInferenceReady } from "../services/inference";
 
 const player = usePlayerStore();
 const playlist = usePlaylistStore();
@@ -39,10 +39,12 @@ const drawerMode = ref("queue");
 const loopMode = ref("queue");
 const playHistory = ref([]);
 const trackUrlByHash = ref(new Map());
+const pendingTrackUrlByHash = new Map();
 const resumeSeekTime = ref(null);
 let renditionRefreshTimer = null;
 let coverRefreshTimer = null;
 let coverLoadVersion = 0;
+let playlistLoadVersion = 0;
 const coverState = ref({ status: "absent", error_message: "" });
 const coverObjectUrl = ref("");
 const coverThemeStyle = computed(() => {
@@ -113,11 +115,15 @@ function playableTrackUrl(item) {
 
 async function refreshPlaylist() {
   error.value = "";
+  const requestTarget = environment.target;
+  const requestVersion = ++playlistLoadVersion;
   try {
-    await playlist.hydrate({ scope: environment.target });
-    await loadPlayableTrackUrls(playlist.activeItems);
+    await playlist.hydrate({ scope: requestTarget });
+    if (requestTarget !== environment.target || requestVersion !== playlistLoadVersion) return;
+    retainPlayableTrackUrls(playlist.activeItems);
     player.setQueue(tracks.value);
     restorePlaybackResumeState();
+    await loadCurrentTrackUrl({ target: requestTarget, requestVersion });
     scheduleRenditionRefresh();
   } catch (err) {
     error.value = formatMusicLoadError(err);
@@ -135,34 +141,75 @@ async function refreshPlaylistWhenTargetReady(target = environment.target) {
   await refreshPlaylist();
 }
 
-async function loadPlayableTrackUrls(items) {
-  const previousUrls = trackUrlByHash.value;
-  const nextUrls = new Map();
-  const createdUrls = [];
-  try {
-    for (const item of items) {
-      if (!item.content_hash) {
-        throw new Error("playlist item requires content_hash");
-      }
-      if (item.playback_status !== "ready") continue;
-      const existingUrl = previousUrls.get(item.content_hash);
-      if (existingUrl) {
-        nextUrls.set(item.content_hash, existingUrl);
-        continue;
-      }
-      const objectUrl = await loadSongObjectUrl({
-        contentHash: item.content_hash,
-        target: environment.target,
-      });
-      createdUrls.push(objectUrl);
-      nextUrls.set(item.content_hash, objectUrl);
-    }
-  } catch (err) {
-    revokePlayableTrackUrls(createdUrls);
-    throw err;
+async function loadCurrentTrackUrl({
+  target = environment.target,
+  requestVersion = playlistLoadVersion,
+} = {}) {
+  const contentHash = player.currentTrack?.contentHash;
+  if (!contentHash) return "";
+  const item = playlist.activeItems.find((candidate) => candidate.content_hash === contentHash);
+  if (!item || item.playback_status !== "ready") return "";
+  return loadPlayableTrackUrl(item, { target, requestVersion });
+}
+
+async function loadPlayableTrackUrl(
+  item,
+  { target = environment.target, requestVersion = playlistLoadVersion } = {},
+) {
+  if (!item?.content_hash) {
+    throw new Error("playlist item requires content_hash");
   }
-  for (const [contentHash, objectUrl] of previousUrls) {
-    if (!nextUrls.has(contentHash)) {
+  if (item.playback_status !== "ready") return "";
+  const contentHash = item.content_hash;
+  const existingUrl = trackUrlByHash.value.get(contentHash);
+  if (existingUrl) {
+    if (player.queue.some((track) => track.contentHash === contentHash)) {
+      player.setTrackUrl(contentHash, existingUrl);
+    }
+    return existingUrl;
+  }
+  const requestKey = `${target}:${requestVersion}:${contentHash}`;
+  const pendingUrl = pendingTrackUrlByHash.get(requestKey);
+  if (pendingUrl) return pendingUrl;
+
+  const loadPromise = (async () => {
+    const objectUrl = await loadSongObjectUrl({ contentHash, target });
+    const itemStillActive = playlist.activeItems.some(
+      (candidate) => candidate.content_hash === contentHash,
+    );
+    if (
+      target !== environment.target
+      || requestVersion !== playlistLoadVersion
+      || !itemStillActive
+    ) {
+      URL.revokeObjectURL(objectUrl);
+      return "";
+    }
+    trackUrlByHash.value = new Map(trackUrlByHash.value).set(contentHash, objectUrl);
+    if (player.queue.some((track) => track.contentHash === contentHash)) {
+      player.setTrackUrl(contentHash, objectUrl);
+    }
+    return objectUrl;
+  })().finally(() => {
+    if (pendingTrackUrlByHash.get(requestKey) === loadPromise) {
+      pendingTrackUrlByHash.delete(requestKey);
+    }
+  });
+  pendingTrackUrlByHash.set(requestKey, loadPromise);
+  return loadPromise;
+}
+
+function retainPlayableTrackUrls(items) {
+  const retainedHashes = new Set(
+    items
+      .filter((item) => item.playback_status === "ready")
+      .map((item) => item.content_hash),
+  );
+  const nextUrls = new Map();
+  for (const [contentHash, objectUrl] of trackUrlByHash.value) {
+    if (retainedHashes.has(contentHash)) {
+      nextUrls.set(contentHash, objectUrl);
+    } else {
       URL.revokeObjectURL(objectUrl);
     }
   }
@@ -190,12 +237,23 @@ function revokePlayableTrackUrls(urls = trackUrlByHash.value) {
   }
 }
 
+function clearPlayableTrackUrls() {
+  revokePlayableTrackUrls();
+  trackUrlByHash.value = new Map();
+}
+
+async function resetPlayerQueueFromPlaylist() {
+  retainPlayableTrackUrls(playlist.activeItems);
+  player.setQueue(tracks.value);
+  await loadCurrentTrackUrl();
+}
+
 function replaceCoverObjectUrl(nextUrl = "") {
   if (coverObjectUrl.value) URL.revokeObjectURL(coverObjectUrl.value);
   coverObjectUrl.value = nextUrl;
 }
 
-async function syncCurrentCover(track = currentTrack.value, { ensure = true } = {}) {
+async function syncCurrentCover(track = currentTrack.value) {
   const requestVersion = ++coverLoadVersion;
   if (coverRefreshTimer != null) {
     clearTimeout(coverRefreshTimer);
@@ -206,9 +264,8 @@ async function syncCurrentCover(track = currentTrack.value, { ensure = true } = 
   if (!track?.contentHash) return;
   if (environment.target !== "local") return;
   try {
-    const response = ensure
-      ? await ensureMusicCover({ contentHash: track.contentHash, triggerSource: "system" })
-      : await getMusicCoverStatus({ contentHash: track.contentHash });
+    // 播放器启动只读取已有封面。模型网关只允许由用户的显式生成操作拉起。
+    const response = await getMusicCoverStatus({ contentHash: track.contentHash });
     const responseContentHash = response.content_hash;
     if (requestVersion !== coverLoadVersion || responseContentHash !== track.contentHash) return;
     coverState.value = response;
@@ -246,7 +303,7 @@ function scheduleCoverRefresh(track, requestVersion = coverLoadVersion) {
   coverRefreshTimer = setTimeout(async () => {
     coverRefreshTimer = null;
     if (requestVersion !== coverLoadVersion) return;
-    await syncCurrentCover(track, { ensure: false });
+    await syncCurrentCover(track);
   }, COVER_REFRESH_DELAY_MS);
 }
 
@@ -261,20 +318,22 @@ async function handleDeleteCover() {
 async function handleRegenerateCover() {
   const track = currentTrack.value;
   if (!track?.contentHash) throw new Error("重新生成封面需要 contentHash");
+  await ensureInferenceReady(environment.target);
   const requestId = crypto.randomUUID();
   coverState.value = await regenerateMusicCover({
     contentHash: track.contentHash,
     requestId,
   });
-  await syncCurrentCover(track, { ensure: false });
+  await syncCurrentCover(track);
 }
 
 async function handleRetryCover() {
   const track = currentTrack.value;
   if (!track?.contentHash) throw new Error("重试封面生成需要 contentHash");
   try {
+    await ensureInferenceReady(environment.target);
     coverState.value = await retryMusicCover({ contentHash: track.contentHash });
-    await syncCurrentCover(track, { ensure: false });
+    await syncCurrentCover(track);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -375,13 +434,19 @@ async function startStreamPreview() {
 function playTrack(index) {
   error.value = "";
   try {
-    if (tracks.value[index]?.playbackStatus !== "ready") {
+    const track = tracks.value[index];
+    const item = playlist.activeItems[index];
+    if (track?.playbackStatus !== "ready" || !item) {
       throw new Error("歌曲播放版本尚未就绪");
     }
     resumeSeekTime.value = null;
     player.playAt(index);
-    recordHistory(tracks.value[index]);
-    writePlaybackResumeState(tracks.value[index], 0);
+    recordHistory(track);
+    writePlaybackResumeState(track, 0);
+    void loadPlayableTrackUrl(item).catch((err) => {
+      player.setPlaying(false);
+      error.value = err instanceof Error ? err.message : String(err);
+    });
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -398,8 +463,7 @@ async function handleDeletePlaylistItem(track) {
   try {
     if (!track?.id) throw new Error("删除播放列表歌曲需要 item id");
     await playlist.deleteItem(track.id);
-    await loadPlayableTrackUrls(playlist.activeItems);
-    player.setQueue(tracks.value);
+    await resetPlayerQueueFromPlaylist();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -410,8 +474,7 @@ async function handleRestorePlaylistItem(track) {
   try {
     if (!track?.id) throw new Error("恢复播放列表歌曲需要 item id");
     await playlist.restoreItem(track.id);
-    await loadPlayableTrackUrls(playlist.activeItems);
-    player.setQueue(tracks.value);
+    await resetPlayerQueueFromPlaylist();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -436,8 +499,7 @@ async function handleRetryRendition(track) {
       throw new Error("只有转码失败的歌曲可以重试");
     }
     await playlist.retryRendition(track.contentHash);
-    await loadPlayableTrackUrls(playlist.activeItems);
-    player.setQueue(tracks.value);
+    await resetPlayerQueueFromPlaylist();
     scheduleRenditionRefresh();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -542,6 +604,9 @@ watch(
   () => environment.target,
   async (nextTarget, previousTarget) => {
     if (nextTarget === previousTarget) return;
+    playlistLoadVersion += 1;
+    clearPlayableTrackUrls();
+    player.setQueue([]);
     if (renditionRefreshTimer != null) {
       clearTimeout(renditionRefreshTimer);
       renditionRefreshTimer = null;
@@ -575,12 +640,13 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   writePlaybackResumeState(currentTrack.value, player.currentTime);
   environment.detach();
+  playlistLoadVersion += 1;
   player.setQueue([]);
   if (renditionRefreshTimer != null) clearTimeout(renditionRefreshTimer);
   if (coverRefreshTimer != null) clearTimeout(coverRefreshTimer);
   coverLoadVersion += 1;
   replaceCoverObjectUrl();
-  revokePlayableTrackUrls();
+  clearPlayableTrackUrls();
 });
 </script>
 

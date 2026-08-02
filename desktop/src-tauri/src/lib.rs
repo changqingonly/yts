@@ -139,10 +139,8 @@ pub fn run() {
                 &format!("[desktop] menu bar item created rect={tray_rect:?}"),
             );
 
-            // 不在这里自动拉起 sidecar/gateway:两者启动耗时(尤其 PyInstaller onefile 解压)
-            // 会拖慢窗口首次可见时间。改为惰性——前端只在真正用到本地目标时(见
-            // stores/environment.js 的 checkHealth)才调 start_sidecar/start_gateway,
-            // 两个命令本身已是幂等的(见 sidecar.rs/gateway.rs),重复调用安全。
+            // sidecar 由本地 API 健康检查惰性拉起；gateway 只由显式推理操作拉起。
+            // 大模型启动不得进入窗口显示、曲库加载或音乐播放的关键路径。
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -8,7 +8,7 @@ import {
   selectedApiTarget,
   setSelectedApiTarget,
 } from "../services/environment";
-import { startGateway, startSidecar } from "../services/desktop";
+import { startSidecar } from "../services/desktop";
 
 const pendingHealthChecks = new Map();
 const LOCAL_HEALTH_RETRY_INTERVAL_MS = 800;
@@ -51,10 +51,8 @@ export const useEnvironmentStore = defineStore("environment", {
       }
       return "未检查";
     },
-    /** 本地目标不在应用启动时无条件拉起 sidecar/gateway(耗时拖慢首屏),而是在第一次真正
-     * 用到本地目标时惰性拉起(见 desktop/src-tauri/src/lib.rs 的 setup() 注释)。这里既触发
-     * 拉起,也把单次健康检查换成有限时间的轮询,让"checking"这个已有状态覆盖住本地服务
-     * 真正启动完成前的这段等待,而不是第一次没连上就直接判"offline"。 */
+    /** 健康检查只负责承载 API/曲库的 sidecar。推理 gateway 启动会加载大模型，必须留在
+     * 显式生成操作的边界，不能进入音乐播放和普通页面加载的关键路径。 */
     async checkHealth(target = this.target) {
       const requestTarget = assertApiTarget(target);
       if (pendingHealthChecks.has(requestTarget)) {
@@ -66,7 +64,6 @@ export const useEnvironmentStore = defineStore("environment", {
       const healthPromise = (async () => {
         if (shouldRetry) {
           void startSidecar().catch(() => {});
-          void startGateway().catch(() => {});
         }
         const deadline = Date.now() + (shouldRetry ? LOCAL_HEALTH_RETRY_TIMEOUT_MS : 0);
         try {

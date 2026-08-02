@@ -70,18 +70,32 @@ def test_main_mounts_immediately_without_a_desktop_backend_health_gate() -> None
         assert token not in main
 
 
-def test_environment_store_lazily_starts_local_backend_with_bounded_retry() -> None:
+def test_environment_health_starts_only_local_api_sidecar_with_bounded_retry() -> None:
     env_store = read_source("stores/environment.js")
 
     for token in [
-        'import { startGateway, startSidecar } from "../services/desktop";',
+        'import { startSidecar } from "../services/desktop";',
         'const shouldRetry = requestTarget === "local" && isTauriRuntime();',
         "void startSidecar().catch(() => {});",
-        "void startGateway().catch(() => {});",
         "LOCAL_HEALTH_RETRY_TIMEOUT_MS",
         "LOCAL_HEALTH_RETRY_INTERVAL_MS",
     ]:
         assert token in env_store
+    assert "startGateway" not in env_store
+
+
+def test_local_inference_gateway_starts_only_at_explicit_generation_boundaries() -> None:
+    inference = read_source("services/inference.js")
+    player_store = read_source("stores/player.js")
+    creation = read_source("pages/CreationPage.vue")
+    music = read_source("pages/MusicPage.vue")
+
+    assert 'import { startGateway } from "./desktop";' in inference
+    assert 'if (requestTarget !== "local" || !isTauriRuntime()) return;' in inference
+    assert "await startGateway();" in inference
+    assert "await ensureInferenceReady(target);" in player_store
+    assert creation.count("await ensureInferenceReady(target);") == 2
+    assert music.count("await ensureInferenceReady(environment.target);") == 2
 
 
 def test_music_and_assets_pages_auto_retry_when_local_backend_recovers() -> None:
@@ -649,16 +663,25 @@ def test_music_service_uses_playlist_and_song_upload_contracts() -> None:
     assert "URL.createObjectURL(blob)" in service
 
 
-def test_music_page_loads_authenticated_audio_blob_urls_before_queueing() -> None:
+def test_music_page_queues_metadata_before_loading_only_the_current_audio_blob() -> None:
     music = read_source("pages/MusicPage.vue")
+    player_store = read_source("stores/player.js")
 
     assert 'import { loadSongObjectUrl } from "../services/music";' in music
     assert "const trackUrlByHash = ref(new Map());" in music
-    assert "await loadPlayableTrackUrls(playlist.activeItems);" in music
+    assert "async function loadCurrentTrackUrl(" in music
+    assert "async function loadPlayableTrackUrl(" in music
+    assert "const item = playlist.activeItems.find" in music
     assert "player.setQueue(tracks.value);" in music
-    assert music.index("await loadPlayableTrackUrls(playlist.activeItems);") < music.index(
-        "player.setQueue(tracks.value);"
+    refresh_block = music.split("async function refreshPlaylist()", 1)[1].split(
+        "async function refreshPlaylistWhenTargetReady", 1
     )
+    assert refresh_block[0].index("player.setQueue(tracks.value);") < refresh_block[0].index(
+        "await loadCurrentTrackUrl({ target: requestTarget, requestVersion });"
+    )
+    assert "for (const item of items)" not in music
+    assert "player.setTrackUrl(contentHash, objectUrl);" in music
+    assert "setTrackUrl(contentHash, url)" in player_store
     assert "URL.revokeObjectURL" in music
     assert "`/api/music/file/${encodeURIComponent(item.content_hash)}`" not in music
 

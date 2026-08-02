@@ -35,6 +35,7 @@ import {
   selectedApiTarget,
 } from "../services/http";
 import { saveSong } from "../services/songs";
+import { ensureInferenceReady } from "../services/inference";
 import { openJsonStream } from "../services/transport";
 import { getWorkflowRunResult, listWorkflowHistory } from "../services/workflows";
 import { useEnvironmentStore } from "../stores/environment";
@@ -572,7 +573,8 @@ async function runThread() {
     liveNodeStatuses.value = {};
     runResult.value = null;
     userSelectedNodeId.value = "";
-    await ensureWorkflowTargetOnline();
+    const target = await ensureWorkflowTargetOnline();
+    await ensureInferenceReady(target);
     await streamWorkflow(`/api/workflows/${workflowId}/threads/stream`, {
       type: "run",
       thread_id: threadId.value,
@@ -596,7 +598,8 @@ async function resumeThread(action) {
       waiting: null,
       status: "waiting",
     };
-    await ensureWorkflowTargetOnline();
+    const target = await ensureWorkflowTargetOnline();
+    await ensureInferenceReady(target);
     await streamWorkflow(`/api/workflows/${workflowId}/threads/${threadId.value}/stream`, {
       type: "resume",
       node_id: waiting.node_id,

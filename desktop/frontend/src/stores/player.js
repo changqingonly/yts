@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { getStreamPlayer } from "../audio/streamPlayer";
 import { selectedApiTarget } from "../services/http";
+import { ensureInferenceReady } from "../services/inference";
 
 export const usePlayerStore = defineStore("player", {
   state: () => ({
@@ -19,6 +20,7 @@ export const usePlayerStore = defineStore("player", {
   },
   actions: {
     async streamGenerate({ prompt, seconds = 8, target = selectedApiTarget(), channels = 2 }) {
+      await ensureInferenceReady(target);
       const sp = getStreamPlayer();
       sp.onState = (s) => {
         this.streamState = s;
@@ -38,6 +40,16 @@ export const usePlayerStore = defineStore("player", {
       this.isPlaying = false;
       this.currentTime = 0;
       this.duration = 0;
+    },
+    setTrackUrl(contentHash, url) {
+      if (!contentHash) throw new Error("更新播放地址需要 contentHash");
+      if (!url) throw new Error("更新播放地址需要 url");
+      if (!this.queue.some((track) => track.contentHash === contentHash)) {
+        throw new Error("待更新歌曲不在播放队列中");
+      }
+      this.queue = this.queue.map((track) =>
+        track.contentHash === contentHash ? { ...track, url } : track,
+      );
     },
     setPlaying(isPlaying) {
       this.isPlaying = Boolean(isPlaying);
