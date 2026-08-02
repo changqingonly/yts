@@ -53,3 +53,11 @@ def test_extract_theme_color_fails_when_no_usable_pixels_exist() -> None:
 
     with pytest.raises(ValueError, match="no usable pixels"):
         extract_theme_color(png)
+
+
+def test_extract_theme_color_prefers_saturated_subject_over_dark_background() -> None:
+    png = rgba_png(
+        [[(5, 14, 20, 255)] * 10 + [(232, 76, 32, 255)] * 2]
+    )
+
+    assert extract_theme_color(png) == "#E84C20"

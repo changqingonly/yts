@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from collections import defaultdict
+from colorsys import rgb_to_hsv
 
 import imageio_ffmpeg
 
@@ -53,7 +54,19 @@ def extract_theme_color(png: bytes) -> str:
         bucket[3] += blue
     if not buckets:
         raise ValueError("cover image contains no usable pixels for theme extraction")
-    _, dominant = max(buckets.items(), key=lambda item: (item[1][0], item[0]))
+    def score(
+        item: tuple[tuple[int, int, int], list[int]],
+    ) -> tuple[float, tuple[int, int, int]]:
+        key, bucket = item
+        count, red_sum, green_sum, blue_sum = bucket
+        red = red_sum / count / 255
+        green = green_sum / count / 255
+        blue = blue_sum / count / 255
+        _, saturation, value = rgb_to_hsv(red, green, blue)
+        brightness_weight = 0.15 + value
+        return count * (0.2 + saturation) * brightness_weight**2, key
+
+    _, dominant = max(buckets.items(), key=score)
     count, red_sum, green_sum, blue_sum = dominant
     red = round(red_sum / count / 4) * 4
     green = round(green_sum / count / 4) * 4
