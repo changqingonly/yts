@@ -13,7 +13,7 @@
 - Window/workspace rendering must not wait for sidecar health or playlist data.
 - A shared Promise must deduplicate sidecar startup and health checks.
 - `ready` requires health, minimal playlist data, and the current track URL when a ready track exists.
-- Startup waits at most 5 seconds and exposes timeout/failure instead of silently degrading.
+- Startup renders loading immediately and uses a 30-second foreground wait window; timeout keeps the underlying readiness task available for explicit continued waiting.
 - `infer-gateway` remains explicit-operation-only.
 - Preserve existing strict validation and explicit errors; do not add fallback data.
 
@@ -26,13 +26,13 @@
 - Test: `tests/test_local_startup_flow.py`
 
 **Interfaces:**
-- `startLocalPlayback({ target = "local", timeoutMs = 5000 } = {}) -> Promise<LocalStartupResult>` returns `{ status: "ready", target }` or rejects with an explicit startup error carrying `stage`.
+- `startLocalPlayback({ target = "local", timeoutMs = 30000 } = {}) -> Promise<LocalStartupResult>` returns `{ status: "ready", target }` or rejects with an explicit startup error carrying `stage`.
 - `resetLocalPlaybackStartup()` clears only completed/failed coordinator state for an explicit retry.
 - The coordinator calls existing `startSidecar()`, `healthCheck(target)`, `playlistStore.loadMinimal(...)`, and `loadSongObjectUrl(...)` through injected callbacks so tests can assert ordering without network access.
 
-- [ ] **Step 1: Write failing source-contract tests** asserting one shared Promise for concurrent calls, a 5000ms timeout, failure stage propagation, and no `startGateway` import/call in the coordinator.
+- [ ] **Step 1: Write failing source-contract tests** asserting one shared Promise for concurrent calls, a 30000ms timeout, failure stage propagation, and no `startGateway` import/call in the coordinator.
 - [ ] **Step 2: Run `pytest tests/test_local_startup_flow.py -q` and confirm the new contracts fail.**
-- [ ] **Step 3: Implement coordinator state with one module-level Promise per target; race the minimal readiness Promise against a 5000ms timer, clear the timer, and rethrow the original stage error.**
+- [ ] **Step 3: Implement coordinator state with one module-level Promise per target; race the minimal readiness Promise against a 30000ms foreground timer, clear the timer, and retain the underlying readiness task for continued waiting.**
 - [ ] **Step 4: Update environment health calls to reuse the coordinator's sidecar/health Promise rather than spawning another sidecar.**
 - [ ] **Step 5: Run the focused test and existing environment lifecycle tests; commit `feat: coordinate local playback startup`.**
 
@@ -67,7 +67,7 @@
 - Welcome component accepts `status`, `stage`, `errorMessage`, and `onRetry`; it renders starting, ready transition, failed, and timeout states without hiding the underlying error.
 - AppShell starts the coordinator on mount, renders workspace shell immediately, and switches `musicMounted` only after ready or explicit user action from failed/timeout.
 
-- [ ] **Step 1: Add failing source tests for immediate shell rendering, five-second timeout copy/state, retry action, and explicit failure text.**
+- [ ] **Step 1: Add failing source tests for immediate shell rendering, 30-second timeout copy/state, continued-wait action, and explicit terminal failure text.**
 - [ ] **Step 2: Run the focused test and confirm failure.**
 - [ ] **Step 3: Implement the welcome component using existing CSS tokens and compact loading/error states; do not add a blocking full-screen network spinner without an actionable error state.**
 - [ ] **Step 4: Wire AppShell to the coordinator, keep `environment.checkHealth` fire-and-forget for status updates, and remove duplicate startup waits from MusicPage mount.**

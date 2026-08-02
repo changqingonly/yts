@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
-
+from pathlib import Path
 
 FRONTEND = Path("desktop/frontend/src")
 
@@ -45,7 +44,15 @@ def test_local_startup_runs_sidecar_health_then_explicit_preparation_callback() 
 def test_local_startup_has_bounded_timeout_and_preserves_failure_stage() -> None:
     source = read_source("services/localStartup.js")
 
-    assert "timeoutMs = 5000" in source
+    assert "export const LOCAL_STARTUP_TIMEOUT_MS = 30000;" in source
+    assert "timeoutMs = LOCAL_STARTUP_TIMEOUT_MS" in source
+    assert "async function waitForHealth" in source
+    assert "for (;;)" in source
+    assert "HEALTH_RETRY_INTERVAL_MS" in source
+    assert "entry.lastError = error;" in source
+    assert "createEntry(apiEntry)" in source
+    assert "entry.lastError || entry.errorSource?.lastError || null" in source
+    assert "const deadline" not in source
     assert "Promise.race([entry.readinessPromise, timeoutPromise])" in source
     assert "clearTimeout(timeoutId);" in source
     assert "error.stage = stage;" in source
@@ -88,4 +95,4 @@ def test_local_startup_runtime_contracts() -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "pass 5" in result.stdout
+    assert "pass 7" in result.stdout

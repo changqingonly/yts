@@ -55,20 +55,79 @@ test("shares local API readiness without reporting playback ready", async () => 
   ]);
 });
 
+test("polls health while the sidecar is still starting", async () => {
+  resetLocalPlaybackStartup();
+  let healthCalls = 0;
+  const result = await startLocalPlayback({
+    target: "health-polling",
+    timeoutMs: 350,
+    startSidecar: async () => {},
+    healthCheck: async () => {
+      healthCalls += 1;
+      if (healthCalls < 3) throw new Error("sidecar is not listening yet");
+    },
+    prepare: async () => {},
+  });
+
+  assert.deepEqual(result, { status: "ready", target: "health-polling" });
+  assert.equal(healthCalls, 3);
+});
+
+test("reports repeated health failures as a bounded timeout instead of immediate failure", async () => {
+  resetLocalPlaybackStartup();
+  let healthCalls = 0;
+  let sidecarCalls = 0;
+  let healthReady = false;
+  let timeoutError;
+  const options = {
+    target: "health-timeout",
+    timeoutMs: 150,
+    startSidecar: async () => {
+      sidecarCalls += 1;
+    },
+    healthCheck: async () => {
+      healthCalls += 1;
+      if (!healthReady) throw new Error("Load failed");
+    },
+    prepare: async () => {},
+  };
+
+  await assert.rejects(
+    startLocalPlayback(options),
+    (error) => {
+      timeoutError = error;
+      return error.stage === "timeout";
+    },
+  );
+
+  try {
+    assert.ok(healthCalls >= 2);
+    assert.equal(timeoutError.cause.message, "Load failed");
+    assert.equal(timeoutError.cause.stage, "health");
+  } finally {
+    healthReady = true;
+    assert.deepEqual(
+      await startLocalPlayback({ ...options, timeoutMs: 500 }),
+      { status: "ready", target: "health-timeout" },
+    );
+  }
+  assert.equal(sidecarCalls, 1);
+});
+
 test("propagates the original stage error", async () => {
-  const originalError = new Error("health unavailable");
+  const originalError = new Error("sidecar failed");
 
   await assert.rejects(
     startLocalPlayback({
       target: "runtime-stage-error",
       timeoutMs: 50,
-      startSidecar: async () => {},
-      healthCheck: async () => {
+      startSidecar: async () => {
         throw originalError;
       },
+      healthCheck: async () => {},
       prepare: async () => {},
     }),
-    (error) => error === originalError && error.stage === "health",
+    (error) => error === originalError && error.stage === "sidecar",
   );
 });
 

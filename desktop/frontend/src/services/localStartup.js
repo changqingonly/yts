@@ -1,5 +1,7 @@
 const apiReadinessByTarget = new Map();
 const playbackByTarget = new Map();
+const HEALTH_RETRY_INTERVAL_MS = 100;
+export const LOCAL_STARTUP_TIMEOUT_MS = 30000;
 
 export function resetLocalPlaybackStartup() {
   clearSettledEntries(apiReadinessByTarget);
@@ -8,7 +10,7 @@ export function resetLocalPlaybackStartup() {
 
 export function startLocalApiReadiness({
   target = "local",
-  timeoutMs = 5000,
+  timeoutMs = LOCAL_STARTUP_TIMEOUT_MS,
   startSidecar,
   healthCheck,
 } = {}) {
@@ -21,7 +23,7 @@ export function startLocalApiReadiness({
 
 export function startLocalPlayback({
   target = "local",
-  timeoutMs = 5000,
+  timeoutMs = LOCAL_STARTUP_TIMEOUT_MS,
   prepare,
   startSidecar,
   healthCheck,
@@ -34,7 +36,7 @@ export function startLocalPlayback({
     return existingEntry.promise;
   }
 
-  const entry = createEntry();
+  const entry = createEntry(apiEntry);
   entry.readinessPromise = (async () => {
     await apiEntry.readinessPromise;
     await runStage("prepare", () => prepareCallback({ target }));
@@ -73,7 +75,7 @@ function getLocalApiReadinessEntry({ target, startSidecar, healthCheck }) {
   const entry = createEntry();
   entry.readinessPromise = (async () => {
     await runStage("sidecar", () => startSidecarCallback());
-    await runStage("health", () => healthCheckCallback(target));
+    await waitForHealth({ target, healthCheckCallback, entry });
     return { status: "online", target };
   })();
   trackEntrySettlement(entry);
@@ -81,8 +83,25 @@ function getLocalApiReadinessEntry({ target, startSidecar, healthCheck }) {
   return entry;
 }
 
-function createEntry() {
-  return { status: "starting", readinessPromise: null, promise: null };
+async function waitForHealth({ target, healthCheckCallback, entry }) {
+  for (;;) {
+    try {
+      return await runStage("health", () => healthCheckCallback(target));
+    } catch (error) {
+      entry.lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, HEALTH_RETRY_INTERVAL_MS));
+  }
+}
+
+function createEntry(errorSource = null) {
+  return {
+    status: "starting",
+    readinessPromise: null,
+    promise: null,
+    lastError: null,
+    errorSource,
+  };
 }
 
 function trackEntrySettlement(entry) {
@@ -99,7 +118,11 @@ function trackEntrySettlement(entry) {
 function raceReadinessTimeout(entry, timeoutMs) {
   let timeoutId;
   const timeoutPromise = new Promise((_, reject) => {
-    timeoutId = setTimeout(() => reject(createStartupTimeoutError(timeoutMs)), timeoutMs);
+    timeoutId = setTimeout(() => {
+      const error = createStartupTimeoutError(timeoutMs);
+      error.cause = entry.lastError || entry.errorSource?.lastError || null;
+      reject(error);
+    }, timeoutMs);
   });
   return Promise.race([entry.readinessPromise, timeoutPromise]).finally(() => {
     clearTimeout(timeoutId);

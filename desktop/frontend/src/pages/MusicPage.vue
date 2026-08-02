@@ -19,7 +19,11 @@ import { usePlaylistStore } from "../stores/playlist";
 import { useEnvironmentStore } from "../stores/environment";
 import { startSidecar } from "../services/desktop";
 import { isTauriRuntime } from "../services/environment";
-import { resetLocalPlaybackStartup, startLocalPlayback } from "../services/localStartup";
+import {
+  LOCAL_STARTUP_TIMEOUT_MS,
+  resetLocalPlaybackStartup,
+  startLocalPlayback,
+} from "../services/localStartup";
 import { loadSongObjectUrl } from "../services/music";
 import {
   deleteMusicCover,
@@ -152,10 +156,14 @@ async function beginLocalStartup({ reset = false } = {}) {
   try {
     await startLocalPlayback({
       target: "local",
-      timeoutMs: 5000,
-      startSidecar,
+      timeoutMs: LOCAL_STARTUP_TIMEOUT_MS,
+      startSidecar: async () => {
+        await startSidecar();
+        emit("startup-state", { status: "starting", stage: "health", errorMessage: "" });
+      },
       healthCheck,
       prepare: async () => {
+        emit("startup-state", { status: "starting", stage: "prepare", errorMessage: "" });
         await refreshPlaylist();
       },
     });
